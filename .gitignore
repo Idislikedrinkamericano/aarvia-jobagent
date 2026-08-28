@@ -22,3 +22,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Private career profiles (keep data/profiles/.gitkeep)
+data/profiles/*.json

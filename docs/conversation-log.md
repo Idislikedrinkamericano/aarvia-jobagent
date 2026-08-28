@@ -182,3 +182,23 @@ pytest 已经由我手动成功安装到当前 `.venv`。不要再尝试安装�
 ### Assistant
 
 已新建 `docs/conversation-log.md`，回填此前对话，并约定后续对话按时间顺序追加且不覆盖历史记录。
+
+## 2026-08-28 - Conversation 5
+
+### User
+
+请求开始 Phase 1 — User Profile / Career Discovery：建立结构化、可验证、可持久化的 Career Profile，覆盖 Basic Profile、Education、Experience Overview、Skills、Career Preferences、Constraints 和 Open Questions；实现严格字典构建、JSON 保存与加载、确定性缺失问题生成及 pytest 测试。要求保持标准库优先，不使用 LLM、数据库或前端，不提前实现岗位推荐及后续模块；更新中英文 README、开发日志和对话日志，并完成 import、pytest 与 diff 验证后停止在 Phase 1。
+
+### Assistant
+
+实现了 Phase 1 的数据模型、严格验证、规则式 Career Discovery、JSON 持久化和测试套件，并新增中文 README。使用 `PYTHONPATH=src` 验证导入和核心行为通过，`git diff --check` 通过；当前 `.venv` 缺少 pytest，因此未安装或联网，pytest 套件未能在该环境中实际运行。没有开始 Phase 2。
+
+## 2026-08-28 - Conversation 6
+
+### User
+
+请求将 Phase 1 拆分为已完成的 Phase 1A — Career Profile Foundation 和新的 Phase 1B-v1 — Interactive Career Discovery CLI。CLI 应通过 `aarvia discover` 创建或继续 Profile，按固定顺序收集信息，支持多条教育、经历和技能，支持 `:skip`、`:quit`、输入验证、及时保存、自定义路径和依赖注入测试；要求复用 Phase 1A，不使用 LLM，不实现 Phase 1B-v2 或 Phase 2，并更新版本、双语文档和日志。
+
+### Assistant
+
+完成了 Phase 1B-v1：新增确定性 CLI 问卷、断点草稿、严格验证重试、多记录、列表解析、默认及自定义 Profile 路径和 console script 配置；版本更新为 `0.3.0`。原有 13 个测试与新增 12 个测试共 25 个全部通过，临时路径 CLI smoke test、导入、帮助信息、隐私忽略规则和 diff 检查通过。未实现自然语言发现、岗位推荐或 Phase 2。

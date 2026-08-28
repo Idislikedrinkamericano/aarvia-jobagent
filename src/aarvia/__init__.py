@@ -1,3 +1,31 @@
 """Aarvia career navigation and job application package."""
 
-__version__ = "0.1.0"
+from .discovery import create_profile, generate_open_questions
+from .profile import (
+    BasicProfile,
+    CareerPreferences,
+    CareerProfile,
+    Constraints,
+    Education,
+    ExperienceOverview,
+    ProfileValidationError,
+    Skill,
+)
+from .storage import load_profile, save_profile
+
+__version__ = "0.3.0"
+
+__all__ = [
+    "BasicProfile",
+    "CareerPreferences",
+    "CareerProfile",
+    "Constraints",
+    "Education",
+    "ExperienceOverview",
+    "ProfileValidationError",
+    "Skill",
+    "create_profile",
+    "generate_open_questions",
+    "load_profile",
+    "save_profile",
+]
