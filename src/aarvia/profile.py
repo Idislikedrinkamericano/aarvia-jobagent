@@ -94,11 +94,12 @@ class Education:
     institution: str
     degree: str
     field_of_study: str
-    start_date: str
-    expected_graduation_date: str
+    start_date: str | None
+    expected_graduation_date: str | None
+    gpa: str | None = None
 
     FIELDS: ClassVar[set[str]] = {
-        "institution", "degree", "field_of_study", "start_date", "expected_graduation_date"
+        "institution", "degree", "field_of_study", "start_date", "expected_graduation_date", "gpa"
     }
 
     @classmethod
@@ -109,10 +110,11 @@ class Education:
             institution=_text(data.get("institution"), f"{path}.institution", required=True),
             degree=_text(data.get("degree"), f"{path}.degree", required=True),
             field_of_study=_text(data.get("field_of_study"), f"{path}.field_of_study", required=True),
-            start_date=_date_text(data.get("start_date"), f"{path}.start_date", required=True),
+            start_date=_date_text(data.get("start_date"), f"{path}.start_date"),
             expected_graduation_date=_date_text(
-                data.get("expected_graduation_date"), f"{path}.expected_graduation_date", required=True
+                data.get("expected_graduation_date"), f"{path}.expected_graduation_date"
             ),
+            gpa=_text(data.get("gpa"), f"{path}.gpa"),
         )
 
 
@@ -122,7 +124,7 @@ class ExperienceOverview:
     organization_or_project_name: str
     title_or_role: str
     short_factual_summary: str
-    start_date: str
+    start_date: str | None
     end_date: str | None = None
 
     FIELDS: ClassVar[set[str]] = {
@@ -143,7 +145,7 @@ class ExperienceOverview:
             short_factual_summary=_text(
                 data.get("short_factual_summary"), f"{path}.short_factual_summary", required=True
             ),
-            start_date=_date_text(data.get("start_date"), f"{path}.start_date", required=True),
+            start_date=_date_text(data.get("start_date"), f"{path}.start_date"),
             end_date=_date_text(data.get("end_date"), f"{path}.end_date"),
         )
 

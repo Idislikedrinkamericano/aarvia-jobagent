@@ -7,8 +7,9 @@ from aarvia.llm_client import (
     LLMRequestError,
     LLMSettings,
     create_openai_client,
+    is_bailian_endpoint,
 )
-from aarvia.narrative_extraction import OpenAINarrativeExtractor
+from aarvia.narrative_extraction import OpenAINarrativeExtractor, PROFILE_JSON_SCHEMA
 
 
 ENVIRONMENT_KEYS = (
@@ -126,6 +127,26 @@ class FakeClient:
         self.responses = FakeResponses(result, error)
 
 
+class FakeChatCompletions:
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        message = SimpleNamespace(content=self.result)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+class FakeBailianClient:
+    def __init__(self, result=None, error=None):
+        self.chat_completions = FakeChatCompletions(result, error)
+        self.chat = SimpleNamespace(completions=self.chat_completions)
+
+
 class AuthenticationError(Exception):
     status_code = 401
 
@@ -183,6 +204,121 @@ def test_non_object_provider_output_has_schema_error() -> None:
     extractor = OpenAINarrativeExtractor(
         settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
         client=FakeClient(result="[]"),
+    )
+
+    with pytest.raises(LLMRequestError, match="does not match the required candidate schema"):
+        extractor.extract("My background")
+    assert extractor.diagnostics.json_decode_succeeded is True
+    assert extractor.diagnostics.detail == "candidate top level must be a JSON object"
+
+
+def test_plain_json_provider_output_is_parsed() -> None:
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
+        client=FakeClient(result='  {"skills": []}  '),
+    )
+
+    assert extractor.extract("My background") == {}
+    assert extractor.diagnostics.json_decode_succeeded is True
+
+
+def test_complete_json_code_fence_is_parsed() -> None:
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
+        client=FakeClient(result='```json\n{"skills": []}\n```'),
+    )
+
+    assert extractor.extract("My background") == {}
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        'Here is the result: {"skills": []}',
+        '{"skills": []}\nThis is the result.',
+        '```json\n{"skills": []}\n```\nExtra explanation.',
+        '{"skills": [}',
+    ],
+)
+def test_mixed_or_invalid_provider_output_is_rejected(output) -> None:
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
+        client=FakeClient(result=output),
+    )
+
+    with pytest.raises(LLMRequestError, match="does not match the required candidate schema"):
+        extractor.extract("My background")
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://dashscope.aliyuncs.com/compatible-mode/v1", True),
+        ("https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", True),
+        ("https://maas.aliyuncs.com.example/v1", False),
+        ("https://provider.example/v1", False),
+        (None, False),
+    ],
+)
+def test_bailian_endpoint_detection_uses_parsed_host(url, expected) -> None:
+    assert is_bailian_endpoint(url) is expected
+
+
+def test_bailian_uses_chat_completions_strict_schema_and_disables_thinking() -> None:
+    client = FakeBailianClient(result='{"skills": []}')
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings(
+            "provider-key",
+            "qwen-plus",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        client=client,
+    )
+
+    assert extractor.extract("My background") == {}
+    request = client.chat_completions.calls[0]
+    assert request["messages"][0]["role"] == "system"
+    assert "strictly follows" in request["messages"][0]["content"]
+    assert request["messages"][1] == {"role": "user", "content": "My background"}
+    assert request["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "career_profile_candidate",
+            "strict": True,
+            "schema": PROFILE_JSON_SCHEMA,
+        },
+    }
+    assert request["response_format"]["json_schema"]["schema"] is PROFILE_JSON_SCHEMA
+    assert request["extra_body"] == {"enable_thinking": False}
+    assert extractor.diagnostics.protocol == "chat_completions"
+
+
+def test_non_bailian_endpoint_uses_responses_without_thinking_parameter() -> None:
+    client = FakeClient(result='{"skills": []}')
+    captured = []
+    client.responses.create = lambda **kwargs: (
+        captured.append(kwargs) or SimpleNamespace(output_text='{"skills": []}')
+    )
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
+        client=client,
+    )
+
+    extractor.extract("My background")
+
+    assert "extra_body" not in captured[0]
+    assert extractor.diagnostics.protocol == "responses"
+
+
+@pytest.mark.parametrize("result", [None, "", "not-json"])
+def test_bailian_empty_or_non_json_content_is_rejected(result) -> None:
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings(
+            "provider-key",
+            "qwen-plus",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        client=FakeBailianClient(result=result),
     )
 
     with pytest.raises(LLMRequestError, match="does not match the required candidate schema"):

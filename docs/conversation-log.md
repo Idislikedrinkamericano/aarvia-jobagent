@@ -547,3 +547,224 @@ assert load_profile("data/profiles/example.json") == profile
 ### Assistant
 
 完成未知空字段 cleanup：只有 null、空白字符串、空 list/object 或递归全空的未知顶层字段会在 alias normalization 前被移除；任何非空 `contact_info` 或其他未知字段仍由 Phase 1A 拒绝，失败时正式 Profile 不变。版本更新为 `0.4.3`，双语 README 的 Python API 部分已明确标为开发者可选接口并逐步解释。全部 79 项测试通过，未调用真实 API。
+
+## Conversation 11 - Education Schema Compatibility
+
+### User
+
+修复 Aarvia 0.4.3 在真实百炼测试中发现的 Education schema 缺口。
+
+真实错误：
+
+Error: education[0] contains unknown fields: gpa, major
+
+用户明确提供了：
+
+- major / field of study
+- GPA 3.7 / 4.0
+
+这两个字段都包含真实且对求职有价值的信息，不能作为空字段删除，也不能静默丢弃。
+
+## 设计决定
+
+1. `major` 是 provider 使用的别名，应确定性映射到现有：
+   `field_of_study`
+
+2. 当前 `Education` 缺少 GPA，应正式扩展 Phase 1A schema，增加可选字段：
+   `gpa`
+
+3. GPA 建议保存为可选字符串，例如：
+   `"3.7 / 4.0"`
+
+   不要只保存 float，因为不同学校的 GPA 满分可能不同。
+
+4. GPA 只保存用户或材料明确提供的原始表达：
+
+   - 不换算
+   - 不推断
+   - 不四舍五入
+   - 不评价高低
+
+## 实现要求
+
+- 在 Education dataclass 中加入可选 `gpa`
+- 更新 `from_dict()`、`to_dict()` 和严格验证
+- 旧 Profile 没有 gpa 时仍能正常加载
+- 新 Profile 保存后能够完整 round-trip
+- 在 nested education normalization 中加入：
+  `major` → `field_of_study`
+- 如果 `major` 和 `field_of_study` 同时存在且内容不同，产生冲突，不能静默覆盖
+- 其他非空 nested unknown fields 仍然拒绝
+- 更新发给 Provider 的 Structured Outputs schema
+- Extraction prompt 明确要求使用 `field_of_study` 和 `gpa`
+- 不要把所有未知 Education 字段都接受
+- Candidate 失败时正式 Profile 保持不变
+
+## 双学位处理
+
+不要把“双学位”强行压缩成一个模糊专业。
+
+如果 Provider 能明确识别两项学位，应允许生成两条 Education：
+
+1. Bachelor of Science — Computer Science and Advertising
+2. Bachelor of Science — Economics
+
+学校可以相同。
+
+去重规则不能因为 institution 相同就错误地删除其中一条；至少需要同时比较 institution、degree 和 field_of_study。
+
+## 测试
+
+至少增加：
+
+1. major 正确映射到 field_of_study
+2. gpa 能够创建、保存和加载
+3. 旧 JSON 没有 gpa 时保持兼容
+4. GPA 原始字符串不被改变
+5. major 与 field_of_study 相同不会冲突
+6. major 与 field_of_study 不同时不会静默覆盖
+7. 同一学校的两个不同学位可以同时存在
+8. 其他 nested unknown fields 仍被拒绝
+9. Candidate 失败时正式 Profile 不变
+10. 原有 79 项测试继续通过
+
+版本更新为 0.4.4，更新双语 README 和追加两份日志。
+
+完成后运行：
+
+python -m pytest
+python -c "import aarvia; print(aarvia.__version__)"
+git diff --check
+
+不要调用真实百炼 API，不要开始 Resume Import 或 Phase 2。
+
+### Assistant
+
+完成 Education schema 兼容修复：正式 Education 新增可选字符串 `gpa`，旧 JSON 仍可加载；候选归一化将 `major` 确定性映射到 `field_of_study`，两者冲突时拒绝 Candidate；教育去重键现同时比较学校、学位和专业，因此同校不同学位或专业可以并存。Provider schema、提取提示词、双语 README 和版本已更新至 `0.4.4`。全部 88 项测试、源码导入和 `git diff --check` 均通过，未调用真实 API，也未开始 Resume Import 或 Phase 2。
+
+## Conversation 12 - Safe Extraction Diagnostics
+
+### User
+
+诊断 Aarvia 真实百炼调用失败，不要继续猜测或添加字段别名。
+
+当前真实错误：
+
+Error: The LLM provider returned content that does not match the required candidate schema.
+
+这是我写给他的文案：I completed dual undergraduate degrees at UIUC in Computer Science and Advertising and in Economics, with a 3.7 GPA. I am pursuing a Master of Engineering in Artificial Intelligence at UCLA. My experience includes working as an AI Analyst at MiraclePlus, an LMS System Designer in the ATLAS Internship Program, a Data Scientist at the Shanghai CDC, an AI Product Analyst at Perfects.AI, and a CS124 Course Assistant at UIUC. I processed public-health datasets with more than 100,000 rows, developed Python automation and data visualizations, evaluated AI solutions, supported AI product development, and taught programming concepts. I also developed the MUSE data platform using Python and SQL and a U.S. travel recommendation system using Java and MySQL. My skills include Python, Pandas, NumPy, SQL, MySQL, PostgreSQL, R, Java, Git, machine learning, deep learning, NLP, data modeling, backend development, and data visualization.
+
+Error: The LLM provider returned content that does not match the required candidate schema.
+
+当前问题是普通模式隐藏了实际 Provider 输出，因此无法判断失败来自：
+
+- Provider 返回了 Markdown code fence
+- output_text 包含 JSON 之外的说明
+- JSON 语法无效
+- 顶层结构不正确
+- nested education 结构不正确
+- nullable 字段处理不兼容
+- 百炼没有遵守 Structured Outputs
+- Aarvia 使用了错误的 response parsing 路径
+
+## 任务一：增加安全调试模式
+
+新增 CLI 参数：
+
+aarvia discover --narrative --debug-extraction
+
+普通模式继续显示友好错误。
+
+debug 模式在解析失败时显示：
+
+1. 当前 Aarvia 版本
+2. Provider model
+3. Provider base URL 的 host，不显示 API key
+4. response.output_text 的原始内容
+5. JSON decode 是否成功
+6. 如果 JSON 成功，显示失败的字段路径和原因
+7. 当前执行到：
+   - raw parsing
+   - cleanup
+   - normalization
+   - candidate validation
+     中的哪一步
+
+必须保证：
+
+- 不打印 API key
+- 不打印 Authorization header
+- debug 模式需要明确提示其中可能包含用户输入信息
+- 默认不写入日志
+- 默认不保存原始 Provider 输出
+- Candidate 失败时正式 Profile 不变
+
+## 任务二：改善解析健壮性
+
+只处理不改变语义的格式问题：
+
+- 去除输出前后空白
+- 如果整个输出被单个 ```json code fence 包围，可以取出其中 JSON
+- 拒绝 JSON 前后包含无法解释的额外正文
+- 不使用正则从混杂文本中随意截取部分 JSON
+- 不自动修复缺失字段或编造值
+- JSON 解析成功后继续执行严格 Candidate 流程
+
+## 任务三：测试
+
+使用 mock 覆盖：
+
+1. 纯 JSON output_text
+2. 被 ```json 包围的完整 JSON
+3. JSON 前后存在说明文字
+4. 非法 JSON
+5. 合法 JSON 但 schema 错误
+6. debug 模式显示具体阶段
+7. 普通模式不泄露原始内容
+8. 错误信息不包含 API key
+9. 失败时正式 Profile 不变
+10. 所有原有测试继续通过
+
+同时增加：
+
+aarvia --version
+
+完成后更新版本、README 和追加日志。
+
+不要调用真实百炼 API。
+不要新增未经真实输出确认的 alias。
+不要开始 Resume Import 或 Phase 2。
+
+### Assistant
+
+完成安全提取诊断：新增 `aarvia --version` 和 `aarvia discover --narrative --debug-extraction`。普通模式仍隐藏 Provider 原文；debug 模式仅在终端显示版本、模型、endpoint host、原始 `output_text`、JSON 解析结果、失败路径与 raw parsing / cleanup / normalization / candidate validation 阶段，并提示可能包含个人信息。原文不写文件或日志，配置中的 API key 会被脱敏，也不读取或输出 Authorization header。解析器现在只额外接受前后空白和完整单层 `json` code fence，混杂正文、非法 JSON 和 schema 错误仍严格拒绝。版本更新为 `0.4.5`，全部 99 项 mock 测试与源码模块命令验证通过；现有 `.venv/bin/aarvia` 仍是未刷新的旧安装，需要重新执行本地 editable install 才会提供新参数。没有安装依赖、新增 alias、调用真实百炼、启动 Resume Import 或 Phase 2。
+
+## Conversation 13 - Bailian Chat Completions Protocol
+
+### User
+
+报告 Aarvia `0.4.5` 的真实百炼 debug 结果：JSON 解码成功，但百炼通过 Responses `text.format` 返回的合法 JSON 没有遵守正式 Candidate schema。Education、Experience 和 Skills 均出现结构不一致。要求不要继续为该响应增加 alias，而是依据百炼 Structured Outputs 协议，将阿里云 endpoint 的 Narrative Extraction 改为 Chat Completions `response_format=json_schema`，关闭 thinking，并保留 OpenAI SDK、现有配置、Candidate/Confirmation/CareerProfile 边界和 debug 模式。另要求增加 UTF-8 `--narrative-file` 长文本入口、合理文件上限、完整 mock 测试、版本 `0.4.6` 和双语文档。为遵守本轮隐私要求，本记录不复制用户职业背景全文或 Provider 原始输出。
+
+### Assistant
+
+完成百炼 Structured Outputs 协议修复：通过集中式 host 判断让 `dashscope.aliyuncs.com` 和 `*.maas.aliyuncs.com` 使用 Chat Completions `response_format=json_schema`，复用正式 Candidate schema并关闭 thinking；其他 endpoint 保持 Responses，且不接收百炼专用参数。Debug 新增 protocol 和 structured-output mode。CLI 新增 UTF-8 `--narrative-file`，最大 2 MiB，并与 manual/narrative 互斥。未根据不兼容响应新增任何 alias。版本更新为 `0.4.6`，117 项 mock 测试全部通过。editable 安装生成的 `.pth` 被 macOS 反复标记为 hidden，Python 无法加载；经授权改为普通本地 wheel 安装后，裸命令 `aarvia --version` 已连续输出 `0.4.6`。未调用真实 LLM API，也未开始 Resume Import 或 Phase 2。
+
+## Conversation 14 - Repository File Audit
+
+### User
+
+在真实测试前审视所有文件，分析每个文件的作用，删除完全不需要的文件，并重新测试以确认删除不会影响开发进度。
+
+### Assistant
+
+完成全仓库文件审计。删除废弃 `.venv-broken`、构建目录、egg-info、pytest/Python 缓存和冗余 `data/.gitkeep`；保留工作虚拟环境、全部有引用的源码和测试、配置、双语 README、两份日志、Profile 目录占位文件，以及用户的私有 Profile JSON。禁用缓存后运行全部 117 项测试，import、CLI 版本/help、diff 和清理状态检查均通过，版本保持 `0.4.6`。
+
+## Conversation 15 - Unknown Date Placeholders
+
+### User
+
+提供 Aarvia `0.4.6` 真实百炼 strict Structured Outputs 结果：协议和 Candidate 字段结构已经正确，但原文未提供日期时，Provider 在五个正式日期字段中输出了格式占位符。要求 prompt 与 schema 明确未知日期使用 null，并只把精确的两个格式模板转换为 null；其他非法日期继续拒绝，失败不写正式 Profile。版本更新到 `0.4.7`，重写过长且枯燥的双语 README，并加入表情符号。附件中的个人背景与原始 Provider 输出不写入日志。
+
+### Assistant
+
+实现和最终验证完成后补充。

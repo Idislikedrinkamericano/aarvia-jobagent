@@ -237,3 +237,180 @@ def test_responses_schema_uses_only_canonical_nested_fields() -> None:
     )
     assert PROFILE_JSON_SCHEMA["properties"]["career_preferences"]["additionalProperties"] is False
     assert PROFILE_JSON_SCHEMA["properties"]["constraints"]["additionalProperties"] is False
+
+
+def education_record(**changes) -> dict:
+    record = {
+        "institution": "Example University",
+        "degree": "Bachelor of Science",
+        "field_of_study": "Computer Science",
+        "start_date": "2022-09",
+        "expected_graduation_date": "2026-06",
+        "gpa": "3.7 / 4.0",
+    }
+    record.update(changes)
+    return record
+
+
+def test_education_major_alias_maps_to_field_of_study_and_preserves_gpa() -> None:
+    record = education_record()
+    record["major"] = record.pop("field_of_study")
+
+    candidate = CandidateProfile.from_extracted(
+        normalize_candidate_data({"education": [record]})
+    )
+
+    education = candidate.data["education"][0]
+    assert education["field_of_study"] == "Computer Science"
+    assert education["gpa"] == "3.7 / 4.0"
+    assert "major" not in education
+
+
+def test_matching_major_and_field_of_study_do_not_conflict() -> None:
+    record = education_record(major=" Computer Science ")
+
+    normalized = normalize_candidate_data({"education": [record]})
+
+    assert normalized["education"][0]["field_of_study"] == "Computer Science"
+    assert "major" not in normalized["education"][0]
+
+
+def test_conflicting_major_and_field_of_study_are_rejected() -> None:
+    record = education_record(major="Economics")
+
+    with pytest.raises(ProfileValidationError, match="major conflicts with field_of_study"):
+        normalize_candidate_data({"education": [record]})
+
+
+def test_other_non_empty_education_field_remains_rejected() -> None:
+    record = education_record(honors="summa cum laude")
+
+    with pytest.raises(ProfileValidationError, match="unknown fields: honors"):
+        CandidateProfile.from_extracted(
+            normalize_candidate_data({"education": [record]})
+        )
+
+
+def test_education_normalization_failure_does_not_modify_profile(tmp_path) -> None:
+    path = tmp_path / "profile.json"
+    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    save_profile(original, path)
+    extractor = FakeExtractor(
+        {"education": [education_record(major="Economics")]}
+    )
+
+    with pytest.raises(ProfileValidationError, match="major conflicts with field_of_study"):
+        run_narrative_discovery(
+            path,
+            extractor,
+            input_fn=scripted_input(["My education"]),
+            output_fn=lambda _message: None,
+        )
+
+    assert load_profile(path) == original
+
+
+def test_education_schema_uses_gpa_and_not_major() -> None:
+    education_schema = PROFILE_JSON_SCHEMA["properties"]["education"]["items"]
+
+    assert education_schema["additionalProperties"] is False
+    assert "major" not in education_schema["properties"]
+    assert education_schema["properties"]["gpa"] == {"type": ["string", "null"]}
+    assert "gpa" in education_schema["required"]
+
+
+@pytest.mark.parametrize("placeholder", ["YYYY-MM", "YYYY-MM-DD"])
+def test_exact_date_placeholders_become_null_only_in_date_fields(placeholder) -> None:
+    raw = {
+        "education": [
+            education_record(
+                start_date=placeholder,
+                expected_graduation_date=placeholder,
+            )
+        ],
+        "experience_overview": [
+            {
+                "experience_type": "work",
+                "organization_or_project_name": "Example Org",
+                "title_or_role": "Analyst",
+                "short_factual_summary": placeholder,
+                "start_date": placeholder,
+                "end_date": placeholder,
+            }
+        ],
+        "constraints": {
+            "target_start_date": placeholder,
+            "other_constraints": [placeholder],
+        },
+    }
+
+    normalized = normalize_candidate_data(raw)
+    candidate = CandidateProfile.from_extracted(normalized)
+
+    assert candidate.data["education"][0]["start_date"] is None
+    assert candidate.data["education"][0]["expected_graduation_date"] is None
+    assert candidate.data["experience_overview"][0]["start_date"] is None
+    assert candidate.data["experience_overview"][0]["end_date"] is None
+    assert candidate.data["constraints"]["target_start_date"] is None
+    assert candidate.data["experience_overview"][0]["short_factual_summary"] == placeholder
+    assert candidate.data["constraints"]["other_constraints"] == [placeholder]
+
+
+@pytest.mark.parametrize("date_value", ["2026-09", "2026-09-21"])
+def test_real_dates_are_preserved(date_value) -> None:
+    normalized = normalize_candidate_data(
+        {"education": [education_record(start_date=date_value)]}
+    )
+
+    assert normalized["education"][0]["start_date"] == date_value
+
+
+@pytest.mark.parametrize("invalid_date", ["2026-13", "next year", "soon"])
+def test_other_invalid_dates_remain_rejected(invalid_date) -> None:
+    normalized = normalize_candidate_data(
+        {"education": [education_record(start_date=invalid_date)]}
+    )
+
+    with pytest.raises(ProfileValidationError, match="start_date"):
+        CandidateProfile.from_extracted(normalized)
+
+
+def test_invalid_date_candidate_does_not_modify_formal_profile(tmp_path) -> None:
+    path = tmp_path / "profile.json"
+    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    save_profile(original, path)
+    extractor = FakeExtractor(
+        {"education": [education_record(start_date="next year")]}
+    )
+
+    with pytest.raises(ProfileValidationError, match="start_date"):
+        run_narrative_discovery(
+            path,
+            extractor,
+            input_fn=scripted_input(["My education"]),
+            output_fn=lambda _message: None,
+        )
+
+    assert load_profile(path) == original
+
+
+def test_date_schema_is_nullable_without_copyable_placeholders() -> None:
+    date_schemas = [
+        PROFILE_JSON_SCHEMA["properties"]["education"]["items"]["properties"]["start_date"],
+        PROFILE_JSON_SCHEMA["properties"]["education"]["items"]["properties"][
+            "expected_graduation_date"
+        ],
+        PROFILE_JSON_SCHEMA["properties"]["experience_overview"]["items"]["properties"][
+            "start_date"
+        ],
+        PROFILE_JSON_SCHEMA["properties"]["experience_overview"]["items"]["properties"][
+            "end_date"
+        ],
+        PROFILE_JSON_SCHEMA["properties"]["constraints"]["properties"]["target_start_date"],
+    ]
+
+    for schema in date_schemas:
+        assert schema["type"] == ["string", "null"]
+        assert "YYYY-MM" not in schema["description"]
+        assert "example" not in schema
+        assert "default" not in schema

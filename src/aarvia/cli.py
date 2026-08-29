@@ -7,17 +7,46 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from . import __version__
 from .confirmation import run_narrative_discovery
 from .interview import InputFunction, OutputFunction, run_discovery
 from .llm_client import LLMConfigurationError, LLMRequestError
-from .narrative_extraction import NarrativeExtractor, OpenAINarrativeExtractor
+from .narrative_extraction import ExtractionDebugError, NarrativeExtractor, OpenAINarrativeExtractor
 from .profile import ProfileValidationError
 
 DEFAULT_PROFILE_PATH = Path("data/profiles/default.json")
+MAX_NARRATIVE_FILE_BYTES = 2 * 1024 * 1024
+
+
+class NarrativeFileError(ValueError):
+    """Raised when a narrative text file cannot be used safely."""
+
+
+def read_narrative_file(path: Path) -> str:
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError as error:
+        raise NarrativeFileError(f"Narrative file does not exist: {path}") from error
+    except OSError as error:
+        raise NarrativeFileError(f"Could not inspect narrative file: {path}") from error
+    if size > MAX_NARRATIVE_FILE_BYTES:
+        raise NarrativeFileError(
+            f"Narrative file is too large ({size} bytes). Maximum size is {MAX_NARRATIVE_FILE_BYTES} bytes."
+        )
+    try:
+        narrative = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise NarrativeFileError("Narrative file must be UTF-8 text.") from error
+    except OSError as error:
+        raise NarrativeFileError(f"Could not read narrative file: {path}") from error
+    if not narrative.strip():
+        raise NarrativeFileError("Narrative file is empty.")
+    return narrative
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aarvia", description="Aarvia career navigation tools")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command")
     discover = subparsers.add_parser("discover", help="create or continue a Career Profile")
     discover.add_argument(
@@ -29,6 +58,16 @@ def build_parser() -> argparse.ArgumentParser:
     mode = discover.add_mutually_exclusive_group()
     mode.add_argument("--manual", action="store_true", help="use the fixed-field manual questionnaire")
     mode.add_argument("--narrative", action="store_true", help="extract candidates from a natural-language description")
+    mode.add_argument(
+        "--narrative-file",
+        type=Path,
+        help="read a UTF-8 natural-language description from a text file",
+    )
+    discover.add_argument(
+        "--debug-extraction",
+        action="store_true",
+        help="show in-memory provider output diagnostics when narrative extraction fails",
+    )
     return parser
 
 
@@ -44,23 +83,44 @@ def main(
     if arguments.command is None:
         parser.print_help()
         return 0
+    narrative_mode = arguments.narrative or arguments.narrative_file is not None
+    if arguments.debug_extraction and not narrative_mode:
+        parser.error("--debug-extraction requires --narrative or --narrative-file")
     try:
-        if arguments.narrative:
+        if narrative_mode:
+            narrative = read_narrative_file(arguments.narrative_file) if arguments.narrative_file else None
             narrative_extractor = extractor or OpenAINarrativeExtractor()
             run_narrative_discovery(
                 arguments.profile,
                 narrative_extractor,
                 input_fn=input_fn,
                 output_fn=output_fn,
+                debug_extraction=arguments.debug_extraction,
+                narrative=narrative,
             )
         else:
             run_discovery(arguments.profile, input_fn=input_fn, output_fn=output_fn)
+    except ExtractionDebugError as error:
+        output_fn("Warning: debug output may contain personal information from your input.")
+        output_fn(f"Aarvia version: {__version__}")
+        output_fn(f"Provider model: {error.model}")
+        output_fn(f"Provider base URL host: {error.base_url_host}")
+        output_fn(f"Extraction protocol: {error.protocol}")
+        output_fn(f"Structured output mode: {error.structured_output_mode}")
+        output_fn(f"Extraction stage: {error.stage}")
+        output_fn(f"JSON decode succeeded: {'yes' if error.json_decode_succeeded else 'no'}")
+        output_fn(f"Failure reason: {error.detail}")
+        output_fn("Raw response.output_text:")
+        output_fn(error.raw_output if error.raw_output is not None else "<unavailable>")
+        output_fn(f"Error: {error}")
+        return 1
     except (
         OSError,
         ProfileValidationError,
         json.JSONDecodeError,
         LLMConfigurationError,
         LLMRequestError,
+        NarrativeFileError,
     ) as error:
         output_fn(f"Error: {error}")
         return 1

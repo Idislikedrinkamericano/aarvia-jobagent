@@ -17,6 +17,7 @@ def complete_profile_data() -> dict:
                 "field_of_study": "Computer Science",
                 "start_date": "2025-09",
                 "expected_graduation_date": "2027-06",
+                "gpa": "3.7 / 4.0",
             }
         ],
         "experience_overview": [
@@ -60,6 +61,7 @@ def test_create_valid_profile() -> None:
     assert isinstance(profile, CareerProfile)
     assert profile.basic_profile.name == "Lin"
     assert profile.education[0].field_of_study == "Computer Science"
+    assert profile.education[0].gpa == "3.7 / 4.0"
     assert profile.skills[0].skill_name == "Python"
     assert profile.open_questions == []
 
@@ -69,6 +71,7 @@ def test_create_valid_profile() -> None:
     [
         (lambda data: data["skills"][0].update(skill_name=3), "skill_name"),
         (lambda data: data["education"][0].update(start_date="September 2025"), "start_date"),
+        (lambda data: data["education"][0].update(gpa=3.7), "gpa"),
         (lambda data: data["constraints"].update(work_arrangement_preference="sometimes"), "work_arrangement"),
     ],
 )
@@ -86,6 +89,19 @@ def test_unknown_fields_are_not_silently_accepted() -> None:
 
     with pytest.raises(ProfileValidationError, match="unknown fields: recommended_role"):
         create_profile(data)
+
+
+def test_unknown_education_and_experience_dates_are_valid_nulls() -> None:
+    data = complete_profile_data()
+    data["education"][0]["start_date"] = None
+    data["education"][0]["expected_graduation_date"] = None
+    data["experience_overview"][0]["start_date"] = None
+
+    profile = create_profile(data)
+
+    assert profile.education[0].start_date is None
+    assert profile.education[0].expected_graduation_date is None
+    assert profile.experience_overview[0].start_date is None
 
 
 def test_inconsistent_supplied_open_questions_are_rejected() -> None:

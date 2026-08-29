@@ -13,7 +13,7 @@ from .profile import (
 )
 from .storage import load_profile, save_profile
 
-__version__ = "0.4.3"
+__version__ = "0.4.7"
 
 __all__ = [
     "BasicProfile",

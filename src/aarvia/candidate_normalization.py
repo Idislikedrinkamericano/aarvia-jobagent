@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .candidates import TOPICS
 from .profile import ProfileValidationError
@@ -15,6 +15,7 @@ SUPPORTED_ALIASES = {
     "target_locations",
     "target_employment_type",
 }
+DATE_PLACEHOLDERS = {"YYYY-MM", "YYYY-MM-DD"}
 
 
 def _is_recursively_empty(value: Any) -> bool:
@@ -140,12 +141,72 @@ def _normalize_employment_type(data: dict[str, Any]) -> None:
     constraints["employment_type_preference"] = value
 
 
-def normalize_candidate_data(value: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_education_aliases(data: dict[str, Any]) -> None:
+    if "education" not in data:
+        return
+    education = data["education"]
+    if not isinstance(education, list):
+        raise ProfileValidationError("candidate.education must be a list")
+    normalized: list[Any] = []
+    for index, raw_record in enumerate(education):
+        if not isinstance(raw_record, Mapping):
+            raise ProfileValidationError(f"candidate.education[{index}] must be a dictionary")
+        record = dict(raw_record)
+        if "major" in record:
+            major = record.pop("major")
+            field_of_study = record.get("field_of_study")
+            if field_of_study is None:
+                record["field_of_study"] = major
+            elif not (
+                isinstance(major, str)
+                and isinstance(field_of_study, str)
+                and major.strip() == field_of_study.strip()
+            ):
+                raise ProfileValidationError(
+                    f"candidate.education[{index}].major conflicts with field_of_study"
+                )
+        normalized.append(record)
+    data["education"] = normalized
+
+
+def _normalize_date_placeholders(data: dict[str, Any]) -> None:
+    for topic, field_names in (
+        ("education", ("start_date", "expected_graduation_date")),
+        ("experience_overview", ("start_date", "end_date")),
+    ):
+        records = data.get(topic)
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            for field_name in field_names:
+                if record.get(field_name) in DATE_PLACEHOLDERS:
+                    record[field_name] = None
+    constraints = data.get("constraints")
+    if (
+        isinstance(constraints, dict)
+        and constraints.get("target_start_date") in DATE_PLACEHOLDERS
+    ):
+        constraints["target_start_date"] = None
+
+
+def normalize_candidate_data(
+    value: Mapping[str, Any],
+    *,
+    stage_callback: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
     """Remove empty provider extras, then normalize only documented aliases."""
     if not isinstance(value, Mapping):
         raise ProfileValidationError("candidate profile data must be a dictionary")
     data = deepcopy(dict(value))
+    if stage_callback:
+        stage_callback("cleanup")
     _remove_empty_unknown_fields(data)
+    if stage_callback:
+        stage_callback("normalization")
+    _normalize_date_placeholders(data)
+    _normalize_education_aliases(data)
     _normalize_projects(data)
     _normalize_list_alias(
         data,

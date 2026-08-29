@@ -90,6 +90,45 @@ def test_identical_records_are_not_duplicated(topic, candidate_value) -> None:
     assert len(getattr(merged, topic)) == 1
 
 
+def test_two_degrees_at_same_school_with_different_fields_are_preserved() -> None:
+    profile = create_profile(
+        {
+            "education": [
+                {
+                    "institution": "Example University",
+                    "degree": "Bachelor of Science",
+                    "field_of_study": "Computer Science and Advertising",
+                    "start_date": "2022-09",
+                    "expected_graduation_date": "2026-06",
+                    "gpa": None,
+                }
+            ]
+        }
+    )
+    second_degree = {
+        "institution": "Example University",
+        "degree": "Bachelor of Science",
+        "field_of_study": "Economics",
+        "start_date": "2022-09",
+        "expected_graduation_date": "2026-06",
+        "gpa": None,
+    }
+
+    merged = merge_candidate_topic(
+        profile,
+        "education",
+        [second_degree],
+        input_fn=scripted_input([]),
+        output_fn=lambda _message: None,
+    )
+
+    assert merged is not None
+    assert [entry.field_of_study for entry in merged.education] == [
+        "Computer Science and Advertising",
+        "Economics",
+    ]
+
+
 def test_list_fields_are_deduplicated_in_stable_order() -> None:
     profile = create_profile(
         {"career_preferences": {"interested_fields": ["AI", "NLP"]}}

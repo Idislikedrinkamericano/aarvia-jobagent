@@ -25,6 +25,18 @@ def test_json_can_be_loaded_and_round_trip_is_equal(tmp_path) -> None:
     assert isinstance(loaded, CareerProfile)
     assert loaded == original
     assert loaded.to_dict() == original.to_dict()
+    assert loaded.education[0].gpa == "3.7 / 4.0"
+
+
+def test_old_json_without_gpa_remains_compatible(tmp_path) -> None:
+    data = complete_profile_data()
+    data["education"][0].pop("gpa")
+    path = tmp_path / "old-profile.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = load_profile(path)
+
+    assert loaded.education[0].gpa is None
 
 
 def test_load_rejects_unknown_json_fields(tmp_path) -> None:

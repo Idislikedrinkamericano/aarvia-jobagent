@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 
 class LLMConfigurationError(RuntimeError):
@@ -50,6 +51,14 @@ def _uses_default_openai_endpoint(model: str) -> bool:
     return model.casefold().startswith(("gpt-", "chatgpt-", "o1", "o3", "o4", "ft:"))
 
 
+def is_bailian_endpoint(base_url: str | None) -> bool:
+    """Identify Alibaba Cloud endpoints by parsed host, not model name or URL presence."""
+    if not base_url:
+        return False
+    host = (urlparse(base_url).hostname or "").casefold()
+    return host == "dashscope.aliyuncs.com" or host.endswith(".maas.aliyuncs.com")
+
+
 def create_openai_client(
     settings: LLMSettings,
     *,
@@ -87,7 +96,7 @@ def safe_llm_error(error: Exception) -> LLMRequestError:
         )
     if status_code == 400 and ("model" in error_code or "model" in message):
         return LLMRequestError(
-            "The configured LLM model is invalid or does not support this Responses API request."
+            "The configured LLM model is invalid or does not support this structured-output request."
         )
     return LLMRequestError("The LLM provider could not complete the extraction request.")
 
