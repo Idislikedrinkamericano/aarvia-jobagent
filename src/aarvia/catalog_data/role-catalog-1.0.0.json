@@ -1,0 +1,122 @@
+{
+  "schema": "aarvia.role_catalog",
+  "schema_version": 1,
+  "catalog_version": "1.0.0",
+  "catalog_type": "production",
+  "roles": [
+    {
+      "role_id": "applied_ai_engineer",
+      "display_name": "Applied AI Engineer",
+      "description": "Builds software products that apply AI models to user and business workflows.",
+      "specializations": [
+        {"specialization_id": "agentic_ai", "display_name": "Agentic AI", "description": null},
+        {"specialization_id": "rag", "display_name": "RAG", "description": null},
+        {"specialization_id": "nlp_llm_applications", "display_name": "NLP/LLM Applications", "description": null},
+        {"specialization_id": "ai_product_integration", "display_name": "AI Product Integration", "description": null}
+      ],
+      "search_title_aliases": ["AI Engineer", "LLM Engineer", "Generative AI Engineer", "AI Agent Engineer"],
+      "requirement_ids": [],
+      "catalog_version": "1.0.0",
+      "source_references": []
+    },
+    {
+      "role_id": "machine_learning_engineer",
+      "display_name": "Machine Learning Engineer",
+      "description": "Builds and operates software systems whose behavior depends on machine learning models.",
+      "specializations": [
+        {"specialization_id": "model_development", "display_name": "Model Development", "description": null},
+        {"specialization_id": "applied_ml", "display_name": "Applied ML", "description": null},
+        {"specialization_id": "computer_vision", "display_name": "Computer Vision", "description": null}
+      ],
+      "search_title_aliases": ["ML Engineer", "Machine Learning Software Engineer"],
+      "requirement_ids": [],
+      "catalog_version": "1.0.0",
+      "source_references": []
+    },
+    {
+      "role_id": "research_engineer",
+      "display_name": "Research Engineer",
+      "description": "Turns research questions and prototypes into reproducible technical experiments and systems.",
+      "specializations": [
+        {"specialization_id": "ai_research_systems", "display_name": "AI Research Systems", "description": null},
+        {"specialization_id": "model_experimentation", "display_name": "Model Experimentation", "description": null}
+      ],
+      "search_title_aliases": ["AI Research Engineer", "Machine Learning Research Engineer"],
+      "requirement_ids": [],
+      "catalog_version": "1.0.0",
+      "source_references": []
+    },
+    {
+      "role_id": "data_scientist",
+      "display_name": "Data Scientist",
+      "description": "Uses data, statistical methods, and models to investigate and support decisions.",
+      "specializations": [
+        {"specialization_id": "product_analytics", "display_name": "Product Analytics", "description": null},
+        {"specialization_id": "applied_modeling", "display_name": "Applied Modeling", "description": null},
+        {"specialization_id": "decision_science", "display_name": "Decision Science", "description": null}
+      ],
+      "search_title_aliases": ["Applied Data Scientist", "Product Data Scientist"],
+      "requirement_ids": [],
+      "catalog_version": "1.0.0",
+      "source_references": []
+    },
+    {
+      "role_id": "ml_platform_mlops_engineer",
+      "display_name": "ML Platform / MLOps Engineer",
+      "description": "Builds infrastructure and workflows used to develop, deploy, and operate ML systems.",
+      "specializations": [
+        {"specialization_id": "ml_platform", "display_name": "ML Platform", "description": null},
+        {"specialization_id": "ml_operations", "display_name": "ML Operations", "description": null},
+        {"specialization_id": "model_serving", "display_name": "Model Serving", "description": null}
+      ],
+      "search_title_aliases": ["MLOps Engineer", "ML Platform Engineer", "Machine Learning Infrastructure Engineer"],
+      "requirement_ids": [],
+      "catalog_version": "1.0.0",
+      "source_references": []
+    },
+    {
+      "role_id": "data_engineer",
+      "display_name": "Data Engineer",
+      "description": "Builds systems that move, transform, organize, and serve data reliably.",
+      "specializations": [
+        {"specialization_id": "data_platform", "display_name": "Data Platform", "description": null},
+        {"specialization_id": "analytics_engineering", "display_name": "Analytics Engineering", "description": null},
+        {"specialization_id": "streaming_data", "display_name": "Streaming Data", "description": null}
+      ],
+      "search_title_aliases": ["Data Platform Engineer", "Analytics Engineer"],
+      "requirement_ids": [],
+      "catalog_version": "1.0.0",
+      "source_references": []
+    },
+    {
+      "role_id": "backend_engineer",
+      "display_name": "Backend Engineer",
+      "description": "Builds server-side services, APIs, and the systems that support them.",
+      "specializations": [
+        {"specialization_id": "api_services", "display_name": "API Services", "description": null},
+        {"specialization_id": "distributed_systems", "display_name": "Distributed Systems", "description": null},
+        {"specialization_id": "platform_backend", "display_name": "Platform Backend", "description": null}
+      ],
+      "search_title_aliases": ["Backend Software Engineer", "Server-side Engineer"],
+      "requirement_ids": [],
+      "catalog_version": "1.0.0",
+      "source_references": []
+    },
+    {
+      "role_id": "software_product_engineer",
+      "display_name": "Software / Product Engineer",
+      "description": "Builds product software across the layers needed to deliver a complete user-facing capability.",
+      "specializations": [
+        {"specialization_id": "full_stack_product", "display_name": "Full-stack Product", "description": null},
+        {"specialization_id": "developer_tools", "display_name": "Developer Tools", "description": null},
+        {"specialization_id": "product_prototyping", "display_name": "Product Prototyping", "description": null}
+      ],
+      "search_title_aliases": ["Software Engineer", "Product Engineer", "Full-stack Engineer"],
+      "requirement_ids": [],
+      "catalog_version": "1.0.0",
+      "source_references": []
+    }
+  ],
+  "requirements": [],
+  "sources": []
+}

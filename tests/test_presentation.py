@@ -11,7 +11,7 @@ from aarvia.presentation import (
 def experience(start="2025-05", end="2025-08"):
     return {
         "experience_type": "internship",
-        "organization_or_project_name": "MiraclePlus",
+        "organization_or_project_name": "Northstar Labs",
         "title_or_role": "AI Analyst and Investment Mentor",
         "short_factual_summary": "Evaluated AI solutions.",
         "start_date": start,
@@ -21,7 +21,7 @@ def experience(start="2025-05", end="2025-08"):
 
 def education():
     return {
-        "institution": "UIUC",
+        "institution": "Example State University",
         "degree": "Bachelor's Degree",
         "field_of_study": "Economics",
         "start_date": None,
@@ -42,7 +42,7 @@ def test_experience_summary_shows_readable_start_and_end_dates() -> None:
     lines = format_experience([experience()])
 
     assert lines == [
-        "AI Analyst and Investment Mentor at MiraclePlus",
+        "AI Analyst and Investment Mentor at Northstar Labs",
         "Type: Internship",
         "Dates: May 2025 – August 2025",
         "Summary: Evaluated AI solutions.",
@@ -78,7 +78,7 @@ def test_normal_diff_is_friendly_and_debug_can_include_technical_path() -> None:
     )
 
     joined = "\n".join(normal)
-    assert "MiraclePlus — AI Analyst and Investment Mentor" in joined
+    assert "Northstar Labs — AI Analyst and Investment Mentor" in joined
     assert "Before: Not provided" in joined
     assert "After: January 2026" in joined
     assert "[0]" not in joined
@@ -95,14 +95,14 @@ def test_record_diffs_use_education_experience_and_skill_identities() -> None:
             [education()],
             [education() | {"gpa": "3.7"}],
             [("education[0].gpa", None, "3.7")],
-            "UIUC — Bachelor's Degree in Economics",
+            "Example State University — Bachelor's Degree in Economics",
         ),
         (
             "experience_overview",
             [experience(end=None)],
             [experience(end="2026-01")],
             [("experience_overview[0].end_date", None, "2026-01")],
-            "MiraclePlus — AI Analyst and Investment Mentor",
+            "Northstar Labs — AI Analyst and Investment Mentor",
         ),
         (
             "skills",
@@ -141,7 +141,7 @@ def test_session_summary_uses_question_sets_not_array_indexes() -> None:
     updated = create_profile(
         {
             "basic_profile": {
-                "current_location": "Shanghai",
+                "current_location": "Example City",
                 "current_status": "Graduate student",
             }
         }

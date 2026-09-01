@@ -24,7 +24,7 @@ def run_with_answers(path, answers):
 
 def complete_non_record_data() -> dict:
     return {
-        "basic_profile": {"current_location": "Shanghai", "current_status": "Student"},
+        "basic_profile": {"current_location": "Example City", "current_status": "Student"},
         "career_preferences": {
             "interested_fields": ["AI"],
             "preferred_work_activities": ["Building systems"],
@@ -33,7 +33,7 @@ def complete_non_record_data() -> dict:
             "currently_considered_roles": ["Software engineer"],
         },
         "constraints": {
-            "target_locations": ["Shanghai"],
+            "target_locations": ["Example City"],
             "work_authorization_or_visa_constraints": "None",
             "work_arrangement_preference": "hybrid",
             "employment_type_preference": "full-time",
@@ -57,10 +57,10 @@ def test_first_run_creates_profile(tmp_path) -> None:
 def test_answers_are_saved_to_correct_fields(tmp_path) -> None:
     path = tmp_path / "profile.json"
 
-    run_with_answers(path, ["  Shanghai  ", "Student", ":quit"])
+    run_with_answers(path, ["  Example City  ", "Student", ":quit"])
 
     profile = load_profile(path)
-    assert profile.basic_profile.current_location == "Shanghai"
+    assert profile.basic_profile.current_location == "Example City"
     assert profile.basic_profile.current_status == "Student"
 
 
@@ -84,7 +84,7 @@ def test_skip_is_not_saved_as_profile_data(tmp_path) -> None:
 
 def test_quit_preserves_partial_record_draft_and_resume_finishes_it(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    run_with_answers(path, ["Shanghai", "Student", "Example University", ":quit"])
+    run_with_answers(path, ["Example City", "Student", "Example University", ":quit"])
 
     draft_path = tmp_path / "profile.interview.json"
     assert json.loads(draft_path.read_text(encoding="utf-8"))["education"]["institution"] == "Example University"
@@ -109,7 +109,7 @@ def test_existing_fields_are_loaded_and_not_overwritten(tmp_path) -> None:
 
 def test_invalid_date_reports_error_and_reprompts(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    save_profile(create_profile({"basic_profile": {"current_location": "Shanghai", "current_status": "Student"}}), path)
+    save_profile(create_profile({"basic_profile": {"current_location": "Example City", "current_status": "Student"}}), path)
 
     _, output = run_with_answers(
         path,

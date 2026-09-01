@@ -7,7 +7,7 @@ def complete_profile_data() -> dict:
     return {
         "basic_profile": {
             "name": "Lin",
-            "current_location": "Shanghai",
+            "current_location": "Example City",
             "current_status": "Graduate student",
         },
         "education": [
@@ -45,7 +45,7 @@ def complete_profile_data() -> dict:
             "currently_considered_roles": ["software engineer"],
         },
         "constraints": {
-            "target_locations": ["Shanghai", "Remote"],
+            "target_locations": ["Example City", "Remote"],
             "work_authorization_or_visa_constraints": "Requires sponsorship outside China",
             "work_arrangement_preference": "hybrid",
             "employment_type_preference": "full-time",

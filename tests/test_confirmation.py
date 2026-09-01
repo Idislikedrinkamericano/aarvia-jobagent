@@ -51,7 +51,7 @@ def run_workflow(path, extractor, answers):
 
 def test_fake_extractor_candidate_is_not_saved_before_confirmation(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     extractor = FakeExtractor({"skills": [{"skill_name": "Python", "category": "language"}]})
 
@@ -73,7 +73,7 @@ def test_accepted_topic_is_merged_and_saved(tmp_path) -> None:
 
 def test_rejected_topic_does_not_change_existing_profile(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     extractor = FakeExtractor({"skills": [{"skill_name": "Python", "category": "language"}]})
 
@@ -146,7 +146,7 @@ def test_two_degrees_at_same_school_with_different_fields_are_preserved() -> Non
 
 def education_with_dates(start_date=None, end_date=None):
     return {
-        "institution": "UIUC",
+        "institution": "Example State University",
         "degree": "Bachelor's Degree",
         "field_of_study": "Economics",
         "start_date": start_date,
@@ -207,7 +207,7 @@ def test_different_non_empty_record_field_is_a_real_friendly_conflict() -> None:
     assert merged is not None
     assert merged.education[0].expected_graduation_date == "2026-05"
     assert "End date conflict for:" in output
-    assert "UIUC — Bachelor's Degree in Economics" in output
+    assert "Example State University — Bachelor's Degree in Economics" in output
     assert "Current end date: May 2026" in output
     assert "New end date: June 2026" in output
 
@@ -233,12 +233,12 @@ def test_adding_experience_dates_updates_one_record_without_conflict() -> None:
 
 def test_refinement_identity_ignores_dates_and_normalizes_safe_text() -> None:
     record = incomplete_experience("Evaluated AI solutions.")
-    record["organization_or_project_name"] = "MiraclePlus"
+    record["organization_or_project_name"] = "Northstar Labs"
     record["title_or_role"] = "AI  Analyst"
     profile = create_profile({"experience_overview": [record]})
     candidate = {
         **record,
-        "organization_or_project_name": "  ＭｉｒａｃｌｅＰｌｕｓ  ",
+        "organization_or_project_name": "  Ｎｏｒｔｈｓｔａｒ　Ｌａｂｓ  ",
         "title_or_role": "ai analyst",
         "start_date": "2025-05",
         "end_date": "2025-08",
@@ -367,8 +367,8 @@ def test_multiple_refinement_matches_require_disambiguation() -> None:
 
     assert retried is RETRY_REFINEMENT
     assert "More than one existing record matches:" in output
-    assert "1. MiraclePlus — AI Analyst" in output
-    assert "2. MiraclePlus — AI Analyst" in output
+    assert "1. Northstar Labs — AI Analyst" in output
+    assert "2. Northstar Labs — AI Analyst" in output
 
 
 def test_refinement_plan_is_all_or_nothing_before_record_updates() -> None:
@@ -444,20 +444,20 @@ def test_list_fields_are_deduplicated_in_stable_order() -> None:
 
 def test_conflict_requires_choice_and_can_keep_existing(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    save_profile(create_profile({"basic_profile": {"current_location": "Shanghai"}}), path)
+    save_profile(create_profile({"basic_profile": {"current_location": "Example City"}}), path)
     extractor = FakeExtractor({"basic_profile": {"current_location": "Beijing"}})
 
     _, output = run_workflow(path, extractor, ["I moved to Beijing.", "y", "e", "y"])
 
-    assert load_profile(path).basic_profile.current_location == "Shanghai"
+    assert load_profile(path).basic_profile.current_location == "Example City"
     assert "Current location conflict for:" in output
-    assert "Current location: Shanghai" in output
+    assert "Current location: Example City" in output
     assert "New location: Beijing" in output
 
 
 def test_unresolved_conflict_is_not_written(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     extractor = FakeExtractor({"basic_profile": {"current_location": "Beijing"}})
 
@@ -503,7 +503,7 @@ def test_accepted_merge_round_trip_remains_equal(tmp_path) -> None:
 
 def test_extractor_error_does_not_damage_existing_profile(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     extractor = FakeExtractor(LLMRequestError("API unavailable"))
 
@@ -516,7 +516,7 @@ def test_extractor_error_does_not_damage_existing_profile(tmp_path) -> None:
 def incomplete_experience(summary=None) -> dict:
     return {
         "experience_type": "work",
-        "organization_or_project_name": "MiraclePlus",
+        "organization_or_project_name": "Northstar Labs",
         "title_or_role": "AI Analyst",
         "short_factual_summary": summary,
         "start_date": None,
@@ -534,7 +534,7 @@ def test_null_summary_is_displayed_and_can_be_confirmed(tmp_path) -> None:
     assert "Summary: Not provided" in output
     profile = load_profile(path)
     assert profile.experience_overview[0].short_factual_summary is None
-    assert "What did you do or accomplish as AI Analyst at MiraclePlus?" in profile.open_questions
+    assert "What did you do or accomplish as AI Analyst at Northstar Labs?" in profile.open_questions
 
 
 def test_user_can_edit_and_supply_missing_summary(tmp_path) -> None:
@@ -561,7 +561,7 @@ def test_user_can_edit_and_supply_missing_summary(tmp_path) -> None:
 def education_entries(gpa=None):
     return [
         {
-            "institution": "UIUC",
+            "institution": "Example State University",
             "degree": "Bachelor of Science",
             "field_of_study": "Computer Science and Advertising",
             "start_date": None,
@@ -569,7 +569,7 @@ def education_entries(gpa=None):
             "gpa": gpa,
         },
         {
-            "institution": "UIUC",
+            "institution": "Example State University",
             "degree": "Bachelor of Science",
             "field_of_study": "Economics",
             "start_date": None,
@@ -577,7 +577,7 @@ def education_entries(gpa=None):
             "gpa": gpa,
         },
         {
-            "institution": "UCLA",
+            "institution": "Example Graduate University",
             "degree": "Master of Engineering",
             "field_of_study": "Artificial Intelligence",
             "start_date": None,
@@ -598,9 +598,9 @@ def test_gpa_only_correction_preserves_every_other_education_fact(tmp_path) -> N
         path,
         extractor,
         [
-            "UIUC dual degrees and UCLA AI master's.",
+            "Example State University dual degrees and Example Graduate University AI master's.",
             "e",
-            "Set the UIUC GPA to 3.7.",
+            "Set the Example State University GPA to 3.7.",
             ".done",
             "y",
             "y",
@@ -628,7 +628,7 @@ def test_unsupported_correction_values_are_rejected_and_candidate_is_unchanged(t
     result, output = run_workflow(
         path,
         extractor,
-        ["UIUC and UCLA education", "e", "Only add GPA 3.7", ".done", "q"],
+        ["Example State University and Example Graduate University education", "e", "Only add GPA 3.7", ".done", "q"],
     )
 
     assert result is False
@@ -683,7 +683,7 @@ def test_empty_multiline_correction_can_be_cancelled_without_extraction(tmp_path
 
 def test_final_cancel_discards_accepted_session_draft(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     extractor = FakeExtractor({"skills": [{"skill_name": "Python", "category": "language"}]})
 

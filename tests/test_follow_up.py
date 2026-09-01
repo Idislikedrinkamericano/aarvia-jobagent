@@ -91,7 +91,7 @@ def basic_candidate(name=None):
     return {
         "basic_profile": {
             "name": name,
-            "current_location": "Shanghai",
+            "current_location": "Example City",
             "current_status": "Graduate student",
         }
     }
@@ -101,7 +101,7 @@ def constraints_profile():
     data = existing_profile().to_dict()
     data.pop("open_questions")
     data["basic_profile"] = {
-        "current_location": "Shanghai",
+        "current_location": "Example City",
         "current_status": "Graduate student",
     }
     data["career_preferences"] = {
@@ -132,7 +132,7 @@ def partial_preferences_profile(*, skill_proficiency="advanced"):
     data.pop("open_questions")
     data["basic_profile"] = {
         "name": "Test User",
-        "current_location": "Shanghai",
+        "current_location": "Example City",
         "current_status": "Graduate student",
     }
     data["career_preferences"] = {
@@ -177,27 +177,27 @@ def seven_experience_profile():
     data["career_preferences"]["preferred_industries"] = ["Technology"]
     data["experience_overview"] = [
         experience_record(
-            "MiraclePlus", "AI Analyst and Investment Mentor", "internship",
+            "Northstar Labs", "AI Analyst and Investment Mentor", "internship",
             "Evaluated AI solutions.", None, None,
         ),
         experience_record(
-            "ATLAS Internship Program", "LMS System Designer", "internship",
+            "Horizon Internship Program", "LMS System Designer", "internship",
             "Designed LMS structures.", None, None,
         ),
         experience_record(
-            "Shanghai CDC", "Data Scientist", "work",
+            "Regional Public Health Lab", "Data Scientist", "work",
             "Processed public-health datasets.", None, None,
         ),
         experience_record(
-            "Perfects.AI", "AI Product Analyst", "work",
+            "Sample AI Studio", "AI Product Analyst", "work",
             "Supported AI product development.", "2025-05", "2025-08",
         ),
         experience_record(
-            "UIUC", "CS124 Course Assistant", "teaching_assistantship",
+            "Example State University", "CS124 Course Assistant", "teaching_assistantship",
             "Taught programming concepts.", "2024-07", "2025-05",
         ),
         experience_record(
-            "MUSE data platform", "Developer", "project",
+            "Beacon data platform", "Developer", "project",
             "Developed a data platform.", "2024-09", "2026-01",
         ),
         experience_record(
@@ -226,15 +226,15 @@ def three_experience_date_enrichments():
     return {
         "experience_overview": [
             experience_record(
-                "MiraclePlus", "AI Analyst and Investment Mentor", "internship",
+                "Northstar Labs", "AI Analyst and Investment Mentor", "internship",
                 "Evaluated AI solutions.", "2025-05", "2025-08",
             ),
             experience_record(
-                "ATLAS Internship Program", "LMS System Designer", "internship",
+                "Horizon Internship Program", "LMS System Designer", "internship",
                 "Designed LMS structures.", "2025-05", "2026-01",
             ),
             experience_record(
-                "Shanghai CDC", "Data Scientist", "work",
+                "Regional Public Health Lab", "Data Scientist", "work",
                 "Processed public-health datasets.", "2024-06", "2024-08",
             ),
         ]
@@ -271,7 +271,7 @@ def test_only_one_topic_question_is_shown_before_quit(tmp_path) -> None:
     extractor = FollowUpExtractor(basic_candidate())
 
     result, output = run_follow_up(
-        path, extractor, ["Shanghai graduate student", ".done", "q"]
+        path, extractor, ["Example City graduate student", ".done", "q"]
     )
 
     assert result is False
@@ -286,10 +286,10 @@ def test_follow_up_context_contains_question_profile_and_session_draft(tmp_path)
     path = save_profile(existing_profile(), tmp_path / "profile.json")
     extractor = FollowUpExtractor(basic_candidate())
 
-    run_follow_up(path, extractor, ["Shanghai graduate student", ".done", "q"])
+    run_follow_up(path, extractor, ["Example City graduate student", ".done", "q"])
 
     answer, context = extractor.calls[0]
-    assert answer == "Shanghai graduate student"
+    assert answer == "Example City graduate student"
     assert context["question"] == FOLLOW_UP_QUESTIONS["basic_profile.current_location"]
     assert context["topic"] == "basic_profile"
     assert context["field_path"] == "basic_profile.current_location"
@@ -319,7 +319,7 @@ def test_follow_up_context_contains_question_profile_and_session_draft(tmp_path)
         ),
         (
             {
-                "constraints": {"target_locations": ["Shanghai"]},
+                "constraints": {"target_locations": ["Example City"]},
                 "experience_overview": [{
                     "experience_type": "work", "organization_or_project_name": "Other",
                     "title_or_role": "Engineer", "short_factual_summary": None,
@@ -361,7 +361,7 @@ def test_empty_candidate_requires_retry_and_none_is_an_explicit_command(tmp_path
     result, output = run_follow_up(
         path,
         FollowUpExtractor({}),
-        ["I live in Shanghai.", ".done", ":none", ":finish", "y"],
+        ["I live in Example City.", ".done", ":none", ":finish", "y"],
     )
 
     assert result is True
@@ -411,7 +411,7 @@ def test_multiline_correction_shows_diff_and_can_be_applied(tmp_path) -> None:
         path,
         extractor,
         [
-            "Shanghai",
+            "Example City",
             "Graduate student",
             ".done",
             "e",
@@ -444,7 +444,7 @@ def test_failed_correction_returns_to_confirmation_menu(tmp_path) -> None:
         path,
         extractor,
         [
-            "Shanghai graduate student",
+            "Example City graduate student",
             ".done",
             "e",
             "Use Ada",
@@ -460,8 +460,8 @@ def test_failed_correction_returns_to_confirmation_menu(tmp_path) -> None:
 
 def test_quit_and_final_no_leave_profile_and_state_unchanged(tmp_path) -> None:
     for suffix, answers in (
-        ("quit", ["Shanghai graduate student", ".done", "q"]),
-        ("no", ["Shanghai graduate student", ".done", "y", ":finish", "n"]),
+        ("quit", ["Example City graduate student", ".done", "q"]),
+        ("no", ["Example City graduate student", ".done", "y", ":finish", "n"]),
     ):
         path = save_profile(existing_profile(), tmp_path / f"{suffix}.json")
         original = load_profile(path)
@@ -477,11 +477,11 @@ def test_final_yes_saves_profile_and_state_consistently(tmp_path) -> None:
     result, _ = run_follow_up(
         path,
         FollowUpExtractor(basic_candidate()),
-        ["Shanghai graduate student", ".done", "y", ":finish", "y"],
+        ["Example City graduate student", ".done", "y", ":finish", "y"],
     )
 
     assert result is True
-    assert load_profile(path).basic_profile.current_location == "Shanghai"
+    assert load_profile(path).basic_profile.current_location == "Example City"
     saved_state = load_discovery_state(state_path_for(path))
     assert saved_state.fields["basic_profile.current_location"] == (
         FollowUpStatus.ANSWERED
@@ -498,7 +498,7 @@ def test_second_file_failure_rolls_back_both_files(tmp_path, monkeypatch) -> Non
     save_profile_and_state(existing_profile(), path, old_state, state_path)
     changed_data = existing_profile().to_dict()
     changed_data.pop("open_questions")
-    changed_data["basic_profile"] = {"current_location": "Shanghai"}
+    changed_data["basic_profile"] = {"current_location": "Example City"}
     changed = create_profile(changed_data)
     new_state = DiscoveryState()
     new_state.mark("basic_profile.current_location", FollowUpStatus.ANSWERED)
@@ -531,7 +531,7 @@ def test_keyboard_interrupt_during_second_file_save_rolls_back_both_files(
     save_profile_and_state(existing_profile(), path, old_state, state_path)
     changed_data = existing_profile().to_dict()
     changed_data.pop("open_questions")
-    changed_data["basic_profile"] = {"current_location": "Shanghai"}
+    changed_data["basic_profile"] = {"current_location": "Example City"}
     changed = create_profile(changed_data)
     new_state = DiscoveryState()
     new_state.mark("basic_profile.current_location", FollowUpStatus.ANSWERED)
@@ -798,7 +798,7 @@ def test_debug_full_profile_is_opt_in(tmp_path) -> None:
     result, output = run_follow_up(
         path,
         extractor,
-        ["Shanghai graduate student", ".done", "y", ":finish", "n"],
+        ["Example City graduate student", ".done", "y", ":finish", "n"],
         debug=True,
         debug_full=True,
     )
@@ -815,7 +815,7 @@ def test_normal_follow_up_output_does_not_expose_internal_schema(tmp_path) -> No
     result, output = run_follow_up(
         path,
         FollowUpExtractor(basic_candidate()),
-        ["Shanghai graduate student", ".done", "y", ":finish", "n"],
+        ["Example City graduate student", ".done", "y", ":finish", "n"],
     )
 
     joined = "\n".join(output)
@@ -1179,13 +1179,13 @@ def test_saved_preferred_industries_is_not_asked_after_reload(tmp_path) -> None:
     [
         (
             "basic_profile.name",
-            {"basic_profile": {"name": "Aaron", "current_location": "Shanghai"}},
-            {"basic_profile": {"name": "Aaron"}},
+            {"basic_profile": {"name": "Sample User", "current_location": "Example City"}},
+            {"basic_profile": {"name": "Sample User"}},
         ),
         (
             "basic_profile.current_location",
-            {"basic_profile": {"name": "Aaron", "current_location": "Shanghai"}},
-            {"basic_profile": {"current_location": "Shanghai"}},
+            {"basic_profile": {"name": "Sample User", "current_location": "Example City"}},
+            {"basic_profile": {"current_location": "Example City"}},
         ),
         (
             "constraints.target_locations",
@@ -1254,9 +1254,9 @@ def test_seven_experiences_enriched_with_three_date_ranges_stay_seven(tmp_path) 
         item.organization_or_project_name: (item.start_date, item.end_date)
         for item in saved.experience_overview
     }
-    assert dates["MiraclePlus"] == ("2025-05", "2025-08")
-    assert dates["ATLAS Internship Program"] == ("2025-05", "2026-01")
-    assert dates["Shanghai CDC"] == ("2024-06", "2024-08")
+    assert dates["Northstar Labs"] == ("2025-05", "2025-08")
+    assert dates["Horizon Internship Program"] == ("2025-05", "2026-01")
+    assert dates["Regional Public Health Lab"] == ("2024-06", "2024-08")
     assert len(load_profile(path).experience_overview) == 7
     state = load_discovery_state(state_path_for(path))
     assert state.fields["experience_details"] == FollowUpStatus.ANSWERED
@@ -1344,7 +1344,7 @@ def test_preferred_industries_confirmation_hides_sibling_fields(tmp_path) -> Non
 def test_multiline_follow_up_uses_clear_continuation_prompt(tmp_path) -> None:
     path = save_profile(existing_profile(), tmp_path / "profile.json")
     prompts = []
-    answers = iter(["Shanghai", "Graduate student", ".done", "q"])
+    answers = iter(["Example City", "Graduate student", ".done", "q"])
 
     def input_fn(prompt):
         prompts.append(prompt)
@@ -1400,12 +1400,12 @@ def test_cancel_discards_current_answer_and_reasks_same_question(tmp_path) -> No
     result, output = run_follow_up(
         path,
         extractor,
-        ["Unsubmitted draft", ".cancel", "Shanghai", ".done", "q"],
+        ["Unsubmitted draft", ".cancel", "Example City", ".done", "q"],
     )
 
     assert result is False
     assert len(extractor.calls) == 1
-    assert extractor.calls[0][0] == "Shanghai"
+    assert extractor.calls[0][0] == "Example City"
     assert sum(
         FOLLOW_UP_QUESTIONS["basic_profile.current_location"] in line
         for line in output
@@ -1426,7 +1426,7 @@ def test_provider_progress_message_is_shown_before_follow_up_call(tmp_path) -> N
     result = run_follow_up_discovery(
         path,
         ProgressCheckingExtractor(basic_candidate()),
-        input_fn=scripted_input(["Shanghai", ".done", "q"]),
+        input_fn=scripted_input(["Example City", ".done", "q"]),
         output_fn=output.append,
     )
 
@@ -1440,7 +1440,7 @@ def test_confirmation_menu_ignores_pasted_blank_lines(tmp_path) -> None:
     result, output = run_follow_up(
         path,
         FollowUpExtractor(basic_candidate()),
-        ["Shanghai", ".done", "", "   ", "q"],
+        ["Example City", ".done", "", "   ", "q"],
     )
 
     assert result is False

@@ -8,13 +8,15 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.5.7 — Phase 1 已完成。**
+**版本 0.6.0 — Phase 2A 契约基础已完成。**
 
-- ✅ 结构化 Career Profile 与严格 JSON 存储
-- ✅ 手动、自然语言和 Adaptive Follow-up CLI
-- ✅ Candidate 确认、修正和证据检查
-- ✅ Profile + Discovery State 事务保存
-- ⏳ Resume Import 和 Phase 2 尚未实现
+- ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
+- ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
+- ✅ 八个稳定 Role Family，以及 specialization 和搜索标题 alias
+- ✅ Phase 2A recommendation、decision、gap 与 job artifact 的原子 JSON 持久化
+- ⏳ 有来源的 Role Requirements、推荐、Gap 和真实岗位尚未实现
+
+当前 production Catalog 故意保持 **0 条 requirement、0 个 source**。它是一套带护栏的 taxonomy，不是一件塞满虚构就业市场知识的风衣。🕵️
 
 ## 工作方式
 
@@ -89,12 +91,40 @@ export AARVIA_LLM_MODEL="qwen-plus"
 ## 产品流程
 
 ```text
-User Profile → Career Discovery → Role Recommendation → User Decision
-→ Gap Analysis → Evidence Bank → Base Resume → JD Matching
+Career Profile → Career Discovery → Role Recommendation → Live Job Examples
+→ User Decision → Role-level Gap Analysis → Evidence Bank → Base Resume
+→ Live Job Discovery → Detailed JD Matching
 → Minimal Tailoring → Fact Checking → Final Resume
 ```
 
-目前只实现了 Profile 与 Career Discovery。Aarvia 没有躲在幕布后偷偷开始 Phase 2。
+## Phase 2 地图
+
+- **2A — 数据契约：** 已完成。Role taxonomy、provenance、recommendation、decision、gap 和 live-job schema 均可严格验证与序列化。
+- **2B — Role Recommendation：** 未实现。未来会独立排列 `current_fit` 与 `directional_fit`。
+- **2C — User Decision：** 未实现。推荐结果和用户确认决定始终是两个独立对象。
+- **2D — Role-level Gap Analysis：** 未实现。契约明确保留 `unknown != missing`。
+- **2E — Live Job Discovery：** 未实现。官方页面和职位状态将在这里验证。
+- **2F — Preliminary Job Matching：** 未实现。它描述 JD requirement coverage，不代表面试或 offer 概率。
+- **2G — 端到端加固：** 未实现。
+
+**Role Fit 与 Job Fit 不是一回事。** 某个 Role Family 可以是合理方向，但某条具体职位仍可能存在资格冲突。详细 JD Matching 和简历工作依然位于 Evidence Bank 与 Base Resume 之后。
+
+## Phase 2A 安全边界
+
+- 每条 production requirement 必须引用已知 provenance source。
+- `1.0.0` production taxonomy 从打包的 `catalog_data/role-catalog-1.0.0.json` 加载，不在 Python 中重复维护。
+- 没有来源的 requirement 不得宣称 prevalence 为 `common` 或 `frequent`。
+- 测试 fixture source 不得进入 production Catalog 或岗位集合。
+- Recommendation 只能引用真实存在的 Role、Requirement 和已确认 Profile fact。
+- 引用 RecommendationSet 的 Decision 必须使用同一 Catalog 和同一份 CareerProfile 快照完成验证。
+- 每次保存或加载 Gap Analysis 都必须提供 confirmed User Decision，且只能分析其中的 Primary 或 Secondary 方向。
+- Profile reference 保存字段路径、精确值快照和确定性 Profile fingerprint。
+- 列表路径目前使用下标，因此引用只属于一个精确 Profile 快照。稳定的本地 entry ID 需要未来单独迁移，Provider 永远不能生成它。
+- `verified_open` 必须由具体官方职位页面支持；普通 careers 首页最多支持 `possibly_open`。
+- application URL 的“已提供”和“已验证”是两种状态；验证另有状态、时间和来源引用。
+- Live Job 必须具备官方来源契约，但 Phase 2A 不搜索或验证任何真实岗位。
+
+Phase 2B 开始排名前，Aarvia 仍需建立一份经过审查、由真实官方职位来源支持的 Role Requirements 数据集。空 requirements 不等于市场证据。
 
 ## 设计原则
 
@@ -106,6 +136,8 @@ User Profile → Career Discovery → Role Recommendation → User Decision
 - 核心逻辑必须能脱离 LLM 独立测试。
 
 ## 开发验证
+
+项目记录：[按 Phase 拆分的公开脱敏对话摘要](docs/conversation-log.md)和[开发日志](docs/codex-log.md)。包含个人信息的逐字原文不会由 Git 跟踪。
 
 ```bash
 python -m pip install ".[dev]"

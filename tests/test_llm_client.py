@@ -131,36 +131,36 @@ class FakeClient:
 
 def test_correction_request_includes_evidence_current_topic_and_user_change() -> None:
     client = FakeClient(
-        result='{"education":[{"institution":"UIUC","degree":"BS","field_of_study":"Economics","start_date":null,"expected_graduation_date":null,"gpa":"3.7"}]}'
+        result='{"education":[{"institution":"Example State University","degree":"BS","field_of_study":"Economics","start_date":null,"expected_graduation_date":null,"gpa":"3.7"}]}'
     )
     extractor = OpenAINarrativeExtractor(
         settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
         client=client,
     )
     current = [{
-        "institution": "UIUC", "degree": "BS", "field_of_study": "Economics",
+        "institution": "Example State University", "degree": "BS", "field_of_study": "Economics",
         "start_date": None, "expected_graduation_date": None, "gpa": None,
     }]
 
     result = extractor.extract_correction(
-        "Set the UIUC GPA to 3.7.",
+        "Set the Example State University GPA to 3.7.",
         topic="education",
         current_topic=current,
-        original_narrative="I studied Economics at UIUC.",
+        original_narrative="I studied Economics at Example State University.",
     )
 
     assert result["education"][0]["gpa"] == "3.7"
     request = client.responses.calls[0]
     payload = request["input"]
-    assert "I studied Economics at UIUC." in payload
+    assert "I studied Economics at Example State University." in payload
     assert '"current_candidate_topic"' in payload
-    assert "Set the UIUC GPA to 3.7." in payload
+    assert "Set the Example State University GPA to 3.7." in payload
     assert "preserving every field" in request["instructions"]
 
 
 def test_follow_up_request_contains_question_answer_profile_and_draft() -> None:
     client = FakeClient(
-        result='{"basic_profile":{"name":null,"current_location":"Shanghai","current_status":"Student"}}'
+        result='{"basic_profile":{"name":null,"current_location":"Example City","current_status":"Student"}}'
     )
     extractor = OpenAINarrativeExtractor(
         settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
@@ -168,7 +168,7 @@ def test_follow_up_request_contains_question_answer_profile_and_draft() -> None:
     )
 
     result = extractor.extract_follow_up(
-        "I am a student in Shanghai.",
+        "I am a student in Example City.",
         question="Where are you based and what are you doing?",
         topic="basic_profile",
         formal_profile={"education": [{"institution": "Example University"}]},
@@ -176,10 +176,10 @@ def test_follow_up_request_contains_question_answer_profile_and_draft() -> None:
         field_path="basic_profile.current_location",
     )
 
-    assert result["basic_profile"]["current_location"] == "Shanghai"
+    assert result["basic_profile"]["current_location"] == "Example City"
     request = client.responses.calls[0]
     assert "Where are you based" in request["input"]
-    assert "I am a student in Shanghai." in request["input"]
+    assert "I am a student in Example City." in request["input"]
     assert '"formal_profile"' in request["input"]
     assert '"session_draft"' in request["input"]
     assert '"selected_field_path": "basic_profile.current_location"' in request["input"]

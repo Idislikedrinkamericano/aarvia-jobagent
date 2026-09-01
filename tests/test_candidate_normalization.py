@@ -23,7 +23,7 @@ BAILIAN_ALIAS_FIXTURE = {
         }
     ],
     "target_employment_type": ["full-time"],
-    "target_locations": ["Shanghai", "Singapore"],
+    "target_locations": ["Example City", "Singapore"],
     "target_roles": ["AI Engineer", "Product Engineer"],
 }
 
@@ -87,7 +87,7 @@ def test_cleanup_runs_before_existing_alias_normalization() -> None:
         "AI Engineer",
         "Product Engineer",
     ]
-    assert candidate.data["constraints"]["target_locations"] == ["Shanghai", "Singapore"]
+    assert candidate.data["constraints"]["target_locations"] == ["Example City", "Singapore"]
     assert candidate.data["constraints"]["employment_type_preference"] == "full-time"
 
 
@@ -108,7 +108,7 @@ def test_bailian_alias_fixture_maps_to_phase_1a_schema() -> None:
         "AI Engineer",
         "Product Engineer",
     ]
-    assert candidate.data["constraints"]["target_locations"] == ["Shanghai", "Singapore"]
+    assert candidate.data["constraints"]["target_locations"] == ["Example City", "Singapore"]
     assert candidate.data["constraints"]["employment_type_preference"] == "full-time"
 
 
@@ -124,7 +124,7 @@ def test_normalization_preserves_explicit_information_without_inventing_fields()
         "currently_considered_roles": ["AI Engineer", "Product Engineer"]
     }
     assert normalized["constraints"] == {
-        "target_locations": ["Shanghai", "Singapore"],
+        "target_locations": ["Example City", "Singapore"],
         "employment_type_preference": "full-time",
     }
 
@@ -132,9 +132,9 @@ def test_normalization_preserves_explicit_information_without_inventing_fields()
 def test_supported_aliases_merge_with_existing_canonical_lists_in_order() -> None:
     raw = {
         "career_preferences": {"currently_considered_roles": ["Engineer"]},
-        "constraints": {"target_locations": ["Shanghai"]},
+        "constraints": {"target_locations": ["Example City"]},
         "target_roles": ["Engineer", "Researcher"],
-        "target_locations": ["Singapore", "Shanghai"],
+        "target_locations": ["Singapore", "Example City"],
     }
 
     normalized = normalize_candidate_data(raw)
@@ -143,7 +143,7 @@ def test_supported_aliases_merge_with_existing_canonical_lists_in_order() -> Non
         "Engineer",
         "Researcher",
     ]
-    assert normalized["constraints"]["target_locations"] == ["Shanghai", "Singapore"]
+    assert normalized["constraints"]["target_locations"] == ["Example City", "Singapore"]
 
 
 def test_two_supported_employment_types_map_to_either() -> None:
@@ -174,7 +174,7 @@ def test_unknown_project_field_is_rejected_by_phase_1a() -> None:
 
 def test_normalization_failure_does_not_modify_formal_profile(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     invalid = {
         **BAILIAN_ALIAS_FIXTURE,
@@ -211,7 +211,7 @@ def test_normalized_fixture_can_be_confirmed_into_formal_profile(tmp_path) -> No
         "AI Engineer",
         "Product Engineer",
     ]
-    assert profile.constraints.target_locations == ["Shanghai", "Singapore"]
+    assert profile.constraints.target_locations == ["Example City", "Singapore"]
     assert profile.constraints.employment_type_preference == "full-time"
 
 
@@ -294,7 +294,7 @@ def test_other_non_empty_education_field_remains_rejected() -> None:
 
 def test_education_normalization_failure_does_not_modify_profile(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     extractor = FakeExtractor(
         {"education": [education_record(major="Economics")]}
@@ -378,7 +378,7 @@ def test_other_invalid_dates_remain_rejected(invalid_date) -> None:
 
 def test_invalid_date_candidate_does_not_modify_formal_profile(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     extractor = FakeExtractor(
         {"education": [education_record(start_date="next year")]}
@@ -420,7 +420,7 @@ def test_date_schema_is_nullable_without_copyable_placeholders() -> None:
 def experience_record(**changes) -> dict:
     record = {
         "experience_type": "work",
-        "organization_or_project_name": "MiraclePlus",
+        "organization_or_project_name": "Northstar Labs",
         "title_or_role": "AI Analyst",
         "short_factual_summary": "Evaluated AI solutions.",
         "start_date": None,

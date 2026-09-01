@@ -25,4 +25,6 @@ htmlcov/
 
 # Private career profiles (keep data/profiles/.gitkeep)
 data/profiles/*.json
-docs/conversation-log.md
+
+# Local private transcripts and other non-versioned user data
+local_data/

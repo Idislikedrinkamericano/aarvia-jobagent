@@ -8,13 +8,15 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.5.7 — Phase 1 complete.**
+**Version 0.6.0 — Phase 2A contract foundation complete.**
 
-- ✅ Structured Career Profile with validated JSON storage
-- ✅ Manual, narrative, and adaptive follow-up CLI
-- ✅ Candidate review, correction, and evidence checks
-- ✅ Atomic Profile + Discovery State saving
-- ⏳ Resume import and Phase 2 are not implemented
+- ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
+- ✅ Phase 2A: versioned Role Catalog and shared data contracts
+- ✅ Eight stable Role Families with specializations and search aliases
+- ✅ Atomic JSON persistence for Phase 2A recommendation, decision, gap, and job artifacts
+- ⏳ Source-backed Role Requirements, recommendations, gaps, and live jobs are not implemented
+
+The production Catalog deliberately contains **zero requirements and zero sources** today. It is a taxonomy with guardrails, not a trench coat full of invented labor-market facts. 🕵️
 
 ## How It Works
 
@@ -89,12 +91,40 @@ Personal Profiles under `data/profiles/` and API keys should never be committed.
 ## Product Pipeline
 
 ```text
-User Profile → Career Discovery → Role Recommendation → User Decision
-→ Gap Analysis → Evidence Bank → Base Resume → JD Matching
+Career Profile → Career Discovery → Role Recommendation → Live Job Examples
+→ User Decision → Role-level Gap Analysis → Evidence Bank → Base Resume
+→ Live Job Discovery → Detailed JD Matching
 → Minimal Tailoring → Fact Checking → Final Resume
 ```
 
-Only Profile and Career Discovery exist today. Aarvia is not quietly doing Phase 2 behind the curtains.
+## Phase 2 Map
+
+- **2A — Contracts:** complete. Role taxonomy, provenance, recommendation, decision, gap, and live-job schemas are validated and serializable.
+- **2B — Role Recommendation:** not implemented. It will rank `current_fit` and `directional_fit` independently.
+- **2C — User Decision:** not implemented. Recommendation and confirmed user choice remain separate objects.
+- **2D — Role-level Gap Analysis:** not implemented. Its contract preserves `unknown != missing`.
+- **2E — Live Job Discovery:** not implemented. This is where official pages and listing status will be checked.
+- **2F — Preliminary Job Matching:** not implemented. It will describe JD requirement coverage, not interview or offer probability.
+- **2G — End-to-end hardening:** not implemented.
+
+**Role Fit and Job Fit are different.** A Role Family can be a sensible direction while a particular job has an eligibility conflict. Detailed JD Matching and resume work still happen after the Evidence Bank and Base Resume stages.
+
+## Phase 2A Safety Boundary
+
+- Every production requirement must cite a known provenance source.
+- The `1.0.0` production taxonomy is loaded from packaged `catalog_data/role-catalog-1.0.0.json`, not duplicated in Python.
+- An unsourced requirement cannot claim `common` or `frequent` prevalence.
+- Test fixture sources cannot enter a production Catalog or job collection.
+- Recommendations may reference only existing Role, Requirement, and confirmed Profile facts.
+- A Decision that cites a RecommendationSet must validate that set against the same Catalog and exact CareerProfile snapshot.
+- Every saved or loaded Gap Analysis requires a confirmed User Decision and may cover only its Primary or Secondary roles.
+- Profile references store a field path, exact value snapshot, and deterministic Profile fingerprint.
+- List paths currently use indexes, so a reference belongs to one exact Profile snapshot. Stable local entry IDs require a future migration; Providers never create them.
+- `verified_open` requires a specific official job posting; a general careers page can support only `possibly_open`.
+- An application URL being present is separate from being verified. Verification has its own status, timestamp, and source reference.
+- A live job requires an official source contract, but no real job discovery or verification occurs in 2A.
+
+Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Role Requirements backed by traceable official job sources. Empty requirements are not market evidence.
 
 ## Design Principles
 
@@ -106,6 +136,8 @@ Only Profile and Career Discovery exist today. Aarvia is not quietly doing Phase
 - Core logic must be testable independently from the LLM.
 
 ## Development
+
+Project history: [sanitized public conversation summaries by phase](docs/conversation-log.md) and [development log](docs/codex-log.md). Verbatim personal transcripts are not tracked by Git.
 
 ```bash
 python -m pip install ".[dev]"

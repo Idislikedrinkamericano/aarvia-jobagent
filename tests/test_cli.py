@@ -148,7 +148,7 @@ def test_version_flag(capsys) -> None:
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert "aarvia 0.5.7" in capsys.readouterr().out
+    assert "aarvia 0.6.0" in capsys.readouterr().out
 
 
 def test_debug_mode_reports_raw_parsing_details(tmp_path) -> None:
@@ -165,7 +165,7 @@ def test_debug_mode_reports_raw_parsing_details(tmp_path) -> None:
     joined = "\n".join(output)
     assert exit_code == 1
     assert "may contain personal information" in joined
-    assert "Aarvia version: 0.5.7" in joined
+    assert "Aarvia version: 0.6.0" in joined
     assert "Provider model: qwen-test" in joined
     assert "Provider base URL host: workspace.example" in joined
     assert "Extraction protocol: responses" in joined
@@ -177,7 +177,7 @@ def test_debug_mode_reports_raw_parsing_details(tmp_path) -> None:
 
 def test_debug_mode_reports_candidate_validation_path_and_preserves_profile(tmp_path) -> None:
     path = tmp_path / "profile.json"
-    original = create_profile({"basic_profile": {"current_location": "Shanghai"}})
+    original = create_profile({"basic_profile": {"current_location": "Example City"}})
     save_profile(original, path)
     raw = '{"education":[{"unexpected":"value"}]}'
     output = []
@@ -365,7 +365,7 @@ def test_complete_follow_up_does_not_initialize_provider(
     data = {
         "basic_profile": {
             "name": "Test User",
-            "current_location": "Shanghai",
+            "current_location": "Example City",
             "current_status": "Employed",
         },
         "education": [{
@@ -397,7 +397,7 @@ def test_complete_follow_up_does_not_initialize_provider(
             "currently_considered_roles": ["Engineer"],
         },
         "constraints": {
-            "target_locations": ["Shanghai"],
+            "target_locations": ["Example City"],
             "work_authorization_or_visa_constraints": "None",
             "work_arrangement_preference": "hybrid",
             "employment_type_preference": "full-time",

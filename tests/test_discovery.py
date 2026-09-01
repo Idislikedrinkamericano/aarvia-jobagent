@@ -41,7 +41,7 @@ def test_confirmed_experience_without_summary_generates_follow_up() -> None:
             "experience_overview": [
                 {
                     "experience_type": "work",
-                    "organization_or_project_name": "MiraclePlus",
+                    "organization_or_project_name": "Northstar Labs",
                     "title_or_role": "AI Analyst",
                     "short_factual_summary": None,
                     "start_date": None,
@@ -51,4 +51,4 @@ def test_confirmed_experience_without_summary_generates_follow_up() -> None:
         }
     )
 
-    assert "What did you do or accomplish as AI Analyst at MiraclePlus?" in profile.open_questions
+    assert "What did you do or accomplish as AI Analyst at Northstar Labs?" in profile.open_questions
