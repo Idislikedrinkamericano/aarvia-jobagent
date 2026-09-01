@@ -191,6 +191,18 @@ def _normalize_date_placeholders(data: dict[str, Any]) -> None:
         constraints["target_start_date"] = None
 
 
+def _normalize_missing_experience_summaries(data: dict[str, Any]) -> None:
+    records = data.get("experience_overview")
+    if not isinstance(records, list):
+        return
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        summary = record.get("short_factual_summary")
+        if isinstance(summary, str) and not summary.strip():
+            record["short_factual_summary"] = None
+
+
 def normalize_candidate_data(
     value: Mapping[str, Any],
     *,
@@ -206,6 +218,7 @@ def normalize_candidate_data(
     if stage_callback:
         stage_callback("normalization")
     _normalize_date_placeholders(data)
+    _normalize_missing_experience_summaries(data)
     _normalize_education_aliases(data)
     _normalize_projects(data)
     _normalize_list_alias(

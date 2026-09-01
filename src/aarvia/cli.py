@@ -9,6 +9,7 @@ from typing import Sequence
 
 from . import __version__
 from .confirmation import run_narrative_discovery
+from .follow_up import run_follow_up_discovery
 from .interview import InputFunction, OutputFunction, run_discovery
 from .llm_client import LLMConfigurationError, LLMRequestError
 from .narrative_extraction import ExtractionDebugError, NarrativeExtractor, OpenAINarrativeExtractor
@@ -59,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--manual", action="store_true", help="use the fixed-field manual questionnaire")
     mode.add_argument("--narrative", action="store_true", help="extract candidates from a natural-language description")
     mode.add_argument(
+        "--follow-up",
+        action="store_true",
+        help="adaptively collect missing topics from an existing Profile",
+    )
+    mode.add_argument(
         "--narrative-file",
         type=Path,
         help="read a UTF-8 natural-language description from a text file",
@@ -67,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--debug-extraction",
         action="store_true",
         help="show in-memory provider output diagnostics when narrative extraction fails",
+    )
+    discover.add_argument(
+        "--debug-full-profile",
+        action="store_true",
+        help="include the complete merged Profile in follow-up debug output",
     )
     return parser
 
@@ -84,10 +95,23 @@ def main(
         parser.print_help()
         return 0
     narrative_mode = arguments.narrative or arguments.narrative_file is not None
-    if arguments.debug_extraction and not narrative_mode:
-        parser.error("--debug-extraction requires --narrative or --narrative-file")
+    if arguments.debug_extraction and not (narrative_mode or arguments.follow_up):
+        parser.error("--debug-extraction requires --narrative, --narrative-file, or --follow-up")
+    if arguments.debug_full_profile and not (arguments.follow_up and arguments.debug_extraction):
+        parser.error("--debug-full-profile requires --follow-up and --debug-extraction")
     try:
-        if narrative_mode:
+        if arguments.follow_up:
+            if not arguments.profile.exists():
+                raise FileNotFoundError(f"Follow-up Profile does not exist: {arguments.profile}")
+            run_follow_up_discovery(
+                arguments.profile,
+                extractor,
+                input_fn=input_fn,
+                output_fn=output_fn,
+                debug_extraction=arguments.debug_extraction,
+                debug_full_profile=arguments.debug_full_profile,
+            )
+        elif narrative_mode:
             narrative = read_narrative_file(arguments.narrative_file) if arguments.narrative_file else None
             narrative_extractor = extractor or OpenAINarrativeExtractor()
             run_narrative_discovery(
@@ -114,6 +138,12 @@ def main(
         output_fn(error.raw_output if error.raw_output is not None else "<unavailable>")
         output_fn(f"Error: {error}")
         return 1
+    except KeyboardInterrupt:
+        if arguments.follow_up or narrative_mode:
+            output_fn("Session cancelled. No files were changed.")
+        else:
+            output_fn("Session cancelled. Previously saved progress was kept.")
+        return 130
     except (
         OSError,
         ProfileValidationError,

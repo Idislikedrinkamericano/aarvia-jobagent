@@ -200,7 +200,7 @@ def test_normalized_fixture_can_be_confirmed_into_formal_profile(tmp_path) -> No
     completed = run_narrative_discovery(
         path,
         extractor,
-        input_fn=scripted_input(["My background", "y", "y", "y"]),
+        input_fn=scripted_input(["My background", "y", "y", "y", "y"]),
         output_fn=lambda _message: None,
     )
 
@@ -237,6 +237,7 @@ def test_responses_schema_uses_only_canonical_nested_fields() -> None:
     )
     assert PROFILE_JSON_SCHEMA["properties"]["career_preferences"]["additionalProperties"] is False
     assert PROFILE_JSON_SCHEMA["properties"]["constraints"]["additionalProperties"] is False
+    assert "target_locations" in PROFILE_JSON_SCHEMA["properties"]["constraints"]["required"]
 
 
 def education_record(**changes) -> dict:
@@ -414,3 +415,67 @@ def test_date_schema_is_nullable_without_copyable_placeholders() -> None:
         assert "YYYY-MM" not in schema["description"]
         assert "example" not in schema
         assert "default" not in schema
+
+
+def experience_record(**changes) -> dict:
+    record = {
+        "experience_type": "work",
+        "organization_or_project_name": "MiraclePlus",
+        "title_or_role": "AI Analyst",
+        "short_factual_summary": "Evaluated AI solutions.",
+        "start_date": None,
+        "end_date": None,
+    }
+    record.update(changes)
+    return record
+
+
+@pytest.mark.parametrize("summary", ["", "   "])
+def test_blank_experience_summary_becomes_null(summary) -> None:
+    candidate = CandidateProfile.from_extracted(
+        normalize_candidate_data(
+            {"experience_overview": [experience_record(short_factual_summary=summary)]}
+        )
+    )
+
+    assert candidate.data["experience_overview"][0]["short_factual_summary"] is None
+
+
+def test_missing_or_null_experience_summary_does_not_reject_candidate() -> None:
+    missing = experience_record()
+    missing.pop("short_factual_summary")
+
+    for record in (missing, experience_record(short_factual_summary=None)):
+        candidate = CandidateProfile.from_extracted(
+            normalize_candidate_data({"experience_overview": [record]})
+        )
+        assert candidate.data["experience_overview"][0]["short_factual_summary"] is None
+
+
+def test_normal_experience_summary_is_preserved() -> None:
+    normalized = normalize_candidate_data(
+        {"experience_overview": [experience_record()]}
+    )
+
+    assert normalized["experience_overview"][0]["short_factual_summary"] == (
+        "Evaluated AI solutions."
+    )
+
+
+@pytest.mark.parametrize("summary", [123, []])
+def test_non_string_experience_summary_is_still_rejected(summary) -> None:
+    normalized = normalize_candidate_data(
+        {"experience_overview": [experience_record(short_factual_summary=summary)]}
+    )
+
+    with pytest.raises(ProfileValidationError, match="short_factual_summary"):
+        CandidateProfile.from_extracted(normalized)
+
+
+def test_experience_summary_schema_is_required_but_nullable() -> None:
+    experience_schema = PROFILE_JSON_SCHEMA["properties"]["experience_overview"]["items"]
+
+    assert experience_schema["properties"]["short_factual_summary"] == {
+        "type": ["string", "null"]
+    }
+    assert "short_factual_summary" in experience_schema["required"]

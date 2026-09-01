@@ -123,7 +123,7 @@ class ExperienceOverview:
     experience_type: str
     organization_or_project_name: str
     title_or_role: str
-    short_factual_summary: str
+    short_factual_summary: str | None
     start_date: str | None
     end_date: str | None = None
 
@@ -143,7 +143,7 @@ class ExperienceOverview:
             ),
             title_or_role=_text(data.get("title_or_role"), f"{path}.title_or_role", required=True),
             short_factual_summary=_text(
-                data.get("short_factual_summary"), f"{path}.short_factual_summary", required=True
+                data.get("short_factual_summary"), f"{path}.short_factual_summary"
             ),
             start_date=_date_text(data.get("start_date"), f"{path}.start_date"),
             end_date=_date_text(data.get("end_date"), f"{path}.end_date"),

@@ -33,3 +33,22 @@ def test_partially_completed_sections_only_keep_unanswered_questions() -> None:
         "Are there any roles you are currently considering?",
         "When would you like to start your next role?",
     ]
+
+
+def test_confirmed_experience_without_summary_generates_follow_up() -> None:
+    profile = create_profile(
+        {
+            "experience_overview": [
+                {
+                    "experience_type": "work",
+                    "organization_or_project_name": "MiraclePlus",
+                    "title_or_role": "AI Analyst",
+                    "short_factual_summary": None,
+                    "start_date": None,
+                    "end_date": None,
+                }
+            ]
+        }
+    )
+
+    assert "What did you do or accomplish as AI Analyst at MiraclePlus?" in profile.open_questions

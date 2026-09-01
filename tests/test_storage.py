@@ -39,6 +39,17 @@ def test_old_json_without_gpa_remains_compatible(tmp_path) -> None:
     assert loaded.education[0].gpa is None
 
 
+def test_null_experience_summary_round_trips(tmp_path) -> None:
+    data = complete_profile_data()
+    data["experience_overview"][0]["short_factual_summary"] = None
+    original = create_profile(data)
+
+    loaded = load_profile(save_profile(original, tmp_path / "profile.json"))
+
+    assert loaded == original
+    assert loaded.experience_overview[0].short_factual_summary is None
+
+
 def test_load_rejects_unknown_json_fields(tmp_path) -> None:
     path = tmp_path / "career-profile.json"
     path.write_text('{"future_prediction": "unsupported"}', encoding="utf-8")

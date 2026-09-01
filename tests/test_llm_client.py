@@ -115,8 +115,10 @@ class FakeResponses:
     def __init__(self, result=None, error=None):
         self.result = result
         self.error = error
+        self.calls = []
 
-    def create(self, **_kwargs):
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
         if self.error:
             raise self.error
         return SimpleNamespace(output_text=self.result)
@@ -125,6 +127,97 @@ class FakeResponses:
 class FakeClient:
     def __init__(self, result=None, error=None):
         self.responses = FakeResponses(result, error)
+
+
+def test_correction_request_includes_evidence_current_topic_and_user_change() -> None:
+    client = FakeClient(
+        result='{"education":[{"institution":"UIUC","degree":"BS","field_of_study":"Economics","start_date":null,"expected_graduation_date":null,"gpa":"3.7"}]}'
+    )
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
+        client=client,
+    )
+    current = [{
+        "institution": "UIUC", "degree": "BS", "field_of_study": "Economics",
+        "start_date": None, "expected_graduation_date": None, "gpa": None,
+    }]
+
+    result = extractor.extract_correction(
+        "Set the UIUC GPA to 3.7.",
+        topic="education",
+        current_topic=current,
+        original_narrative="I studied Economics at UIUC.",
+    )
+
+    assert result["education"][0]["gpa"] == "3.7"
+    request = client.responses.calls[0]
+    payload = request["input"]
+    assert "I studied Economics at UIUC." in payload
+    assert '"current_candidate_topic"' in payload
+    assert "Set the UIUC GPA to 3.7." in payload
+    assert "preserving every field" in request["instructions"]
+
+
+def test_follow_up_request_contains_question_answer_profile_and_draft() -> None:
+    client = FakeClient(
+        result='{"basic_profile":{"name":null,"current_location":"Shanghai","current_status":"Student"}}'
+    )
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings("provider-key", "provider-model", "https://provider.example/v1"),
+        client=client,
+    )
+
+    result = extractor.extract_follow_up(
+        "I am a student in Shanghai.",
+        question="Where are you based and what are you doing?",
+        topic="basic_profile",
+        formal_profile={"education": [{"institution": "Example University"}]},
+        session_draft={"skills": [{"skill_name": "Python"}]},
+        field_path="basic_profile.current_location",
+    )
+
+    assert result["basic_profile"]["current_location"] == "Shanghai"
+    request = client.responses.calls[0]
+    assert "Where are you based" in request["input"]
+    assert "I am a student in Shanghai." in request["input"]
+    assert '"formal_profile"' in request["input"]
+    assert '"session_draft"' in request["input"]
+    assert '"selected_field_path": "basic_profile.current_location"' in request["input"]
+    assert "Populate only that path inside basic_profile" in request["instructions"]
+    assert "must not be rewritten" in request["instructions"]
+
+
+def test_bailian_follow_up_uses_the_same_strict_candidate_schema() -> None:
+    client = FakeBailianClient(
+        result='{"constraints":{"target_locations":["United States","China"],'
+        '"work_authorization_or_visa_constraints":null,'
+        '"work_arrangement_preference":"flexible",'
+        '"employment_type_preference":"internship",'
+        '"target_start_date":"2027-06","other_constraints":[]}}'
+    )
+    extractor = OpenAINarrativeExtractor(
+        settings=LLMSettings(
+            "provider-key",
+            "qwen-plus",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        client=client,
+    )
+
+    result = extractor.extract_follow_up(
+        "Target locations are United States and China.",
+        question="What constraints should I consider?",
+        topic="constraints",
+        formal_profile={},
+        session_draft={},
+    )
+
+    assert result["constraints"]["target_locations"] == ["United States", "China"]
+    request = client.chat_completions.calls[0]
+    schema_config = request["response_format"]["json_schema"]
+    assert schema_config["strict"] is True
+    assert schema_config["schema"] is PROFILE_JSON_SCHEMA
+    assert schema_config["schema"]["properties"]["constraints"]["additionalProperties"] is False
 
 
 class FakeChatCompletions:

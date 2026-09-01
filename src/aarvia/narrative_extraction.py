@@ -19,6 +19,27 @@ from .llm_client import (
 class NarrativeExtractor(Protocol):
     def extract(self, narrative: str, *, topic: str | None = None) -> dict[str, Any]: ...
 
+    def extract_correction(
+        self,
+        correction: str,
+        *,
+        topic: str,
+        current_topic: Any,
+        original_narrative: str,
+        field_path: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def extract_follow_up(
+        self,
+        answer: str,
+        *,
+        question: str,
+        topic: str,
+        formal_profile: dict[str, Any],
+        session_draft: dict[str, Any],
+        field_path: str | None = None,
+    ) -> dict[str, Any]: ...
+
 
 @dataclass
 class ExtractionDiagnostics:
@@ -136,7 +157,7 @@ PROFILE_JSON_SCHEMA: dict[str, Any] = {
                     "experience_type": {"type": "string"},
                     "organization_or_project_name": {"type": "string"},
                     "title_or_role": {"type": "string"},
-                    "short_factual_summary": {"type": "string"},
+                    "short_factual_summary": {"type": ["string", "null"]},
                     "start_date": {
                         "type": ["string", "null"],
                         "description": "A known ISO 8601 calendar month or full date; null when unknown.",
@@ -184,13 +205,20 @@ PROFILE_JSON_SCHEMA: dict[str, Any] = {
             "type": ["object", "null"],
             "additionalProperties": False,
             "properties": {
-                "target_locations": {"type": "array", "items": {"type": "string"}},
+                "target_locations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Every target location explicitly stated by the user; preserve multiple locations.",
+                },
                 "work_authorization_or_visa_constraints": {"type": ["string", "null"]},
-                "work_arrangement_preference": {"type": ["string", "null"]},
+                "work_arrangement_preference": {
+                    "type": ["string", "null"],
+                    "description": "remote, hybrid, onsite, or flexible; use flexible when all three modes are acceptable.",
+                },
                 "employment_type_preference": {"type": ["string", "null"]},
                 "target_start_date": {
                     "type": ["string", "null"],
-                    "description": "A known ISO 8601 calendar month or full date; null when unknown.",
+                    "description": "An explicitly stated ISO calendar month or full date; a named month and year may be converted exactly, but a season must remain null.",
                 },
                 "other_constraints": {"type": "array", "items": {"type": "string"}},
             },
@@ -208,10 +236,14 @@ PROFILE_JSON_SCHEMA: dict[str, Any] = {
 
 EXTRACTION_INSTRUCTIONS = """Extract only facts explicitly stated by the user into the provided schema.
 Never infer interests, proficiency, dates, locations, visa status, outcomes, scale, or technologies.
+If the user gives multiple names without explicitly choosing one as preferred, leave name null.
+Never concatenate multiple names or choose a nickname on the user's behalf.
 Do not output fields outside the provided JSON Schema, including contact_info.
 Omit optional topics with no information, or use only empty values allowed by the formal schema.
 Do not create placeholder objects for information the user did not provide.
 Use null or empty arrays only where the formal schema allows them. Do not embellish factual summaries.
+Use null for short_factual_summary when the user did not provide specific duties or accomplishments.
+Never invent a summary from the organization, role, or experience type.
 Only include education or experience records when every required field is explicit.
 Use field_of_study, never major. Preserve an explicitly stated GPA in gpa exactly as written;
 use null when GPA is absent, and never convert, round, infer, or evaluate it.
@@ -222,6 +254,23 @@ Never output top-level projects, target_roles, target_locations, or target_emplo
 For every date field, use JSON null when the user did not state a date. Never guess a date.
 Never emit format placeholders such as YYYY-MM or YYYY-MM-DD as field values.
 Known dates must use YYYY-MM or YYYY-MM-DD. Return only information from the requested topic when one is specified."""
+
+CORRECTION_INSTRUCTIONS = """Apply a user's correction only to the supplied current Candidate topic.
+The original narrative is evidence, the current topic is the baseline, and the correction defines the requested change.
+Return the complete corrected topic, preserving every field and record the user did not ask to change.
+Do not add a value unless it is supported by the original narrative or the correction.
+Do not reinterpret, summarize, or regenerate unchanged facts. Follow the supplied JSON Schema exactly."""
+
+FOLLOW_UP_INSTRUCTIONS = """Extract only the requested follow-up topic from the user's answer.
+The formal Profile and session draft are context only and must not be rewritten or echoed.
+Do not return or modify any other topic. Do not infer facts the user did not state in the answer.
+When a selected field path is supplied, populate only that exact path inside its canonical parent
+topic. Keep every sibling field empty or null as allowed by the schema.
+Missing information must remain null, an empty list, or absent as allowed by the schema.
+For Constraints, preserve every explicitly stated target location. If onsite, hybrid, and remote are
+all acceptable, use flexible. Convert an explicit named month and year to its exact calendar month,
+but never convert a season such as Summer to a guessed month.
+Follow the supplied JSON Schema exactly."""
 
 
 class OpenAINarrativeExtractor:
@@ -242,6 +291,87 @@ class OpenAINarrativeExtractor:
 
     def extract(self, narrative: str, *, topic: str | None = None) -> dict[str, Any]:
         scope = f"\nExtract only this topic: {topic}." if topic else ""
+        return self._extract_with_messages(
+            narrative,
+            instructions=EXTRACTION_INSTRUCTIONS + scope,
+            topic=topic,
+        )
+
+    def extract_correction(
+        self,
+        correction: str,
+        *,
+        topic: str,
+        current_topic: Any,
+        original_narrative: str,
+        field_path: str | None = None,
+    ) -> dict[str, Any]:
+        payload = json.dumps(
+            {
+                "topic": topic,
+                "selected_field_path": field_path,
+                "original_narrative": original_narrative,
+                "current_candidate_topic": current_topic,
+                "user_correction": correction,
+            },
+            ensure_ascii=False,
+        )
+        field_scope = (
+            f"\nCorrect only this field path: {field_path}."
+            if field_path else ""
+        )
+        return self._extract_with_messages(
+            payload,
+            instructions=(
+                CORRECTION_INSTRUCTIONS
+                + f"\nCorrect only this topic: {topic}."
+                + field_scope
+            ),
+            topic=topic,
+        )
+
+    def extract_follow_up(
+        self,
+        answer: str,
+        *,
+        question: str,
+        topic: str,
+        formal_profile: dict[str, Any],
+        session_draft: dict[str, Any],
+        field_path: str | None = None,
+    ) -> dict[str, Any]:
+        payload = json.dumps(
+            {
+                "current_question": question,
+                "selected_field_path": field_path,
+                "user_answer": answer,
+                "formal_profile": formal_profile,
+                "session_draft": session_draft,
+            },
+            ensure_ascii=False,
+        )
+        field_scope = (
+            "\nThe selected field path is "
+            f"{field_path}. Populate only that path inside {topic}; keep sibling fields empty."
+            if field_path else ""
+        )
+        return self._extract_with_messages(
+            payload,
+            instructions=(
+                FOLLOW_UP_INSTRUCTIONS
+                + f"\nExtract only this topic: {topic}."
+                + field_scope
+            ),
+            topic=topic,
+        )
+
+    def _extract_with_messages(
+        self,
+        narrative: str,
+        *,
+        instructions: str,
+        topic: str | None,
+    ) -> dict[str, Any]:
         self.diagnostics = self._new_diagnostics()
         try:
             if self.diagnostics.protocol == "chat_completions":
@@ -250,8 +380,7 @@ class OpenAINarrativeExtractor:
                     messages=[
                         {
                             "role": "system",
-                            "content": EXTRACTION_INSTRUCTIONS
-                            + scope
+                            "content": instructions
                             + "\nReturn one JSON object that strictly follows the supplied JSON Schema.",
                         },
                         {"role": "user", "content": narrative},
@@ -270,7 +399,7 @@ class OpenAINarrativeExtractor:
             else:
                 response = self.client.responses.create(
                     model=self.settings.model,
-                    instructions=EXTRACTION_INSTRUCTIONS + scope,
+                    instructions=instructions,
                     input=narrative,
                     text={
                         "format": {

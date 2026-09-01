@@ -2,71 +2,70 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Aarvia is a Career Navigation + Job Application Agent. It starts with the person, not the job description: what you have actually done, what kind of work you want, and what constraints shape your search.
+Aarvia is a **Career Navigation + Job Application Agent**. It learns your real experience, interests, goals, and constraints before discussing jobs.
 
-It is **not** a resume slot machine. A new JD should not produce a newly invented person. 🎰🚫
+It is not a resume slot machine. A new JD should not generate a newly invented person. 🎰🚫
 
-## What Works Today
+## Status
 
-Version `0.4.7` covers the Career Profile and discovery foundation:
+**Version 0.5.7 — Phase 1 complete.**
 
-- 🧱 Strict CareerProfile models for education, experience, skills, preferences, and constraints
-- 💾 Validated JSON save/load
-- 💬 Manual and natural-language terminal discovery
-- ✅ Candidate review before anything enters the formal Profile
-- 🔍 Safe extraction diagnostics for compatible providers
-- ☁️ OpenAI Responses and Bailian Chat Completions Structured Outputs
-- 📄 UTF-8 narrative files for longer backgrounds
+- ✅ Structured Career Profile with validated JSON storage
+- ✅ Manual, narrative, and adaptive follow-up CLI
+- ✅ Candidate review, correction, and evidence checks
+- ✅ Atomic Profile + Discovery State saving
+- ⏳ Resume import and Phase 2 are not implemented
 
-Resume import, adaptive follow-up questions, role recommendations, gap analysis, and resume tailoring are **not implemented yet**.
+## How It Works
 
-## Quick Start 🚀
+```text
+Tell Aarvia about yourself
+→ Extract candidate facts
+→ Review or correct them
+→ Save only confirmed information
+→ Ask one useful follow-up at a time
+```
+
+No guessed dates. No invented accomplishments. No silent career decisions. Aarvia has a pleasantly low tolerance for fiction.
+
+## Quick Start
 
 ```bash
 python -m pip install .
-aarvia --version
-```
 
-Configure an OpenAI-compatible provider:
-
-```bash
 export AARVIA_LLM_API_KEY="your-api-key"
-export AARVIA_LLM_MODEL="your-structured-output-model"
-```
-
-For a custom provider, also set its endpoint:
-
-```bash
+export AARVIA_LLM_MODEL="your-model"
 export AARVIA_LLM_BASE_URL="https://your-provider.example/compatible-mode/v1"
-```
 
-Then choose how to tell Aarvia about yourself.
-
-### Talk in the terminal
-
-```bash
 aarvia discover --narrative
 ```
 
-### Use a longer text file
+OpenAI users may omit `AARVIA_LLM_BASE_URL`.
+
+Other ways to begin or continue:
 
 ```bash
-aarvia discover \
-  --narrative-file background.txt \
+# Longer UTF-8 text, up to 2 MiB
+aarvia discover --narrative-file background.txt \
   --profile data/profiles/example.json
-```
 
-Narrative files must be UTF-8 plain text, non-empty, and no larger than 2 MiB. PDF and DOCX import are not part of this phase.
+# Continue an existing Profile
+aarvia discover --follow-up \
+  --profile data/profiles/example.json
 
-### Use the manual fallback
-
-```bash
+# No LLM required
 aarvia discover --manual
 ```
 
-Use `:skip` to leave a question unanswered and `:quit` to save your progress.
+Follow-up commands:
 
-## Bailian Setup ☁️
+- `.done` submits multiline input; `.cancel` restarts the current answer.
+- `:none`, `:skip`, and `:decline` record different kinds of “not answered.”
+- `:finish` reviews this session; `q` cancels it.
+
+If the Profile is already complete, Aarvia exits without calling the Provider or rewriting files. Knowing when to do nothing is a feature.
+
+## Bailian
 
 ```bash
 export AARVIA_LLM_API_KEY="your-dashscope-api-key"
@@ -74,61 +73,39 @@ export AARVIA_LLM_BASE_URL="https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/c
 export AARVIA_LLM_MODEL="qwen-plus"
 ```
 
-Replace `{WorkspaceId}` with your own workspace ID. Keys, endpoints, and models must belong to the same region. The selected model must support Chat Completions JSON Schema Structured Outputs; Aarvia does not assume every Bailian model does.
+Replace `{WorkspaceId}`. The key, endpoint, and model must share a region, and the model must support Chat Completions JSON Schema Structured Outputs. Not every Bailian model does.
 
-Aarvia detects `dashscope.aliyuncs.com` and `*.maas.aliyuncs.com` by parsed host, uses Chat Completions with strict `json_schema`, and disables thinking. Other endpoints retain the Responses protocol. Both paths use the same Candidate schema with `additionalProperties: false`.
+## Safety First
 
-## What Happens to Your Answer? 🔐
+- Provider output is cleaned deterministically and validated against a strict schema.
+- Extracted facts stay temporary until the user confirms them.
+- Corrections show a before/after diff and reject unsupported changes.
+- Existing records use deterministic identity matching; unmatched records need approval.
+- Session drafts are saved atomically only after final confirmation.
+- Debug output stays in the terminal and redacts the configured API key.
 
-```text
-Your narrative
--> Provider extraction
--> Deterministic cleanup and normalization
--> Strict Candidate validation
--> Your confirmation
--> Confirmed Career Profile
-```
+Personal Profiles under `data/profiles/` and API keys should never be committed.
 
-Unknown dates stay `null`. Aarvia never guesses them. Exact provider placeholders are removed only from the five formal date fields; other invalid values still fail validation.
-
-Profiles under `data/profiles/` are ignored by Git. Never commit API keys, workspace IDs, private endpoints, or personal Profile JSON.
-
-## Debug a Provider 🔦
-
-```bash
-aarvia discover --narrative --debug-extraction
-```
-
-On failure, debug mode shows the version, model, endpoint host, protocol, schema mode, pipeline stage, JSON status, validation reason, and raw provider text. It redacts the configured API key and saves none of that raw output.
-
-Raw output may contain personal information, so use debug mode only in a private terminal.
-
-## Product Direction
+## Product Pipeline
 
 ```text
-User Profile -> Career Discovery -> Role Recommendation -> User Decision
--> Gap Analysis -> Evidence Bank -> Base Resume -> JD Matching
--> Minimal Tailoring -> Fact Checking -> Final Resume
+User Profile → Career Discovery → Role Recommendation → User Decision
+→ Gap Analysis → Evidence Bank → Base Resume → JD Matching
+→ Minimal Tailoring → Fact Checking → Final Resume
 ```
 
-Current status:
-
-- ✅ Phase 1A — Career Profile Foundation
-- ✅ Phase 1B-v1 — Manual Career Discovery CLI
-- ✅ Phase 1B-v2.1 — Natural-language Candidate and Confirmation workflow
-- ⏳ Resume import, adaptive discovery, and Phase 2
+Only Profile and Career Discovery exist today. Aarvia is not quietly doing Phase 2 behind the curtains.
 
 ## Design Principles
 
-- The current resume does not determine the user's direction.
-- The user keeps final control over career decisions.
-- Profile and resume claims must be grounded in real evidence.
-- Extracted information remains a Candidate until confirmed.
+- User direction is not determined only by the current resume.
+- The user keeps final control over career direction.
+- Resume claims must be grounded in real evidence.
 - Tailoring should be minimal and traceable.
-- Agent frameworks should appear only when genuinely needed.
-- Core logic must remain testable without an LLM.
+- Complex agent frameworks should appear only when actually needed.
+- Core logic must be testable independently from the LLM.
 
-## Development 🧪
+## Development
 
 ```bash
 python -m pip install ".[dev]"

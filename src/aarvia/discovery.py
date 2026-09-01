@@ -18,6 +18,13 @@ def generate_open_questions(profile: CareerProfile) -> list[str]:
         questions.append("What is your education background?")
     if not profile.experience_overview:
         questions.append("What work, internship, research, volunteer, or project experience do you have?")
+    else:
+        for experience in profile.experience_overview:
+            if experience.short_factual_summary is None:
+                questions.append(
+                    "What did you do or accomplish as "
+                    f"{experience.title_or_role} at {experience.organization_or_project_name}?"
+                )
     if not profile.skills:
         questions.append("What skills do you currently have?")
 

@@ -5,6 +5,7 @@ from aarvia.cli import MAX_NARRATIVE_FILE_BYTES, main
 from aarvia.llm_client import LLMRequestError, LLMSettings
 from aarvia.narrative_extraction import OpenAINarrativeExtractor
 from aarvia.storage import load_profile
+from aarvia.discovery_state import state_path_for
 
 from test_confirmation import FakeExtractor
 from test_interview import scripted_input
@@ -36,7 +37,29 @@ def test_discover_help_lists_profile_option(capsys) -> None:
         main(["discover", "--help"])
 
     assert exit_info.value.code == 0
-    assert "--profile" in capsys.readouterr().out
+    help_text = capsys.readouterr().out
+    assert "--profile" in help_text
+    assert "--follow-up" in help_text
+    assert "--debug-full-profile" in help_text
+
+
+def test_debug_full_profile_requires_follow_up_debug() -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["discover", "--follow-up", "--debug-full-profile"])
+
+    assert exit_info.value.code == 2
+
+
+def test_follow_up_missing_profile_fails_before_provider_configuration(tmp_path) -> None:
+    output = []
+
+    exit_code = main(
+        ["discover", "--follow-up", "--profile", str(tmp_path / "missing.json")],
+        output_fn=output.append,
+    )
+
+    assert exit_code == 1
+    assert output == [f"Error: Follow-up Profile does not exist: {tmp_path / 'missing.json'}"]
 
 
 def test_narrative_mode_uses_injected_extractor(tmp_path) -> None:
@@ -45,7 +68,7 @@ def test_narrative_mode_uses_injected_extractor(tmp_path) -> None:
 
     exit_code = main(
         ["discover", "--narrative", "--profile", str(path)],
-        input_fn=scripted_input(["I use Python.", "y"]),
+        input_fn=scripted_input(["I use Python.", "y", "y"]),
         output_fn=lambda _message: None,
         extractor=extractor,
     )
@@ -125,7 +148,7 @@ def test_version_flag(capsys) -> None:
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert "aarvia 0.4.7" in capsys.readouterr().out
+    assert "aarvia 0.5.7" in capsys.readouterr().out
 
 
 def test_debug_mode_reports_raw_parsing_details(tmp_path) -> None:
@@ -142,7 +165,7 @@ def test_debug_mode_reports_raw_parsing_details(tmp_path) -> None:
     joined = "\n".join(output)
     assert exit_code == 1
     assert "may contain personal information" in joined
-    assert "Aarvia version: 0.4.7" in joined
+    assert "Aarvia version: 0.5.7" in joined
     assert "Provider model: qwen-test" in joined
     assert "Provider base URL host: workspace.example" in joined
     assert "Extraction protocol: responses" in joined
@@ -243,7 +266,7 @@ def test_narrative_file_is_read_as_utf8_and_skips_narrative_prompt(tmp_path) -> 
             "--profile",
             str(profile_path),
         ],
-        input_fn=scripted_input(["y"]),
+        input_fn=scripted_input(["y", "y"]),
         output_fn=lambda _message: None,
         extractor=extractor,
     )
@@ -277,6 +300,8 @@ def test_invalid_narrative_file_has_friendly_error(tmp_path, kind) -> None:
         ["--manual", "--narrative"],
         ["--manual", "--narrative-file", "background.txt"],
         ["--narrative", "--narrative-file", "background.txt"],
+        ["--follow-up", "--narrative"],
+        ["--follow-up", "--manual"],
     ],
 )
 def test_discovery_input_modes_are_mutually_exclusive(modes) -> None:
@@ -284,3 +309,121 @@ def test_discovery_input_modes_are_mutually_exclusive(modes) -> None:
         main(["discover", *modes])
 
     assert exit_info.value.code == 2
+
+
+def test_follow_up_keyboard_interrupt_is_friendly_and_atomic(tmp_path) -> None:
+    path = tmp_path / "profile.json"
+    original = create_profile({"basic_profile": {"current_location": None}})
+    save_profile(original, path)
+    output = []
+
+    def interrupted_input(_prompt):
+        raise KeyboardInterrupt
+
+    exit_code = main(
+        ["discover", "--follow-up", "--profile", str(path)],
+        input_fn=interrupted_input,
+        output_fn=output.append,
+        extractor=FakeExtractor(),
+    )
+
+    assert exit_code == 130
+    assert output[-1] == "Session cancelled. No files were changed."
+    assert load_profile(path) == original
+    assert not state_path_for(path).exists()
+
+
+def test_narrative_provider_progress_is_visible_before_mock_call(tmp_path) -> None:
+    path = tmp_path / "profile.json"
+    output = []
+
+    class ProgressExtractor(FakeExtractor):
+        def extract(self, narrative, *, topic=None):
+            assert output[-1] == "Extracting information..."
+            return super().extract(narrative, topic=topic)
+
+    exit_code = main(
+        ["discover", "--narrative", "--profile", str(path)],
+        input_fn=scripted_input(["I use Python.", "q"]),
+        output_fn=output.append,
+        extractor=ProgressExtractor(
+            {"skills": [{"skill_name": "Python", "category": "language"}]}
+        ),
+    )
+
+    assert exit_code == 0
+    assert "Extracting information..." in output
+
+
+def test_complete_follow_up_does_not_initialize_provider(
+    tmp_path, monkeypatch
+) -> None:
+    from aarvia.discovery_state import DISCOVERY_PATHS, DiscoveryState, FollowUpStatus
+    from aarvia.discovery_state import save_profile_and_state
+    import aarvia.follow_up as follow_up_module
+
+    data = {
+        "basic_profile": {
+            "name": "Test User",
+            "current_location": "Shanghai",
+            "current_status": "Employed",
+        },
+        "education": [{
+            "institution": "Example University",
+            "degree": "BS",
+            "field_of_study": "Computer Science",
+            "start_date": "2020-09",
+            "expected_graduation_date": "2024-06",
+            "gpa": None,
+        }],
+        "experience_overview": [{
+            "experience_type": "work",
+            "organization_or_project_name": "Example Co",
+            "title_or_role": "Engineer",
+            "short_factual_summary": "Built software.",
+            "start_date": "2024-07",
+            "end_date": None,
+        }],
+        "skills": [{
+            "skill_name": "Python",
+            "category": "language",
+            "self_reported_proficiency": "advanced",
+        }],
+        "career_preferences": {
+            "interested_fields": ["AI"],
+            "preferred_work_activities": ["Building products"],
+            "preferred_industries": ["Technology"],
+            "fields_or_activities_to_avoid": [],
+            "currently_considered_roles": ["Engineer"],
+        },
+        "constraints": {
+            "target_locations": ["Shanghai"],
+            "work_authorization_or_visa_constraints": "None",
+            "work_arrangement_preference": "hybrid",
+            "employment_type_preference": "full-time",
+            "target_start_date": "2026-09",
+            "other_constraints": [],
+        },
+    }
+    path = tmp_path / "profile.json"
+    state = DiscoveryState()
+    for discovery_path in DISCOVERY_PATHS:
+        state.mark(discovery_path, FollowUpStatus.ANSWERED)
+    save_profile_and_state(create_profile(data), path, state, state_path_for(path))
+
+    def fail_provider_init():
+        pytest.fail("complete follow-up must not initialize the Provider")
+
+    monkeypatch.setattr(follow_up_module, "OpenAINarrativeExtractor", fail_provider_init)
+    output = []
+    exit_code = main(
+        ["discover", "--follow-up", "--profile", str(path)],
+        input_fn=lambda _prompt: pytest.fail("no-op must not prompt"),
+        output_fn=output.append,
+    )
+
+    assert exit_code == 0
+    assert output == [
+        "Career Profile is already complete.",
+        "No changes were made.",
+    ]
