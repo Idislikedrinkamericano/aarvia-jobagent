@@ -2,9 +2,52 @@ from copy import deepcopy
 
 import pytest
 
-from aarvia.live_jobs import LiveJobCollection
+from aarvia.jd_sources import JDSourceCollection, generate_canonical_job_id
+from aarvia.live_jobs import (
+    LiveJobCollection,
+    LiveJobCollectionV2,
+    load_live_job_collection,
+    save_live_job_collection,
+)
 from aarvia.role_catalog import Phase2ValidationError, production_role_catalog
 from phase2_fixtures import live_job_fixture_data
+from phase2b_fixtures import NOW, source_collection_data, source_data
+
+
+def live_job_v2_data(source: dict, *, listing_status: str) -> dict:
+    return {
+        "schema": "aarvia.live_jobs",
+        "schema_version": 2,
+        "collection_id": "fixture_live_jobs_v2",
+        "catalog_version": "1.0.0",
+        "collection_type": "test_fixture",
+        "source_collection_id": "fixture_source_collection",
+        "captured_at": NOW,
+        "jobs": [
+            {
+                "job_id": source["canonical_job_id"],
+                "canonical_job_id": source["canonical_job_id"],
+                "canonical_source_reference": source["source_id"],
+                "discovery_source_references": source["discovery_source_references"],
+                "company_id": source["company_id"],
+                "company": source["company_display_name"],
+                "exact_job_title": source["exact_job_title"],
+                "job_url": source["source_url"],
+                "application_url": source["application_url"],
+                "location": source["location"],
+                "employment_type": "internship",
+                "posting_date": None,
+                "expiration_date": None,
+                "last_verified_at": source["last_verified_at"],
+                "listing_status": listing_status,
+                "mapped_role_id": "applied_ai_engineer",
+                "mapped_specialization_id": "agentic_ai",
+                "eligibility_status": "unknown",
+                "preliminary_match_status": "not_analyzed",
+                "structured_jd_requirements": [],
+            }
+        ],
+    }
 
 
 def test_valid_fixture_live_job_contract_round_trips() -> None:
@@ -162,3 +205,118 @@ def test_missing_application_url_has_consistent_status() -> None:
     collection = LiveJobCollection.from_dict(data)
     with pytest.raises(Phase2ValidationError, match="must be not_provided"):
         collection.validate(production_role_catalog())
+
+
+def test_schema_two_distinguishes_official_and_platform_verified_open() -> None:
+    official = source_data()
+    official_sources = JDSourceCollection.from_dict(source_collection_data([official]))
+    collection = LiveJobCollection.from_dict(
+        live_job_v2_data(official, listing_status="verified_official_open")
+    )
+    assert isinstance(collection, LiveJobCollectionV2)
+    collection.validate(production_role_catalog(), official_sources)
+
+    platform = source_data(2, tier="tier_b_verified_platform")
+    platform_sources = JDSourceCollection.from_dict(source_collection_data([platform]))
+    collection = LiveJobCollection.from_dict(
+        live_job_v2_data(platform, listing_status="verified_platform_open")
+    )
+    collection.validate(production_role_catalog(), platform_sources)
+
+
+def test_schema_two_verified_status_requires_matching_source_verification() -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["last_verified_at"] = "2026-09-01T12:01:00+00:00"
+    collection = LiveJobCollection.from_dict(data)
+    with pytest.raises(Phase2ValidationError, match="verification time does not match source"):
+        collection.validate(production_role_catalog(), sources)
+
+    unverified = source_data()
+    unverified["source_status"] = "captured"
+    unverified["last_verified_at"] = None
+    unverified_sources = JDSourceCollection.from_dict(source_collection_data([unverified]))
+    collection = LiveJobCollection.from_dict(
+        live_job_v2_data(unverified, listing_status="verified_official_open")
+    )
+    with pytest.raises(Phase2ValidationError, match="verified Tier A posting"):
+        collection.validate(production_role_catalog(), unverified_sources)
+
+
+def test_schema_two_rejects_contradictory_posting_expiration_and_capture_times() -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["expiration_date"] = "2026-08-31"
+    with pytest.raises(Phase2ValidationError, match="after expiration"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["posting_date"] = "2026-09-02"
+    with pytest.raises(Phase2ValidationError, match="posting date cannot follow source capture"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["posting_date"] = "2026-09-01"
+    data["jobs"][0]["expiration_date"] = "2026-08-31"
+    with pytest.raises(Phase2ValidationError, match="expiration date cannot precede posting date"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["captured_at"] = "2026-09-01T11:59:59+00:00"
+    with pytest.raises(Phase2ValidationError, match="source capture cannot follow collection capture"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+
+def test_careers_homepage_can_only_support_possibly_open() -> None:
+    source = source_data(source_type="official_career_page")
+    source["canonical_job_id"] = generate_canonical_job_id(
+        company_id=source["company_id"], requisition_id=source["requisition_id"],
+        canonical_url=source["source_url"], platform_name=source["platform_name"],
+        platform_job_id=None,
+    )
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    collection = LiveJobCollection.from_dict(data)
+    with pytest.raises(Phase2ValidationError, match="verified Tier A posting"):
+        collection.validate(production_role_catalog(), sources)
+
+    data["jobs"][0]["listing_status"] = "possibly_open"
+    collection = LiveJobCollection.from_dict(data)
+    collection.validate(production_role_catalog(), sources)
+
+
+def test_schema_one_and_two_live_job_shapes_cannot_be_silently_mixed() -> None:
+    legacy = live_job_fixture_data()
+    legacy["schema_version"] = 2
+    with pytest.raises(Phase2ValidationError, match="unknown fields"):
+        LiveJobCollection.from_dict(legacy)
+
+    source = source_data()
+    modern = live_job_v2_data(source, listing_status="verified_official_open")
+    modern["schema_version"] = 1
+    with pytest.raises(Phase2ValidationError, match="unknown fields"):
+        LiveJobCollection.from_dict(modern)
+
+
+def test_schema_two_live_job_typed_round_trip_requires_source_context(tmp_path) -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    value = LiveJobCollection.from_dict(
+        live_job_v2_data(source, listing_status="verified_official_open")
+    )
+    path = save_live_job_collection(
+        value,
+        tmp_path / "jobs-v2.json",
+        catalog=production_role_catalog(),
+        sources=sources,
+    )
+    loaded = load_live_job_collection(
+        path, catalog=production_role_catalog(), sources=sources
+    )
+    assert loaded == value
+
+    with pytest.raises(Phase2ValidationError, match="requires a JD Source Collection"):
+        load_live_job_collection(path, catalog=production_role_catalog())

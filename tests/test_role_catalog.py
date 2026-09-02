@@ -13,6 +13,7 @@ from aarvia.role_catalog import (
     save_role_catalog,
 )
 from phase2_fixtures import catalog_fixture, catalog_fixture_data
+from phase2b_fixtures import source_data
 
 
 def test_production_catalog_has_taxonomy_without_unsourced_market_claims() -> None:
@@ -40,6 +41,34 @@ def test_production_catalog_is_loaded_from_packaged_versioned_json() -> None:
 
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     assert 'aarvia = ["catalog_data/*.json"]' in pyproject
+
+
+def test_legacy_production_catalog_bytes_remain_immutable() -> None:
+    import hashlib
+
+    artifact = Path("src/aarvia/catalog_data/role-catalog-1.0.0.json")
+    assert hashlib.sha256(artifact.read_bytes()).hexdigest() == (
+        "fb846b0d468652e5006e40fe77679f469f14804dc5f5cc79a264d74a19005a90"
+    )
+
+
+def test_catalog_schema_two_explicitly_uses_generic_jd_sources() -> None:
+    data = production_role_catalog().to_dict()
+    data["schema_version"] = 2
+    data["catalog_version"] = "1.1.0"
+    data["catalog_type"] = "test_fixture"
+    for role in data["roles"]:
+        role["catalog_version"] = "1.1.0"
+    data["sources"] = [source_data()]
+
+    catalog = RoleCatalog.from_dict(data)
+    assert catalog.schema_version == 2
+    assert catalog.sources[0].source_url.startswith("https://")
+
+    mixed = deepcopy(data)
+    mixed["sources"] = [catalog_fixture_data()["sources"][0]]
+    with pytest.raises(Phase2ValidationError, match="unknown fields"):
+        RoleCatalog.from_dict(mixed)
 
 
 def test_valid_catalog_round_trip_and_stable_serialization(tmp_path) -> None:

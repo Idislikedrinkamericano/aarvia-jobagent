@@ -376,7 +376,7 @@ class RoleCatalog:
     catalog_type: CatalogType
     roles: tuple[RoleFamily, ...]
     requirements: tuple[RoleRequirement, ...] = ()
-    sources: tuple[SourceReference, ...] = ()
+    sources: tuple[Any, ...] = ()
     schema: str = "aarvia.role_catalog"
     schema_version: int = 1
 
@@ -388,14 +388,27 @@ class RoleCatalog:
             "roles", "requirements", "sources",
         }
         _reject_unknown(data, allowed, "catalog")
-        if data.get("schema") != "aarvia.role_catalog" or data.get("schema_version") != 1:
+        schema_version = data.get("schema_version")
+        if data.get("schema") != "aarvia.role_catalog" or schema_version not in {1, 2}:
             raise Phase2ValidationError("unsupported Role Catalog schema version")
         catalog_version = _version(data.get("catalog_version"), "catalog.catalog_version")
         catalog_type = _enum(data.get("catalog_type"), CatalogType, "catalog.catalog_type")
         roles = _model_tuple(data.get("roles"), RoleFamily, "catalog.roles")
         requirements = _model_tuple(data.get("requirements"), RoleRequirement, "catalog.requirements")
-        sources = _model_tuple(data.get("sources"), SourceReference, "catalog.sources")
-        catalog = cls(catalog_version, catalog_type, roles, requirements, sources)
+        if schema_version == 1:
+            sources = _model_tuple(data.get("sources"), SourceReference, "catalog.sources")
+        else:
+            from .jd_sources import JDSource
+
+            sources = _model_tuple(data.get("sources"), JDSource, "catalog.sources")
+        catalog = cls(
+            catalog_version,
+            catalog_type,
+            roles,
+            requirements,
+            sources,
+            schema_version=schema_version,
+        )
         catalog.validate()
         return catalog
 
@@ -475,6 +488,14 @@ class RoleCatalog:
                 raise Phase2ValidationError(
                     f"production requirement {requirement.requirement_id} requires provenance"
                 )
+            if self.schema_version == 2 and requirement.source_references:
+                from .jd_sources import SourceTier
+
+                evidence_sources = [source_map[source_id] for source_id in requirement.source_references]
+                if all(source.source_tier == SourceTier.TIER_C_DISCOVERY_ONLY for source in evidence_sources):
+                    raise Phase2ValidationError(
+                        f"requirement {requirement.requirement_id} cannot rely only on Tier C sources"
+                    )
 
     def role(self, role_id: str) -> RoleFamily:
         for role in self.roles:

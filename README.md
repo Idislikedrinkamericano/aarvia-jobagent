@@ -8,12 +8,14 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.6.0 — Phase 2A contract foundation complete.**
+**Version 0.6.1 — Phase 2B-1 US early-career source foundation complete.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
 - ✅ Eight stable Role Families with specializations and search aliases
 - ✅ Atomic JSON persistence for Phase 2A recommendation, decision, gap, and job artifacts
+- ✅ Schema 2 contracts for US internship, new-grad, and 0-2 year JD sources
+- ✅ Tier A/B/C provenance, canonical dedup, human curation, and prevalence foundations
 - ⏳ Source-backed Role Requirements, recommendations, gaps, and live jobs are not implemented
 
 The production Catalog deliberately contains **zero requirements and zero sources** today. It is a taxonomy with guardrails, not a trench coat full of invented labor-market facts. 🕵️
@@ -100,7 +102,7 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 ## Phase 2 Map
 
 - **2A — Contracts:** complete. Role taxonomy, provenance, recommendation, decision, gap, and live-job schemas are validated and serializable.
-- **2B — Role Recommendation:** not implemented. It will rank `current_fit` and `directional_fit` independently.
+- **2B — Role Recommendation:** 2B-1 source/curation foundation is complete; recommendation ranking is not implemented.
 - **2C — User Decision:** not implemented. Recommendation and confirmed user choice remain separate objects.
 - **2D — Role-level Gap Analysis:** not implemented. Its contract preserves `unknown != missing`.
 - **2E — Live Job Discovery:** not implemented. This is where official pages and listing status will be checked.
@@ -125,6 +127,15 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - A live job requires an official source contract, but no real job discovery or verification occurs in 2A.
 
 Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Role Requirements backed by traceable official job sources. Empty requirements are not market evidence.
+
+### Phase 2B-1 Source Foundation
+
+- The first market scope is United States internship, new-grad, and early-career work with explicitly stated experience capped at two years.
+- Tier A means an official company or ATS source. Tier B means a verified hiring-platform posting; LinkedIn is a platform source, never an official company page. Tier C is discovery-only.
+- Official and platform verified-open states are distinct. Careers homepages and unverified discovery sources can support only `possibly_open`.
+- LLM output can create only unapproved `RequirementCandidate` objects. Python generates IDs, hashes, exact deduplication, source-mix checks, and prevalence; a human approves normalization, importance, evidence, and publication.
+- Full JD text belongs only under ignored `local_data/`. No real JD was collected for `0.6.1`.
+- The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Phase 2B completion, including recommendation behavior, will use project version `0.7.0`.
 
 ## Design Principles
 

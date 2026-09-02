@@ -8,12 +8,14 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.6.0 — Phase 2A 契约基础已完成。**
+**版本 0.6.1 — Phase 2B-1 美国 early-career source foundation 已完成。**
 
 - ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
 - ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
 - ✅ 八个稳定 Role Family，以及 specialization 和搜索标题 alias
 - ✅ Phase 2A recommendation、decision、gap 与 job artifact 的原子 JSON 持久化
+- ✅ 美国 internship、new-grad 与 0-2 年 early-career JD 的 Schema 2 source contract
+- ✅ Tier A/B/C provenance、canonical dedup、人工 curation 与 prevalence 基础
 - ⏳ 有来源的 Role Requirements、推荐、Gap 和真实岗位尚未实现
 
 当前 production Catalog 故意保持 **0 条 requirement、0 个 source**。它是一套带护栏的 taxonomy，不是一件塞满虚构就业市场知识的风衣。🕵️
@@ -100,7 +102,7 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 ## Phase 2 地图
 
 - **2A — 数据契约：** 已完成。Role taxonomy、provenance、recommendation、decision、gap 和 live-job schema 均可严格验证与序列化。
-- **2B — Role Recommendation：** 未实现。未来会独立排列 `current_fit` 与 `directional_fit`。
+- **2B — Role Recommendation：** 2B-1 source/curation foundation 已完成；推荐排名尚未实现。
 - **2C — User Decision：** 未实现。推荐结果和用户确认决定始终是两个独立对象。
 - **2D — Role-level Gap Analysis：** 未实现。契约明确保留 `unknown != missing`。
 - **2E — Live Job Discovery：** 未实现。官方页面和职位状态将在这里验证。
@@ -125,6 +127,15 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - Live Job 必须具备官方来源契约，但 Phase 2A 不搜索或验证任何真实岗位。
 
 Phase 2B 开始排名前，Aarvia 仍需建立一份经过审查、由真实官方职位来源支持的 Role Requirements 数据集。空 requirements 不等于市场证据。
+
+### Phase 2B-1 Source Foundation
+
+- 首版市场限定为美国 internship、new-grad 和明确经验要求不超过两年的 early-career 岗位。
+- Tier A 是公司官方或 ATS 来源。Tier B 是经过验证的招聘平台职位；LinkedIn 是平台来源，不是公司官网。Tier C 只用于发现。
+- 官方 verified open 与平台 verified open 是不同状态。普通 careers 首页和未完成强验证的来源最多只能支持 `possibly_open`。
+- LLM 只能创建未批准的 `RequirementCandidate`。Python 负责 ID、hash、exact dedup、来源比例和 prevalence；人工负责 normalization、importance、证据与发布审批。
+- 完整 JD 只能保存在被忽略的 `local_data/`。`0.6.1` 没有采集任何真实 JD。
+- Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。包含推荐用户能力的完整 Phase 2B 才会升级为项目版本 `0.7.0`。
 
 ## 设计原则
 

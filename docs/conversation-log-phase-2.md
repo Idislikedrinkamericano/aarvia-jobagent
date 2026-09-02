@@ -23,3 +23,7 @@ Moved the production taxonomy to packaged versioned JSON, added atomic typed per
 A final read-only review found two contract gaps: Gap Analysis could be validated without a confirmed User Decision, and Decision provenance compared only the RecommendationSet ID. The closeout fixed both by requiring a confirmed selected-role boundary for every Gap artifact and by validating RecommendationSet identity, Catalog version, cross-references, Profile paths, snapshots, and fingerprint. Public conversation files were converted to sanitized Phase summaries; verbatim local copies were retained under a Git-ignored private directory.
 
 Final local environment acceptance succeeded: editable development installation reported Aarvia `0.6.0`, source import reported `0.6.0`, all 299 tests passed, wheel construction succeeded with the packaged Role Catalog JSON present, and `git diff --check` passed. No Phase 2B-2G logic was implemented.
+
+## Conversation 6 - Phase 2B-1 Source Foundation
+
+Approved a contract-only first step for United States internship, new-grad, and early-career JD evidence. Implemented schema 2 source, curation, Catalog draft, canonical deduplication, company-level prevalence, explicit human cluster/publication approval, and official/platform listing foundations using synthetic fixtures only. The immutable Catalog `1.0.0` remained unchanged with eight roles and no sources or requirements. No real JD, network access, Provider call, recommendation algorithm, or later Phase workflow was introduced. Project version advanced to `0.6.1` after validation.

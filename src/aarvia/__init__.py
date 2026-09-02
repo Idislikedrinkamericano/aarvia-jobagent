@@ -13,6 +13,16 @@ from .profile import (
     Skill,
 )
 from .storage import load_profile, save_profile
+from .catalog_build import (
+    CatalogBuildResult,
+    CatalogDraft,
+    RoleSample,
+    build_catalog_draft,
+    deduplicate_sources,
+    load_catalog_draft,
+    prevalence_for_counts,
+    save_catalog_draft,
+)
 from .career_direction import (
     ProfileReference,
     RecommendationSet,
@@ -31,6 +41,23 @@ from .live_jobs import (
     load_live_job_collection,
     save_live_job_collection,
 )
+from .jd_curation import (
+    CurationArtifact,
+    RequirementCandidate,
+    load_curation_artifact,
+    save_curation_artifact,
+)
+from .jd_sources import (
+    JDSource,
+    JDSourceCollection,
+    ListingStatus,
+    SourceTier,
+    content_sha256,
+    generate_canonical_job_id,
+    generate_source_id,
+    load_jd_source_collection,
+    save_jd_source_collection,
+)
 from .role_catalog import (
     Phase2ValidationError,
     RoleCatalog,
@@ -42,14 +69,17 @@ from .role_catalog import (
     save_role_catalog,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 __all__ = [
     "BasicProfile",
     "ApplicationURLStatus",
+    "CatalogBuildResult",
+    "CatalogDraft",
     "CareerPreferences",
     "CareerProfile",
     "Constraints",
+    "CurationArtifact",
     "Education",
     "DiscoveryState",
     "ExperienceOverview",
@@ -65,10 +95,24 @@ __all__ = [
     "Skill",
     "SourceReference",
     "LiveJobCollection",
+    "JDSource",
+    "JDSourceCollection",
+    "ListingStatus",
+    "RequirementCandidate",
+    "RoleSample",
+    "SourceTier",
     "UserRoleDecision",
     "create_profile",
+    "build_catalog_draft",
+    "content_sha256",
+    "deduplicate_sources",
+    "generate_canonical_job_id",
+    "generate_source_id",
     "generate_open_questions",
     "load_profile",
+    "load_catalog_draft",
+    "load_curation_artifact",
+    "load_jd_source_collection",
     "load_live_job_collection",
     "load_recommendation_set",
     "load_role_catalog",
@@ -76,7 +120,11 @@ __all__ = [
     "load_user_role_decision",
     "load_discovery_state",
     "production_role_catalog",
+    "prevalence_for_counts",
     "save_profile",
+    "save_catalog_draft",
+    "save_curation_artifact",
+    "save_jd_source_collection",
     "save_live_job_collection",
     "save_recommendation_set",
     "save_role_catalog",
