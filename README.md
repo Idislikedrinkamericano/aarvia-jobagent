@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.6.1 — Phase 2B-1 US early-career source foundation complete.**
+**Version 0.6.2 — Phase 2B-1 source contracts, including application-link verification, complete.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -133,8 +133,9 @@ Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Ro
 - The first market scope is United States internship, new-grad, and early-career work with explicitly stated experience capped at two years.
 - Tier A means an official company or ATS source. Tier B means a verified hiring-platform posting; LinkedIn is a platform source, never an official company page. Tier C is discovery-only.
 - Official and platform verified-open states are distinct. Careers homepages and unverified discovery sources can support only `possibly_open`.
+- Live Job schema 2 keeps application-link presence separate from verification status, timestamp, and source. A specific qualified posting must support a verified application link; URL syntax alone proves nothing.
 - LLM output can create only unapproved `RequirementCandidate` objects. Python generates IDs, hashes, exact deduplication, source-mix checks, and prevalence; a human approves normalization, importance, evidence, and publication.
-- Full JD text belongs only under ignored `local_data/`. No real JD was collected for `0.6.1`.
+- Full JD text belongs only under ignored `local_data/`. No real JD artifact was created for `0.6.2`; the approved pilot remains paused until this contract fix is reviewed.
 - The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Phase 2B completion, including recommendation behavior, will use project version `0.7.0`.
 
 ## Design Principles

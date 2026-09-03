@@ -1,4 +1,6 @@
 from copy import deepcopy
+from dataclasses import replace
+import json
 
 import pytest
 
@@ -15,6 +17,10 @@ from phase2b_fixtures import NOW, source_collection_data, source_data
 
 
 def live_job_v2_data(source: dict, *, listing_status: str) -> dict:
+    application_verified = listing_status in {
+        "verified_official_open",
+        "verified_platform_open",
+    } and source["application_url"] is not None
     return {
         "schema": "aarvia.live_jobs",
         "schema_version": 2,
@@ -34,6 +40,21 @@ def live_job_v2_data(source: dict, *, listing_status: str) -> dict:
                 "exact_job_title": source["exact_job_title"],
                 "job_url": source["source_url"],
                 "application_url": source["application_url"],
+                "application_url_status": (
+                    "verified_active"
+                    if application_verified
+                    else (
+                        "provided_unverified"
+                        if source["application_url"] is not None
+                        else "not_provided"
+                    )
+                ),
+                "application_url_last_verified_at": (
+                    source["last_verified_at"] if application_verified else None
+                ),
+                "application_url_source_reference": (
+                    source["source_id"] if source["application_url"] else None
+                ),
                 "location": source["location"],
                 "employment_type": "internship",
                 "posting_date": None,
@@ -284,8 +305,213 @@ def test_careers_homepage_can_only_support_possibly_open() -> None:
         collection.validate(production_role_catalog(), sources)
 
     data["jobs"][0]["listing_status"] = "possibly_open"
+    data["jobs"][0]["application_url_status"] = "provided_unverified"
+    data["jobs"][0]["application_url_last_verified_at"] = None
     collection = LiveJobCollection.from_dict(data)
     collection.validate(production_role_catalog(), sources)
+
+
+def test_schema_two_verified_application_url_has_complete_provenance() -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+
+    collection = LiveJobCollection.from_dict(data)
+    collection.validate(production_role_catalog(), sources)
+
+    job = collection.jobs[0]
+    assert job.application_url_status.value == "verified_active"
+    assert job.application_url_last_verified_at == NOW
+    assert job.application_url_source_reference == source["source_id"]
+
+
+def test_schema_two_application_url_can_be_provided_without_verification() -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="possibly_open")
+
+    collection = LiveJobCollection.from_dict(data)
+    collection.validate(production_role_catalog(), sources)
+    assert collection.jobs[0].application_url_status.value == "provided_unverified"
+    assert collection.jobs[0].application_url_last_verified_at is None
+
+
+def test_schema_two_missing_application_url_has_consistent_state() -> None:
+    source = source_data()
+    source["application_url"] = None
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="possibly_open")
+
+    collection = LiveJobCollection.from_dict(data)
+    collection.validate(production_role_catalog(), sources)
+    job = collection.jobs[0]
+    assert job.application_url is None
+    assert job.application_url_status.value == "not_provided"
+    assert job.application_url_last_verified_at is None
+    assert job.application_url_source_reference is None
+
+    source_with_url = source_data(2)
+    sources_with_url = JDSourceCollection.from_dict(
+        source_collection_data([source_with_url])
+    )
+    invalid = live_job_v2_data(source_with_url, listing_status="possibly_open")
+    invalid["jobs"][0].update(
+        application_url_status="not_provided",
+        application_url_source_reference=None,
+    )
+    with pytest.raises(Phase2ValidationError, match="marks it not_provided"):
+        LiveJobCollection.from_dict(invalid).validate(
+            production_role_catalog(), sources_with_url
+        )
+
+
+def test_schema_two_verified_application_requires_url_timestamp_and_source() -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0].update(
+        application_url=None,
+        application_url_source_reference=None,
+    )
+    with pytest.raises(Phase2ValidationError, match="application URL"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["application_url_last_verified_at"] = None
+    with pytest.raises(Phase2ValidationError, match="requires a verification timestamp"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["application_url_source_reference"] = None
+    with pytest.raises(Phase2ValidationError, match="requires a source reference"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+
+def test_schema_two_application_source_must_exist_and_belong_to_job() -> None:
+    source = source_data()
+    other = source_data(2)
+    sources = JDSourceCollection.from_dict(source_collection_data([source, other]))
+
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["application_url_source_reference"] = "missing_source"
+    with pytest.raises(Phase2ValidationError, match="unknown source"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+    data["jobs"][0]["application_url_source_reference"] = other["source_id"]
+    with pytest.raises(Phase2ValidationError, match="outside the job provenance"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+
+def test_schema_two_careers_homepage_cannot_verify_application_url() -> None:
+    source = source_data(source_type="official_career_page")
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="possibly_open")
+    data["jobs"][0].update(
+        application_url_status="verified_unavailable",
+        application_url_last_verified_at=NOW,
+    )
+
+    with pytest.raises(Phase2ValidationError, match="specific qualified posting source"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+
+def test_schema_two_verified_application_rejects_unverified_source_status() -> None:
+    source = source_data()
+    source["source_status"] = "captured"
+    source["last_verified_at"] = None
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="possibly_open")
+    data["jobs"][0].update(
+        application_url_status="verified_unavailable",
+        application_url_last_verified_at=NOW,
+    )
+
+    with pytest.raises(Phase2ValidationError, match="requires source verification"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+
+@pytest.mark.parametrize(
+    ("verified_at", "message"),
+    [
+        ("2026-09-01T11:59:59+00:00", "cannot precede source capture"),
+        ("2026-09-01T12:00:01+00:00", "cannot follow source verification"),
+    ],
+)
+def test_schema_two_application_verification_time_is_bounded_by_source(
+    verified_at, message
+) -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["application_url_last_verified_at"] = verified_at
+
+    with pytest.raises(Phase2ValidationError, match=message):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+
+def test_schema_two_unverified_application_cannot_claim_verification_time() -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="possibly_open")
+    data["jobs"][0]["application_url_last_verified_at"] = NOW
+
+    with pytest.raises(Phase2ValidationError, match="unverified application URL"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+
+def test_schema_two_verified_unavailable_application_is_explicitly_checked() -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="possibly_open")
+    data["jobs"][0].update(
+        application_url_status="verified_unavailable",
+        application_url_last_verified_at=NOW,
+    )
+
+    collection = LiveJobCollection.from_dict(data)
+    collection.validate(production_role_catalog(), sources)
+    assert collection.jobs[0].application_url_status.value == "verified_unavailable"
+
+
+def test_schema_two_unverifiable_source_cannot_claim_verified_unavailable() -> None:
+    source = source_data()
+    source["source_status"] = "unverifiable"
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="possibly_open")
+    data["jobs"][0].update(
+        application_url_status="verified_unavailable",
+        application_url_last_verified_at=NOW,
+    )
+
+    with pytest.raises(Phase2ValidationError, match="reviewed source status"):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
+
+
+@pytest.mark.parametrize(
+    ("listing_status", "application_status", "message"),
+    [
+        ("possibly_open", "verified_active", "requires a verified-open listing"),
+        (
+            "verified_official_open",
+            "verified_unavailable",
+            "conflicts with a verified-open listing",
+        ),
+    ],
+)
+def test_schema_two_application_and_listing_statuses_cannot_conflict(
+    listing_status, application_status, message
+) -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status=listing_status)
+    data["jobs"][0].update(
+        application_url_status=application_status,
+        application_url_last_verified_at=NOW,
+    )
+
+    with pytest.raises(Phase2ValidationError, match=message):
+        LiveJobCollection.from_dict(data).validate(production_role_catalog(), sources)
 
 
 def test_schema_one_and_two_live_job_shapes_cannot_be_silently_mixed() -> None:
@@ -320,3 +546,65 @@ def test_schema_two_live_job_typed_round_trip_requires_source_context(tmp_path) 
 
     with pytest.raises(Phase2ValidationError, match="requires a JD Source Collection"):
         load_live_job_collection(path, catalog=production_role_catalog())
+
+
+def test_schema_two_typed_load_rejects_tampered_application_state(tmp_path) -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    data = live_job_v2_data(source, listing_status="verified_official_open")
+    data["jobs"][0]["application_url_last_verified_at"] = None
+    path = tmp_path / "tampered-jobs-v2.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(Phase2ValidationError, match="requires a verification timestamp"):
+        load_live_job_collection(
+            path,
+            catalog=production_role_catalog(),
+            sources=sources,
+        )
+
+
+def test_schema_two_direct_dataclass_cannot_bypass_save_validation(tmp_path) -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    value = LiveJobCollection.from_dict(
+        live_job_v2_data(source, listing_status="verified_official_open")
+    )
+    invalid_job = replace(value.jobs[0], application_url_last_verified_at=None)
+    invalid_value = replace(value, jobs=(invalid_job,))
+
+    with pytest.raises(Phase2ValidationError, match="requires a verification timestamp"):
+        save_live_job_collection(
+            invalid_value,
+            tmp_path / "jobs-v2.json",
+            catalog=production_role_catalog(),
+            sources=sources,
+        )
+
+
+def test_schema_two_atomic_replacement_failure_preserves_existing_file(
+    tmp_path, monkeypatch
+) -> None:
+    source = source_data()
+    sources = JDSourceCollection.from_dict(source_collection_data([source]))
+    value = LiveJobCollection.from_dict(
+        live_job_v2_data(source, listing_status="verified_official_open")
+    )
+    path = tmp_path / "jobs-v2.json"
+    original = b'{"existing": true}\n'
+    path.write_bytes(original)
+
+    def fail_replace(source_path, target_path):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr("aarvia.phase2_storage.os.replace", fail_replace)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        save_live_job_collection(
+            value,
+            path,
+            catalog=production_role_catalog(),
+            sources=sources,
+        )
+
+    assert path.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [path]

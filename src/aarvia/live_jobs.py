@@ -15,6 +15,7 @@ from .jd_sources import (
     ListingStatus,
     SourceLifecycleStatus,
     SourceTier,
+    VerificationMethod,
 )
 
 from .role_catalog import (
@@ -371,6 +372,9 @@ class LiveJobV2:
     exact_job_title: str
     job_url: str
     application_url: str | None
+    application_url_status: ApplicationURLStatus
+    application_url_last_verified_at: str | None
+    application_url_source_reference: str | None
     location: str
     employment_type: EmploymentType
     posting_date: str | None
@@ -389,10 +393,12 @@ class LiveJobV2:
         allowed = {
             "job_id", "canonical_job_id", "canonical_source_reference",
             "discovery_source_references", "company_id", "company", "exact_job_title",
-            "job_url", "application_url", "location", "employment_type", "posting_date",
-            "expiration_date", "last_verified_at", "listing_status", "mapped_role_id",
-            "mapped_specialization_id", "eligibility_status", "preliminary_match_status",
-            "structured_jd_requirements",
+            "job_url", "application_url", "application_url_status",
+            "application_url_last_verified_at", "application_url_source_reference",
+            "location", "employment_type", "posting_date", "expiration_date",
+            "last_verified_at", "listing_status", "mapped_role_id",
+            "mapped_specialization_id", "eligibility_status",
+            "preliminary_match_status", "structured_jd_requirements",
         }
         _reject_unknown(data, allowed, path)
         raw_requirements = data.get("structured_jd_requirements", [])
@@ -405,6 +411,8 @@ class LiveJobV2:
         if len({item.job_requirement_id for item in requirements}) != len(requirements):
             raise Phase2ValidationError(f"{path} contains duplicate job requirement IDs")
         application_url = data.get("application_url")
+        application_verified_at = data.get("application_url_last_verified_at")
+        application_source = data.get("application_url_source_reference")
         return cls(
             job_id=_stable_id(data.get("job_id"), f"{path}.job_id"),
             canonical_job_id=_stable_id(data.get("canonical_job_id"), f"{path}.canonical_job_id"),
@@ -415,6 +423,27 @@ class LiveJobV2:
             exact_job_title=_text(data.get("exact_job_title"), f"{path}.exact_job_title"),
             job_url=_https_url(data.get("job_url"), f"{path}.job_url"),
             application_url=(None if application_url is None else _https_url(application_url, f"{path}.application_url")),
+            application_url_status=_enum(
+                data.get("application_url_status"),
+                ApplicationURLStatus,
+                f"{path}.application_url_status",
+            ),
+            application_url_last_verified_at=(
+                None
+                if application_verified_at is None
+                else _iso_datetime(
+                    application_verified_at,
+                    f"{path}.application_url_last_verified_at",
+                )
+            ),
+            application_url_source_reference=(
+                None
+                if application_source is None
+                else _stable_id(
+                    application_source,
+                    f"{path}.application_url_source_reference",
+                )
+            ),
             location=_text(data.get("location"), f"{path}.location"),
             employment_type=_enum(data.get("employment_type"), EmploymentType, f"{path}.employment_type"),
             posting_date=_iso_date(data.get("posting_date"), f"{path}.posting_date"),
@@ -485,6 +514,7 @@ class LiveJobV2:
             if expires_on is not None:
                 if expires_on < verified_on:
                     raise Phase2ValidationError(f"job {self.job_id} cannot be verified open after expiration")
+        self._validate_application_url(sources)
         if source.application_url != self.application_url:
             raise Phase2ValidationError(f"job {self.job_id} application URL does not match source")
         if self.mapped_role_id is None:
@@ -494,6 +524,144 @@ class LiveJobV2:
             role = catalog.role(self.mapped_role_id)
             if self.mapped_specialization_id is not None and self.mapped_specialization_id not in {item.specialization_id for item in role.specializations}:
                 raise Phase2ValidationError(f"job {self.job_id} references unknown specialization")
+
+    def _validate_application_url(self, sources: JDSourceCollection) -> None:
+        if self.application_url is None:
+            if self.application_url_status != ApplicationURLStatus.NOT_PROVIDED:
+                raise Phase2ValidationError(
+                    f"job {self.job_id} application URL status must be not_provided when no URL exists"
+                )
+            if (
+                self.application_url_last_verified_at is not None
+                or self.application_url_source_reference is not None
+            ):
+                raise Phase2ValidationError(
+                    f"job {self.job_id} cannot verify or source a missing application URL"
+                )
+            return
+        if self.application_url_status == ApplicationURLStatus.NOT_PROVIDED:
+            raise Phase2ValidationError(
+                f"job {self.job_id} has an application URL but marks it not_provided"
+            )
+        if self.application_url_source_reference is None:
+            raise Phase2ValidationError(
+                f"job {self.job_id} application URL requires a source reference"
+            )
+        try:
+            application_source = sources.source(self.application_url_source_reference)
+        except Phase2ValidationError as error:
+            raise Phase2ValidationError(
+                f"job {self.job_id} application URL references an unknown source"
+            ) from error
+        allowed_source_ids = {
+            self.canonical_source_reference,
+            *self.discovery_source_references,
+        }
+        if self.application_url_source_reference not in allowed_source_ids:
+            raise Phase2ValidationError(
+                f"job {self.job_id} application URL source is outside the job provenance"
+            )
+        if application_source.application_url != self.application_url:
+            raise Phase2ValidationError(
+                f"job {self.job_id} application URL does not match its verification source"
+            )
+
+        verified_statuses = {
+            ApplicationURLStatus.VERIFIED_ACTIVE,
+            ApplicationURLStatus.VERIFIED_UNAVAILABLE,
+        }
+        if self.application_url_status not in verified_statuses:
+            if self.application_url_last_verified_at is not None:
+                raise Phase2ValidationError(
+                    f"job {self.job_id} unverified application URL cannot have a verification timestamp"
+                )
+            return
+        if self.application_url_last_verified_at is None:
+            raise Phase2ValidationError(
+                f"job {self.job_id} verified application URL requires a verification timestamp"
+            )
+        verified_open_statuses = {
+            ListingStatus.VERIFIED_OFFICIAL_OPEN,
+            ListingStatus.VERIFIED_PLATFORM_OPEN,
+        }
+        if (
+            self.application_url_status == ApplicationURLStatus.VERIFIED_ACTIVE
+            and self.listing_status not in verified_open_statuses
+        ):
+            raise Phase2ValidationError(
+                f"job {self.job_id} verified_active application URL requires a verified-open listing"
+            )
+        if (
+            self.application_url_status == ApplicationURLStatus.VERIFIED_UNAVAILABLE
+            and self.listing_status in verified_open_statuses
+        ):
+            raise Phase2ValidationError(
+                f"job {self.job_id} verified unavailable application URL conflicts with a verified-open listing"
+            )
+        qualified_official = (
+            application_source.source_tier == SourceTier.TIER_A_OFFICIAL
+            and application_source.source_type == JDSourceType.OFFICIAL_JOB_POSTING
+            and application_source.verification_method
+            in {
+                # Both methods require a direct check of the specific posting.
+                VerificationMethod.OFFICIAL_PAGE_DIRECT,
+                VerificationMethod.OFFICIAL_ATS_DIRECT,
+            }
+        )
+        qualified_platform = (
+            application_source.source_tier == SourceTier.TIER_B_VERIFIED_PLATFORM
+            and application_source.source_type == JDSourceType.PLATFORM_JOB_POSTING
+            and application_source.platform_job_id is not None
+            and application_source.verification_method
+            in {
+                VerificationMethod.PLATFORM_APPLY_AVAILABLE,
+                VerificationMethod.PLATFORM_REDIRECT_TO_OFFICIAL,
+            }
+        )
+        if not (qualified_official or qualified_platform):
+            raise Phase2ValidationError(
+                f"job {self.job_id} verified application URL requires a specific qualified posting source"
+            )
+        if application_source.last_verified_at is None:
+            raise Phase2ValidationError(
+                f"job {self.job_id} verified application URL requires source verification"
+            )
+        if (
+            self.application_url_status == ApplicationURLStatus.VERIFIED_ACTIVE
+            and application_source.source_status != SourceLifecycleStatus.VERIFIED
+        ):
+            raise Phase2ValidationError(
+                f"job {self.job_id} application URL cannot be verified_active from an inactive source"
+            )
+        if (
+            self.application_url_status == ApplicationURLStatus.VERIFIED_UNAVAILABLE
+            and application_source.source_status
+            not in {
+                SourceLifecycleStatus.VERIFIED,
+                SourceLifecycleStatus.ARCHIVED,
+                SourceLifecycleStatus.EXPIRED,
+            }
+        ):
+            raise Phase2ValidationError(
+                f"job {self.job_id} verified unavailable application URL requires a reviewed source status"
+            )
+        application_verified = datetime.fromisoformat(
+            self.application_url_last_verified_at.replace("Z", "+00:00")
+        )
+        source_captured = datetime.fromisoformat(
+            application_source.captured_at.replace("Z", "+00:00")
+        )
+        source_verified = datetime.fromisoformat(
+            application_source.last_verified_at.replace("Z", "+00:00")
+        )
+        if application_verified < source_captured:
+            raise Phase2ValidationError(
+                f"job {self.job_id} application verification cannot precede source capture"
+            )
+        if application_verified > source_verified:
+            raise Phase2ValidationError(
+                f"job {self.job_id} application verification cannot follow source verification"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -506,6 +674,9 @@ class LiveJobV2:
             "exact_job_title": self.exact_job_title,
             "job_url": self.job_url,
             "application_url": self.application_url,
+            "application_url_status": self.application_url_status.value,
+            "application_url_last_verified_at": self.application_url_last_verified_at,
+            "application_url_source_reference": self.application_url_source_reference,
             "location": self.location,
             "employment_type": self.employment_type.value,
             "posting_date": self.posting_date,
@@ -573,6 +744,16 @@ class LiveJobCollectionV2:
                 and datetime.fromisoformat(job.last_verified_at.replace("Z", "+00:00")) > collection_time
             ):
                 raise Phase2ValidationError(f"job {job.job_id} verification cannot follow collection capture")
+            if (
+                job.application_url_last_verified_at is not None
+                and datetime.fromisoformat(
+                    job.application_url_last_verified_at.replace("Z", "+00:00")
+                )
+                > collection_time
+            ):
+                raise Phase2ValidationError(
+                    f"job {job.job_id} application verification cannot follow collection capture"
+                )
 
     def to_dict(self) -> dict[str, Any]:
         return {

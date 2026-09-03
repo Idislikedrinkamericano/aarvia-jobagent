@@ -27,3 +27,7 @@ Final local environment acceptance succeeded: editable development installation 
 ## Conversation 6 - Phase 2B-1 Source Foundation
 
 Approved a contract-only first step for United States internship, new-grad, and early-career JD evidence. Implemented schema 2 source, curation, Catalog draft, canonical deduplication, company-level prevalence, explicit human cluster/publication approval, and official/platform listing foundations using synthetic fixtures only. The immutable Catalog `1.0.0` remained unchanged with eight roles and no sources or requirements. No real JD, network access, Provider call, recommendation algorithm, or later Phase workflow was introduced. Project version advanced to `0.6.1` after validation.
+
+## Conversation 7 - Phase 2B-1 Application Link Contract Fix
+
+An approved public-source pilot exposed that Live Job schema 2 recorded an application URL without the independent status, verification time, and source reference already present in schema 1. The pilot was paused before any real artifact was created. Version `0.6.2` ports that established status model to schema 2, binds verified links to qualified sources in the job provenance, validates artifact-only time ordering and listing/application status consistency, preserves explicit schema dispatch and schema 1 behavior, and adds strict load and atomic-write regressions. All 359 tests passed, and the wheel retained the Phase 2B-1 modules and immutable packaged Catalog. No real job details were added to tracked files, and the production Catalog remains unchanged.
