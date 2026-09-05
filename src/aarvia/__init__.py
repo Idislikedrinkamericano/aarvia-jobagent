@@ -42,10 +42,19 @@ from .live_jobs import (
     save_live_job_collection,
 )
 from .jd_curation import (
+    CandidateReviewAction,
+    CandidateReviewRecord,
+    CandidateRevision,
     CurationArtifact,
+    CurationArtifactV3,
     RequirementCandidate,
+    approve_candidate,
     load_curation_artifact,
+    migrate_v2_to_v3,
+    reject_candidate,
+    revise_candidate,
     save_curation_artifact,
+    split_candidate,
 )
 from .jd_sources import (
     JDSource,
@@ -69,17 +78,21 @@ from .role_catalog import (
     save_role_catalog,
 )
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 
 __all__ = [
     "BasicProfile",
     "ApplicationURLStatus",
     "CatalogBuildResult",
     "CatalogDraft",
+    "CandidateReviewAction",
+    "CandidateReviewRecord",
+    "CandidateRevision",
     "CareerPreferences",
     "CareerProfile",
     "Constraints",
     "CurationArtifact",
+    "CurationArtifactV3",
     "Education",
     "DiscoveryState",
     "ExperienceOverview",
@@ -103,6 +116,7 @@ __all__ = [
     "SourceTier",
     "UserRoleDecision",
     "create_profile",
+    "approve_candidate",
     "build_catalog_draft",
     "content_sha256",
     "deduplicate_sources",
@@ -119,9 +133,12 @@ __all__ = [
     "load_role_gap_analysis",
     "load_user_role_decision",
     "load_discovery_state",
+    "migrate_v2_to_v3",
     "production_role_catalog",
     "prevalence_for_counts",
     "save_profile",
+    "reject_candidate",
+    "revise_candidate",
     "save_catalog_draft",
     "save_curation_artifact",
     "save_jd_source_collection",
@@ -130,4 +147,5 @@ __all__ = [
     "save_role_catalog",
     "save_role_gap_analysis",
     "save_user_role_decision",
+    "split_candidate",
 ]

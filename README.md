@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.6.2 — Phase 2B-1 source contracts, including application-link verification, complete.**
+**Version 0.6.3 — Phase 2B-1 curation lineage contract complete.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -16,6 +16,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 - ✅ Atomic JSON persistence for Phase 2A recommendation, decision, gap, and job artifacts
 - ✅ Schema 2 contracts for US internship, new-grad, and 0-2 year JD sources
 - ✅ Tier A/B/C provenance, canonical dedup, human curation, and prevalence foundations
+- ✅ Machine-readable approve, reject, revise, and split lineage for requirement candidates
 - ⏳ Source-backed Role Requirements, recommendations, gaps, and live jobs are not implemented
 
 The production Catalog deliberately contains **zero requirements and zero sources** today. It is a taxonomy with guardrails, not a trench coat full of invented labor-market facts. 🕵️
@@ -135,7 +136,9 @@ Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Ro
 - Official and platform verified-open states are distinct. Careers homepages and unverified discovery sources can support only `possibly_open`.
 - Live Job schema 2 keeps application-link presence separate from verification status, timestamp, and source. A specific qualified posting must support a verified application link; URL syntax alone proves nothing.
 - LLM output can create only unapproved `RequirementCandidate` objects. Python generates IDs, hashes, exact deduplication, source-mix checks, and prevalence; a human approves normalization, importance, evidence, and publication.
-- Full JD text belongs only under ignored `local_data/`. No real JD artifact was created for `0.6.2`; the approved pilot remains paused until this contract fix is reviewed.
+- Curation schema 3 records immutable human review events. Revised and split candidates retain deterministic parent/successor lineage, source hashes, evidence bounds, and Role mapping. Schema 2 remains explicitly readable and round-trippable, but cannot publish through the Catalog builder.
+- Catalog drafts consume only approved leaf candidates. Split evidence from one company still counts as one company sample.
+- Full JD text and Pilot artifacts belong only under ignored `local_data/`; this contract fix does not modify them.
 - The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Phase 2B completion, including recommendation behavior, will use project version `0.7.0`.
 
 ## Design Principles

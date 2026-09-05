@@ -13,7 +13,16 @@ from aarvia.catalog_build import (
     save_catalog_draft,
     tier_a_share_is_sufficient,
 )
-from aarvia.jd_curation import CurationArtifact
+from aarvia.jd_curation import (
+    CandidateReviewAction,
+    CandidateReviewRecord,
+    CurationArtifact,
+    CurationArtifactV3,
+    EvidenceLocator,
+    migrate_v2_to_v3,
+    approve_candidate,
+    generate_candidate_id,
+)
 from aarvia.jd_sources import (
     JDSourceCollection,
     content_sha256,
@@ -31,6 +40,28 @@ from phase2b_fixtures import (
 )
 
 
+def reviewed_fixture_v3(curation: CurationArtifact) -> CurationArtifactV3:
+    data = curation.to_dict()
+    data["schema_version"] = 3
+    data["review_records"] = [
+        CandidateReviewRecord.create(
+            parent_candidate_id=candidate.candidate_id,
+            action=(
+                CandidateReviewAction.APPROVE
+                if candidate.status.value == "approved"
+                else CandidateReviewAction.REJECT
+            ),
+            successor_candidate_ids=(),
+            reviewer_reference="fixture_legacy_reviewer",
+            reviewed_at=candidate.reviewed_at,
+            decision_reason=candidate.decision_reason,
+        ).to_dict()
+        for candidate in curation.candidates
+        if candidate.status.value in {"approved", "rejected"}
+    ]
+    return CurationArtifactV3.from_dict(data)
+
+
 def contexts(company_count: int, *, tier_a_count: int | None = None, support_count: int | None = None):
     if tier_a_count is None:
         tier_a_count = company_count
@@ -39,9 +70,70 @@ def contexts(company_count: int, *, tier_a_count: int | None = None, support_cou
         for index in range(1, company_count + 1)
     ]
     sources = JDSourceCollection.from_dict(source_collection_data(sources_data))
-    curation = CurationArtifact.from_dict(curation_data(sources_data, support_count=support_count))
+    curation = reviewed_fixture_v3(
+        CurationArtifact.from_dict(
+            curation_data(sources_data, support_count=support_count)
+        )
+    )
     samples = tuple(RoleSample(item["source_id"], "applied_ai_engineer") for item in sources_data)
     return sources_data, sources, curation, samples
+
+
+def curation_v3_with_split_leaf(curation: CurationArtifact) -> CurationArtifactV3:
+    data = curation.to_dict()
+    data["schema_version"] = 3
+    parent = data["candidates"][0]
+    parent.update(
+        status="superseded",
+        cluster_id=None,
+        reviewer_decision="pending",
+        decision_reason=None,
+        reviewed_at=None,
+    )
+    successor_ids = []
+    for name in ("Python fundamentals", "Python software development"):
+        child = deepcopy(parent)
+        child["proposed_name"] = name
+        child["proposed_description"] = f"Reviewed fixture requirement for {name}."
+        child["candidate_id"] = generate_candidate_id(
+            child["source_id"], EvidenceLocator.from_dict(child["evidence"]), name
+        )
+        child.update(
+            status="approved",
+            cluster_id="cluster_python",
+            reviewer_decision="approve",
+            decision_reason="Fixture reviewer split a compound capability.",
+            reviewed_at=NOW,
+        )
+        successor_ids.append(child["candidate_id"])
+        data["candidates"].append(child)
+    data["clusters"][0]["candidate_ids"] = [
+        *data["clusters"][0]["candidate_ids"][1:],
+        *successor_ids,
+    ]
+    reviews = [
+        CandidateReviewRecord.create(
+            parent_candidate_id=parent["candidate_id"],
+            action=CandidateReviewAction.SPLIT,
+            successor_candidate_ids=successor_ids,
+            reviewer_reference="fixture_reviewer",
+            reviewed_at=NOW,
+            decision_reason="Fixture reviewer split a compound capability.",
+        ).to_dict()
+    ]
+    for candidate in data["candidates"][1:-2]:
+        reviews.append(
+            CandidateReviewRecord.create(
+                parent_candidate_id=candidate["candidate_id"],
+                action=CandidateReviewAction.APPROVE,
+                successor_candidate_ids=(),
+                reviewer_reference="fixture_reviewer",
+                reviewed_at=candidate["reviewed_at"],
+                decision_reason=candidate["decision_reason"],
+            ).to_dict()
+        )
+    data["review_records"] = reviews
+    return CurationArtifactV3.from_dict(data)
 
 
 def test_exact_dedup_and_ambiguous_review_are_separate() -> None:
@@ -113,7 +205,9 @@ def test_builder_blocks_empty_and_ineligible_samples() -> None:
 
     career_page = source_data(1, source_type="official_career_page")
     career_sources = JDSourceCollection.from_dict(source_collection_data([career_page]))
-    career_curation = CurationArtifact.from_dict(curation_data([career_page]))
+    career_curation = reviewed_fixture_v3(
+        CurationArtifact.from_dict(curation_data([career_page]))
+    )
     result = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=(RoleSample(data[0]["source_id"], "applied_ai_engineer"),),
@@ -135,7 +229,9 @@ def test_same_company_contributes_only_one_role_sample() -> None:
     )
     rebuilt_data = [data[0], altered, *data[2:]]
     rebuilt_sources = JDSourceCollection.from_dict(source_collection_data(rebuilt_data))
-    rebuilt_curation = CurationArtifact.from_dict(curation_data(rebuilt_data))
+    rebuilt_curation = reviewed_fixture_v3(
+        CurationArtifact.from_dict(curation_data(rebuilt_data))
+    )
     result = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=tuple(RoleSample(item["source_id"], "applied_ai_engineer") for item in rebuilt_data),
@@ -159,6 +255,167 @@ def test_approved_only_builder_produces_deterministic_draft_and_prevalence() -> 
     assert requirement.importance.value == "core"
 
 
+def test_schema_v2_approved_candidate_is_blocked_from_catalog_building() -> None:
+    data = [source_data(index) for index in range(1, 7)]
+    sources = JDSourceCollection.from_dict(source_collection_data(data))
+    legacy = CurationArtifact.from_dict(curation_data(data))
+    samples = tuple(
+        RoleSample(item["source_id"], "applied_ai_engineer") for item in data
+    )
+
+    first = build_catalog_draft(
+        draft_id="fixture_legacy_draft",
+        target_catalog_version="1.1.0",
+        created_at=NOW,
+        samples=samples,
+        sources=sources,
+        curation=legacy,
+        catalog=production_role_catalog(),
+    )
+    second = build_catalog_draft(
+        draft_id="fixture_legacy_draft",
+        target_catalog_version="1.1.0",
+        created_at=NOW,
+        samples=samples,
+        sources=sources,
+        curation=legacy,
+        catalog=production_role_catalog(),
+    )
+
+    assert first.draft is None
+    assert first.blockers == second.blockers
+    assert [item.to_dict() for item in first.blockers] == [
+        {
+            "code": "curation_schema_upgrade_required",
+            "message": "Catalog building requires Curation schema 3 review provenance",
+            "references": ["fixture_curation", "schema_version=2"],
+        }
+    ]
+
+
+@pytest.mark.parametrize("status", ["review_pending", "rejected"])
+def test_schema_v2_non_approved_states_cannot_produce_requirements(status) -> None:
+    data = [source_data(index) for index in range(1, 7)]
+    sources = JDSourceCollection.from_dict(source_collection_data(data))
+    raw = curation_data(data)
+    for candidate in raw["candidates"]:
+        candidate["status"] = status
+        candidate["reviewer_decision"] = "reject" if status == "rejected" else "pending"
+        if status == "review_pending":
+            candidate["decision_reason"] = None
+            candidate["reviewed_at"] = None
+    legacy = CurationArtifact.from_dict(raw)
+
+    result = build_catalog_draft(
+        draft_id="fixture_legacy_draft",
+        target_catalog_version="1.1.0",
+        created_at=NOW,
+        samples=tuple(
+            RoleSample(item["source_id"], "applied_ai_engineer") for item in data
+        ),
+        sources=sources,
+        curation=legacy,
+        catalog=production_role_catalog(),
+    )
+
+    assert result.draft is None
+    assert result.blockers[0].code == BuildBlockerCode.CURATION_SCHEMA_UPGRADE_REQUIRED
+
+
+def test_pending_v2_requires_explicit_migration_and_review_before_building() -> None:
+    data = [source_data(index) for index in range(1, 7)]
+    sources = JDSourceCollection.from_dict(source_collection_data(data))
+    raw = curation_data(data)
+    for candidate in raw["candidates"]:
+        candidate.update(
+            status="review_pending",
+            reviewer_decision="pending",
+            decision_reason=None,
+            reviewed_at=None,
+        )
+    raw["clusters"][0].update(
+        status="proposed",
+        reviewer_decision="pending",
+        decision_reason=None,
+        reviewed_at=None,
+    )
+    v3 = migrate_v2_to_v3(CurationArtifact.from_dict(raw))
+    for candidate in tuple(v3.candidates):
+        v3 = approve_candidate(
+            v3,
+            candidate.candidate_id,
+            reviewer_reference="fixture_reviewer",
+            reviewed_at=NOW,
+            decision_reason="Fixture reviewer approved this evidence.",
+            sources=sources,
+            catalog=production_role_catalog(),
+        )
+    reviewed = v3.to_dict()
+    reviewed["clusters"][0].update(
+        status="confirmed",
+        reviewer_decision="approve",
+        decision_reason="Fixture reviewer confirmed this cluster.",
+        reviewed_at=NOW,
+    )
+    v3 = CurationArtifactV3.from_dict(reviewed)
+
+    result = build_catalog_draft(
+        draft_id="fixture_reviewed_draft",
+        target_catalog_version="1.1.0",
+        created_at=NOW,
+        samples=tuple(
+            RoleSample(item["source_id"], "applied_ai_engineer") for item in data
+        ),
+        sources=sources,
+        curation=v3,
+        catalog=production_role_catalog(),
+    )
+
+    assert result.blockers == ()
+    assert result.draft is not None
+
+
+def test_v3_approved_candidate_without_review_record_cannot_build() -> None:
+    _, sources, curation, samples = contexts(6)
+    tampered = curation.to_dict()
+    tampered["review_records"] = []
+
+    with pytest.raises(Phase2ValidationError, match="terminal provenance"):
+        build_catalog_draft(
+            draft_id="fixture_tampered_draft",
+            target_catalog_version="1.1.0",
+            created_at=NOW,
+            samples=samples,
+            sources=sources,
+            curation=CurationArtifactV3.from_dict(tampered),
+            catalog=production_role_catalog(),
+        )
+
+
+def test_v3_builder_consumes_approved_leaves_without_inflating_company_count() -> None:
+    _, sources, curation, samples = contexts(6)
+    v3 = curation_v3_with_split_leaf(curation)
+    v3.validate(sources, production_role_catalog())
+
+    result = build_catalog_draft(
+        draft_id="fixture_v3_draft",
+        target_catalog_version="1.1.0",
+        created_at=NOW,
+        samples=samples,
+        sources=sources,
+        curation=v3,
+        catalog=production_role_catalog(),
+    )
+
+    assert result.blockers == ()
+    assert result.draft is not None
+    requirement = result.draft.requirements[0]
+    assert len(requirement.candidate_references) == 7
+    assert curation.candidates[0].candidate_id not in requirement.candidate_references
+    assert requirement.sampled_company_count == 6
+    assert requirement.supporting_company_count == 6
+
+
 def test_discovery_source_does_not_inflate_company_or_tier_a_counts() -> None:
     data, _, _, samples = contexts(6)
     official = data[0]
@@ -172,7 +429,7 @@ def test_discovery_source_does_not_inflate_company_or_tier_a_counts() -> None:
     official["discovery_source_references"] = [platform["source_id"]]
     all_sources = [*data, platform]
     sources = JDSourceCollection.from_dict(source_collection_data(all_sources))
-    curation = CurationArtifact.from_dict(curation_data(data))
+    curation = reviewed_fixture_v3(CurationArtifact.from_dict(curation_data(data)))
 
     result = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
@@ -188,7 +445,7 @@ def test_unapproved_candidate_does_not_enter_catalog_draft() -> None:
     curation_raw["candidates"][0].update(
         status="review_pending", reviewer_decision="pending", decision_reason=None, reviewed_at=None
     )
-    curation = CurationArtifact.from_dict(curation_raw)
+    curation = reviewed_fixture_v3(CurationArtifact.from_dict(curation_raw))
     result = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
@@ -216,7 +473,7 @@ def test_tier_c_cannot_be_the_only_requirement_evidence() -> None:
     curation_raw = curation_data([])
     curation_raw["candidates"] = [candidate]
     curation_raw["clusters"] = [cluster_data([candidate["candidate_id"]])]
-    curation = CurationArtifact.from_dict(curation_raw)
+    curation = reviewed_fixture_v3(CurationArtifact.from_dict(curation_raw))
     result = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
@@ -281,7 +538,9 @@ def test_catalog_draft_requires_approved_requirements() -> None:
     empty_curation_data = curation_data(data)
     empty_curation_data["candidates"] = []
     empty_curation_data["clusters"] = []
-    empty_curation = CurationArtifact.from_dict(empty_curation_data)
+    empty_curation = reviewed_fixture_v3(
+        CurationArtifact.from_dict(empty_curation_data)
+    )
     result = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=empty_curation,
@@ -293,7 +552,9 @@ def test_catalog_draft_requires_approved_requirements() -> None:
     valid = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources,
-        curation=CurationArtifact.from_dict(curation_data(data)),
+        curation=reviewed_fixture_v3(
+            CurationArtifact.from_dict(curation_data(data))
+        ),
         catalog=production_role_catalog(),
     )
     assert valid.draft is not None
@@ -304,7 +565,7 @@ def test_catalog_draft_requires_approved_requirements() -> None:
 
 
 def test_catalog_draft_typed_storage_round_trip_and_context(tmp_path, monkeypatch) -> None:
-    _, sources, curation, samples = contexts(6)
+    data, sources, curation, samples = contexts(6)
     result = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
@@ -322,6 +583,23 @@ def test_catalog_draft_typed_storage_round_trip_and_context(tmp_path, monkeypatc
         path, sources=sources, curation=curation, catalog=production_role_catalog()
     ) == result.draft
     assert path.read_bytes() == duplicate.read_bytes()
+
+    legacy = CurationArtifact.from_dict(curation_data(data))
+    with pytest.raises(Phase2ValidationError, match="requires a validated Curation schema 3"):
+        load_catalog_draft(
+            path,
+            sources=sources,
+            curation=legacy,
+            catalog=production_role_catalog(),
+        )
+    with pytest.raises(Phase2ValidationError, match="requires a validated Curation schema 3"):
+        save_catalog_draft(
+            result.draft,
+            tmp_path / "legacy-bypass.json",
+            sources=sources,
+            curation=legacy,
+            catalog=production_role_catalog(),
+        )
 
     tampered = result.draft.to_dict()
     tampered["requirements"][0]["supporting_company_count"] = 0

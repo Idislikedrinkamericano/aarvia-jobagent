@@ -13,6 +13,7 @@ from .jd_curation import (
     CandidateLifecycleStatus,
     ClusterLifecycleStatus,
     CurationArtifact,
+    CurationArtifactV3,
     RequirementCandidate,
     ReviewerDecision,
 )
@@ -51,6 +52,7 @@ class CatalogLifecycleStatus(str, Enum):
 
 
 class BuildBlockerCode(str, Enum):
+    CURATION_SCHEMA_UPGRADE_REQUIRED = "curation_schema_upgrade_required"
     NO_SAMPLES = "no_samples"
     INSUFFICIENT_COMPANIES = "insufficient_companies"
     INSUFFICIENT_TIER_A_SHARE = "insufficient_tier_a_share"
@@ -287,10 +289,19 @@ class CatalogDraft:
             raise Phase2ValidationError("Catalog Draft requires at least one approved requirement")
         return result
 
-    def validate(self, sources: JDSourceCollection, curation: CurationArtifact, catalog: RoleCatalog) -> None:
+    def validate(
+        self,
+        sources: JDSourceCollection,
+        curation: CurationArtifactV3,
+        catalog: RoleCatalog,
+    ) -> None:
         canonical = CatalogDraft.from_dict(self.to_dict())
         if canonical != self:
             raise Phase2ValidationError("Catalog Draft contains non-canonical data")
+        if not isinstance(curation, CurationArtifactV3):
+            raise Phase2ValidationError(
+                "Catalog Draft requires a validated Curation schema 3 artifact"
+            )
         if self.base_catalog_version != catalog.catalog_version:
             raise Phase2ValidationError("Catalog Draft base version does not match Catalog")
         if self.source_collection_id != sources.collection_id or self.curation_artifact_id != curation.artifact_id:
@@ -410,11 +421,22 @@ def build_catalog_draft(
     created_at: str,
     samples: Iterable[RoleSample],
     sources: JDSourceCollection,
-    curation: CurationArtifact,
+    curation: CurationArtifact | CurationArtifactV3,
     catalog: RoleCatalog,
 ) -> CatalogBuildResult:
     sources.validate()
     curation.validate(sources, catalog)
+    if not isinstance(curation, CurationArtifactV3):
+        return CatalogBuildResult(
+            None,
+            (
+                BuildBlocker(
+                    BuildBlockerCode.CURATION_SCHEMA_UPGRADE_REQUIRED,
+                    "Catalog building requires Curation schema 3 review provenance",
+                    (curation.artifact_id, "schema_version=2"),
+                ),
+            ),
+        )
     sample_items = tuple(samples)
     blockers: list[BuildBlocker] = []
     if not sample_items:
@@ -542,13 +564,13 @@ def build_catalog_draft(
     return CatalogBuildResult(draft, ())
 
 
-def save_catalog_draft(value: CatalogDraft, path: str | Path, *, sources: JDSourceCollection, curation: CurationArtifact, catalog: RoleCatalog) -> Path:
+def save_catalog_draft(value: CatalogDraft, path: str | Path, *, sources: JDSourceCollection, curation: CurationArtifactV3, catalog: RoleCatalog) -> Path:
     value.validate(sources, curation, catalog)
     from .phase2_storage import save_phase2_json
     return save_phase2_json(CatalogDraft.from_dict(value.to_dict()).to_dict(), path)
 
 
-def load_catalog_draft(path: str | Path, *, sources: JDSourceCollection, curation: CurationArtifact, catalog: RoleCatalog) -> CatalogDraft:
+def load_catalog_draft(path: str | Path, *, sources: JDSourceCollection, curation: CurationArtifactV3, catalog: RoleCatalog) -> CatalogDraft:
     from .phase2_storage import load_phase2_json
     value = CatalogDraft.from_dict(load_phase2_json(path))
     value.validate(sources, curation, catalog)
