@@ -38,8 +38,11 @@ from .career_direction import (
 from .live_jobs import (
     ApplicationURLStatus,
     LiveJobCollection,
+    LiveJobCollectionV3,
+    LiveJobV3,
     load_live_job_collection,
     save_live_job_collection,
+    migrate_live_jobs_v2_to_v3,
 )
 from .jd_curation import (
     CandidateReviewAction,
@@ -47,24 +50,33 @@ from .jd_curation import (
     CandidateRevision,
     CurationArtifact,
     CurationArtifactV3,
+    CurationArtifactV4,
     RequirementCandidate,
+    RequirementCandidateV4,
     approve_candidate,
     load_curation_artifact,
     migrate_v2_to_v3,
+    migrate_v3_to_v4,
     reject_candidate,
     revise_candidate,
     save_curation_artifact,
     split_candidate,
 )
 from .jd_sources import (
+    CaptureScope,
     JDSource,
     JDSourceCollection,
+    JDSourceCollectionV3,
+    JDSourceCapture,
+    LogicalJDSource,
     ListingStatus,
     SourceTier,
     content_sha256,
     generate_canonical_job_id,
+    generate_capture_id,
     generate_source_id,
     load_jd_source_collection,
+    migrate_source_v2_to_v3,
     save_jd_source_collection,
 )
 from .role_catalog import (
@@ -78,7 +90,7 @@ from .role_catalog import (
     save_role_catalog,
 )
 
-__version__ = "0.6.3"
+__version__ = "0.6.4"
 
 __all__ = [
     "BasicProfile",
@@ -93,6 +105,8 @@ __all__ = [
     "Constraints",
     "CurationArtifact",
     "CurationArtifactV3",
+    "CurationArtifactV4",
+    "CaptureScope",
     "Education",
     "DiscoveryState",
     "ExperienceOverview",
@@ -108,10 +122,16 @@ __all__ = [
     "Skill",
     "SourceReference",
     "LiveJobCollection",
+    "LiveJobCollectionV3",
+    "LiveJobV3",
     "JDSource",
     "JDSourceCollection",
+    "JDSourceCollectionV3",
+    "JDSourceCapture",
+    "LogicalJDSource",
     "ListingStatus",
     "RequirementCandidate",
+    "RequirementCandidateV4",
     "RoleSample",
     "SourceTier",
     "UserRoleDecision",
@@ -121,6 +141,7 @@ __all__ = [
     "content_sha256",
     "deduplicate_sources",
     "generate_canonical_job_id",
+    "generate_capture_id",
     "generate_source_id",
     "generate_open_questions",
     "load_profile",
@@ -134,6 +155,9 @@ __all__ = [
     "load_user_role_decision",
     "load_discovery_state",
     "migrate_v2_to_v3",
+    "migrate_v3_to_v4",
+    "migrate_source_v2_to_v3",
+    "migrate_live_jobs_v2_to_v3",
     "production_role_catalog",
     "prevalence_for_counts",
     "save_profile",

@@ -10,8 +10,11 @@ from typing import Any, Mapping
 
 from .jd_sources import (
     JDSource,
+    JDSourceCapture,
     JDSourceCollection,
+    JDSourceCollectionV3,
     JDSourceType,
+    LogicalJDSource,
     ListingStatus,
     SourceLifecycleStatus,
     SourceTier,
@@ -769,6 +772,489 @@ class LiveJobCollectionV2:
 
 
 @dataclass(frozen=True, eq=True)
+class LiveJobV3:
+    job_id: str
+    canonical_job_id: str
+    canonical_source_reference: str
+    discovery_source_references: tuple[str, ...]
+    listing_verification_capture_reference: str | None
+    company_id: str
+    company: str
+    exact_job_title: str
+    job_url: str
+    application_url: str | None
+    application_url_status: ApplicationURLStatus
+    application_url_last_verified_at: str | None
+    application_url_source_reference: str | None
+    application_verification_capture_reference: str | None
+    location: str
+    employment_type: EmploymentType
+    posting_date: str | None
+    expiration_date: str | None
+    last_verified_at: str | None
+    listing_status: ListingStatus
+    mapped_role_id: str | None
+    mapped_specialization_id: str | None
+    eligibility_status: EligibilityStatus
+    preliminary_match_status: PreliminaryMatchStatus
+    structured_jd_requirements: tuple[JobRequirement, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any], path: str = "job") -> LiveJobV3:
+        data = _mapping(value, path)
+        v2_fields = {
+            "job_id", "canonical_job_id", "canonical_source_reference",
+            "discovery_source_references", "company_id", "company", "exact_job_title",
+            "job_url", "application_url", "application_url_status",
+            "application_url_last_verified_at", "application_url_source_reference",
+            "location", "employment_type", "posting_date", "expiration_date",
+            "last_verified_at", "listing_status", "mapped_role_id",
+            "mapped_specialization_id", "eligibility_status",
+            "preliminary_match_status", "structured_jd_requirements",
+        }
+        _reject_unknown(
+            data,
+            v2_fields
+            | {
+                "listing_verification_capture_reference",
+                "application_verification_capture_reference",
+            },
+            path,
+        )
+        legacy_data = {key: item for key, item in data.items() if key in v2_fields}
+        base = LiveJobV2.from_dict(legacy_data, path)
+        return cls(
+            **base.__dict__,
+            listing_verification_capture_reference=(
+                None
+                if data.get("listing_verification_capture_reference") is None
+                else _stable_id(
+                    data.get("listing_verification_capture_reference"),
+                    f"{path}.listing_verification_capture_reference",
+                )
+            ),
+            application_verification_capture_reference=(
+                None
+                if data.get("application_verification_capture_reference") is None
+                else _stable_id(
+                    data.get("application_verification_capture_reference"),
+                    f"{path}.application_verification_capture_reference",
+                )
+            ),
+        )
+
+    def _legacy_view(self) -> LiveJobV2:
+        return LiveJobV2(
+            **{
+                field: getattr(self, field)
+                for field in LiveJobV2.__dataclass_fields__
+            }
+        )
+
+    def validate(self, sources: JDSourceCollectionV3, catalog: RoleCatalog) -> None:
+        if not isinstance(sources, JDSourceCollectionV3):
+            raise Phase2ValidationError("Live Job schema 3 requires JD Source schema 3")
+        if LiveJobV3.from_dict(self.to_dict(), f"job {self.job_id}") != self:
+            raise Phase2ValidationError(f"job {self.job_id} contains non-canonical data")
+        if self.job_id != self.canonical_job_id:
+            raise Phase2ValidationError(f"job {self.job_id} ID must be the Aarvia canonical job ID")
+        source = sources.source(self.canonical_source_reference)
+        self._validate_identity(source, sources, catalog)
+        listing_capture = self._capture_for_job(
+            sources,
+            self.listing_verification_capture_reference,
+            "listing verification",
+        )
+        verified_statuses = {
+            ListingStatus.VERIFIED_OFFICIAL_OPEN,
+            ListingStatus.VERIFIED_PLATFORM_OPEN,
+        }
+        if self.listing_status in verified_statuses:
+            if listing_capture is None or self.last_verified_at is None:
+                raise Phase2ValidationError(
+                    f"job {self.job_id} verified status requires a listing verification capture"
+                )
+            if listing_capture.source_reference != self.canonical_source_reference:
+                raise Phase2ValidationError(
+                    f"job {self.job_id} listing verification must use its canonical source"
+                )
+            if listing_capture.verified_at != self.last_verified_at:
+                raise Phase2ValidationError(
+                    f"job {self.job_id} verification time must match its capture"
+                )
+            if self.listing_status == ListingStatus.VERIFIED_OFFICIAL_OPEN and not (
+                source.source_tier == SourceTier.TIER_A_OFFICIAL
+                and source.source_type == JDSourceType.OFFICIAL_JOB_POSTING
+                and source.source_status == SourceLifecycleStatus.VERIFIED
+                and listing_capture.verification_method
+                in {
+                    VerificationMethod.OFFICIAL_PAGE_DIRECT,
+                    VerificationMethod.OFFICIAL_ATS_DIRECT,
+                }
+            ):
+                raise Phase2ValidationError(
+                    f"job {self.job_id} verified_official_open requires a qualified Tier A capture"
+                )
+            if self.listing_status == ListingStatus.VERIFIED_PLATFORM_OPEN and not (
+                source.source_tier == SourceTier.TIER_B_VERIFIED_PLATFORM
+                and source.source_type == JDSourceType.PLATFORM_JOB_POSTING
+                and source.source_status == SourceLifecycleStatus.VERIFIED
+                and source.platform_job_id
+                and listing_capture.verification_method
+                in {
+                    VerificationMethod.PLATFORM_APPLY_AVAILABLE,
+                    VerificationMethod.PLATFORM_REDIRECT_TO_OFFICIAL,
+                }
+            ):
+                raise Phase2ValidationError(
+                    f"job {self.job_id} verified_platform_open requires a qualified Tier B capture"
+                )
+        elif self.last_verified_at is not None and listing_capture is None:
+            raise Phase2ValidationError(
+                f"job {self.job_id} listing verification timestamp requires a capture"
+            )
+        if listing_capture is not None:
+            if self.last_verified_at is None:
+                raise Phase2ValidationError(
+                    f"job {self.job_id} listing verification capture requires a timestamp"
+                )
+            if listing_capture.verified_at != self.last_verified_at:
+                raise Phase2ValidationError(
+                    f"job {self.job_id} listing verification time must match its capture"
+                )
+        self._validate_dates(listing_capture)
+        self._validate_application_url(sources)
+
+    def _validate_identity(
+        self,
+        source: LogicalJDSource,
+        sources: JDSourceCollectionV3,
+        catalog: RoleCatalog,
+    ) -> None:
+        if source.canonical_job_id != self.canonical_job_id:
+            raise Phase2ValidationError(f"job {self.job_id} canonical job does not match source")
+        if source.company_id != self.company_id or source.company_display_name != self.company:
+            raise Phase2ValidationError(f"job {self.job_id} company does not match source")
+        if source.exact_job_title is not None and source.exact_job_title != self.exact_job_title:
+            raise Phase2ValidationError(f"job {self.job_id} title does not match source")
+        if source.source_url != self.job_url:
+            raise Phase2ValidationError(f"job {self.job_id} URL does not match canonical source")
+        for discovery_id in self.discovery_source_references:
+            discovery = sources.source(discovery_id)
+            if discovery.canonical_job_id != self.canonical_job_id:
+                raise Phase2ValidationError(f"job {self.job_id} discovery source represents another job")
+            if discovery_id not in source.discovery_source_references:
+                raise Phase2ValidationError(f"job {self.job_id} discovery source is not linked")
+        if self.mapped_role_id is None:
+            if self.mapped_specialization_id is not None:
+                raise Phase2ValidationError(f"job {self.job_id} cannot map specialization without Role Family")
+        else:
+            role = catalog.role(self.mapped_role_id)
+            if self.mapped_specialization_id is not None and self.mapped_specialization_id not in {
+                item.specialization_id for item in role.specializations
+            }:
+                raise Phase2ValidationError(f"job {self.job_id} references unknown specialization")
+
+    def _capture_for_job(
+        self,
+        sources: JDSourceCollectionV3,
+        capture_id: str | None,
+        label: str,
+    ) -> JDSourceCapture | None:
+        if capture_id is None:
+            return None
+        capture = sources.capture(capture_id)
+        allowed = {self.canonical_source_reference, *self.discovery_source_references}
+        if capture.source_reference not in allowed:
+            raise Phase2ValidationError(
+                f"job {self.job_id} {label} capture is outside job provenance"
+            )
+        return capture
+
+    def _validate_dates(self, capture: JDSourceCapture | None) -> None:
+        posted = None if self.posting_date is None else date.fromisoformat(self.posting_date)
+        expires = None if self.expiration_date is None else date.fromisoformat(self.expiration_date)
+        if posted is not None and expires is not None and expires < posted:
+            raise Phase2ValidationError(f"job {self.job_id} expiration date cannot precede posting date")
+        if capture is not None:
+            captured = datetime.fromisoformat(capture.captured_at.replace("Z", "+00:00")).date()
+            if posted is not None and posted > captured:
+                raise Phase2ValidationError(f"job {self.job_id} posting date cannot follow listing capture")
+        if self.last_verified_at is not None:
+            verified = datetime.fromisoformat(self.last_verified_at.replace("Z", "+00:00")).date()
+            if posted is not None and posted > verified:
+                raise Phase2ValidationError(f"job {self.job_id} posting date cannot follow verification")
+            if self.listing_status in {
+                ListingStatus.VERIFIED_OFFICIAL_OPEN,
+                ListingStatus.VERIFIED_PLATFORM_OPEN,
+            } and expires is not None and expires < verified:
+                raise Phase2ValidationError(f"job {self.job_id} cannot be verified open after expiration")
+
+    def _validate_application_url(self, sources: JDSourceCollectionV3) -> None:
+        capture_ref = self.application_verification_capture_reference
+        if self.application_url is None:
+            if self.application_url_status != ApplicationURLStatus.NOT_PROVIDED:
+                raise Phase2ValidationError(f"job {self.job_id} missing URL must be not_provided")
+            if any(
+                item is not None
+                for item in (
+                    self.application_url_last_verified_at,
+                    self.application_url_source_reference,
+                    capture_ref,
+                )
+            ):
+                raise Phase2ValidationError(f"job {self.job_id} cannot verify a missing application URL")
+            return
+        if self.application_url_status == ApplicationURLStatus.NOT_PROVIDED:
+            raise Phase2ValidationError(f"job {self.job_id} provided URL cannot be not_provided")
+        if self.application_url_source_reference is None:
+            raise Phase2ValidationError(f"job {self.job_id} application URL requires a source")
+        source = sources.source(self.application_url_source_reference)
+        allowed = {self.canonical_source_reference, *self.discovery_source_references}
+        if source.source_id not in allowed or source.application_url != self.application_url:
+            raise Phase2ValidationError(f"job {self.job_id} application URL provenance is invalid")
+        verified_statuses = {
+            ApplicationURLStatus.VERIFIED_ACTIVE,
+            ApplicationURLStatus.VERIFIED_UNAVAILABLE,
+        }
+        if self.application_url_status not in verified_statuses:
+            if self.application_url_last_verified_at is not None or capture_ref is not None:
+                raise Phase2ValidationError(f"job {self.job_id} unverified URL cannot have verification evidence")
+            return
+        if self.application_url_last_verified_at is None or capture_ref is None:
+            raise Phase2ValidationError(f"job {self.job_id} verified URL requires time and capture")
+        capture = self._capture_for_job(sources, capture_ref, "application verification")
+        assert capture is not None
+        if capture.source_reference != source.source_id or capture.verified_at != self.application_url_last_verified_at:
+            raise Phase2ValidationError(f"job {self.job_id} application verification does not match capture")
+        if self.application_url_status == ApplicationURLStatus.VERIFIED_ACTIVE and self.listing_status not in {
+            ListingStatus.VERIFIED_OFFICIAL_OPEN,
+            ListingStatus.VERIFIED_PLATFORM_OPEN,
+        }:
+            raise Phase2ValidationError(f"job {self.job_id} active application URL requires verified-open listing")
+        if self.application_url_status == ApplicationURLStatus.VERIFIED_UNAVAILABLE and self.listing_status in {
+            ListingStatus.VERIFIED_OFFICIAL_OPEN,
+            ListingStatus.VERIFIED_PLATFORM_OPEN,
+        }:
+            raise Phase2ValidationError(f"job {self.job_id} unavailable URL conflicts with verified-open listing")
+        qualified_official = (
+            source.source_tier == SourceTier.TIER_A_OFFICIAL
+            and source.source_type == JDSourceType.OFFICIAL_JOB_POSTING
+            and capture.verification_method in {
+                VerificationMethod.OFFICIAL_PAGE_DIRECT,
+                VerificationMethod.OFFICIAL_ATS_DIRECT,
+            }
+        )
+        qualified_platform = (
+            source.source_tier == SourceTier.TIER_B_VERIFIED_PLATFORM
+            and source.source_type == JDSourceType.PLATFORM_JOB_POSTING
+            and source.platform_job_id is not None
+            and capture.verification_method in {
+                VerificationMethod.PLATFORM_APPLY_AVAILABLE,
+                VerificationMethod.PLATFORM_REDIRECT_TO_OFFICIAL,
+            }
+        )
+        if not (qualified_official or qualified_platform):
+            raise Phase2ValidationError(f"job {self.job_id} verified URL requires qualified capture")
+        if self.application_url_status == ApplicationURLStatus.VERIFIED_ACTIVE and source.source_status != SourceLifecycleStatus.VERIFIED:
+            raise Phase2ValidationError(f"job {self.job_id} active URL requires active source")
+        if (
+            self.application_url_status == ApplicationURLStatus.VERIFIED_UNAVAILABLE
+            and source.source_status
+            not in {
+                SourceLifecycleStatus.VERIFIED,
+                SourceLifecycleStatus.ARCHIVED,
+                SourceLifecycleStatus.EXPIRED,
+            }
+        ):
+            raise Phase2ValidationError(
+                f"job {self.job_id} unavailable URL requires a reviewed source status"
+            )
+        posted = None if self.posting_date is None else date.fromisoformat(self.posting_date)
+        expires = None if self.expiration_date is None else date.fromisoformat(self.expiration_date)
+        application_verified = datetime.fromisoformat(
+            self.application_url_last_verified_at.replace("Z", "+00:00")
+        ).date()
+        if posted is not None and posted > application_verified:
+            raise Phase2ValidationError(
+                f"job {self.job_id} posting date cannot follow application verification"
+            )
+        if (
+            self.application_url_status == ApplicationURLStatus.VERIFIED_ACTIVE
+            and expires is not None
+            and expires < application_verified
+        ):
+            raise Phase2ValidationError(
+                f"job {self.job_id} application URL cannot be active after expiration"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = self._legacy_view().to_dict()
+        result["listing_verification_capture_reference"] = self.listing_verification_capture_reference
+        result["application_verification_capture_reference"] = self.application_verification_capture_reference
+        return result
+
+
+@dataclass(frozen=True, eq=True)
+class LiveJobCollectionV3:
+    collection_id: str
+    catalog_version: str
+    collection_type: CatalogType
+    source_collection_id: str
+    captured_at: str
+    jobs: tuple[LiveJobV3, ...]
+    schema: str = "aarvia.live_jobs"
+    schema_version: int = 3
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> LiveJobCollectionV3:
+        data = _mapping(value, "live_jobs")
+        _reject_unknown(data, {"schema", "schema_version", "collection_id", "catalog_version", "collection_type", "source_collection_id", "captured_at", "jobs"}, "live_jobs")
+        if data.get("schema") != "aarvia.live_jobs" or data.get("schema_version") != 3:
+            raise Phase2ValidationError("unsupported Live Job schema version")
+        raw_jobs = data.get("jobs")
+        if not isinstance(raw_jobs, list):
+            raise Phase2ValidationError("live_jobs.jobs must be a list")
+        result = cls(
+            collection_id=_stable_id(data.get("collection_id"), "live_jobs.collection_id"),
+            catalog_version=_version(data.get("catalog_version"), "live_jobs.catalog_version"),
+            collection_type=_enum(data.get("collection_type"), CatalogType, "live_jobs.collection_type"),
+            source_collection_id=_stable_id(data.get("source_collection_id"), "live_jobs.source_collection_id"),
+            captured_at=_iso_datetime(data.get("captured_at"), "live_jobs.captured_at"),
+            jobs=tuple(LiveJobV3.from_dict(item, f"live_jobs.jobs[{index}]") for index, item in enumerate(raw_jobs)),
+        )
+        if len({item.job_id for item in result.jobs}) != len(result.jobs):
+            raise Phase2ValidationError("Live Job collection contains duplicate job IDs")
+        return result
+
+    def validate(self, catalog: RoleCatalog, sources: JDSourceCollectionV3) -> None:
+        if not isinstance(sources, JDSourceCollectionV3):
+            raise Phase2ValidationError("Live Job schema 3 requires JD Source schema 3")
+        if self.catalog_version != catalog.catalog_version:
+            raise Phase2ValidationError("Live Job collection catalog version does not match Role Catalog")
+        if self.source_collection_id != sources.collection_id:
+            raise Phase2ValidationError("Live Job collection references another Source Collection")
+        if self.collection_type == CatalogType.PRODUCTION and any(item.is_test_fixture for item in sources.sources):
+            raise Phase2ValidationError("production Live Job collection cannot use test fixtures")
+        collection_time = datetime.fromisoformat(self.captured_at.replace("Z", "+00:00"))
+        for job in self.jobs:
+            job.validate(sources, catalog)
+            for capture_id in (
+                job.listing_verification_capture_reference,
+                job.application_verification_capture_reference,
+            ):
+                if capture_id is not None and datetime.fromisoformat(sources.capture(capture_id).captured_at.replace("Z", "+00:00")) > collection_time:
+                    raise Phase2ValidationError(f"job {job.job_id} capture cannot follow collection capture")
+            for timestamp in (job.last_verified_at, job.application_url_last_verified_at):
+                if timestamp is not None and datetime.fromisoformat(timestamp.replace("Z", "+00:00")) > collection_time:
+                    raise Phase2ValidationError(f"job {job.job_id} verification cannot follow collection capture")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "schema_version": self.schema_version,
+            "collection_id": self.collection_id,
+            "catalog_version": self.catalog_version,
+            "collection_type": self.collection_type.value,
+            "source_collection_id": self.source_collection_id,
+            "captured_at": self.captured_at,
+            "jobs": [item.to_dict() for item in self.jobs],
+        }
+
+
+def _unique_migration_capture(
+    *,
+    sources: JDSourceCollectionV3,
+    source_id: str,
+    content_hash: str | None,
+    required: bool,
+    label: str,
+) -> JDSourceCapture | None:
+    matches = () if content_hash is None else sources.matching_captures(source_id, content_hash)
+    if len(matches) == 1:
+        return matches[0]
+    if required or len(matches) > 1:
+        raise Phase2ValidationError(
+            f"{label} migration requires exactly one matching capture"
+        )
+    return None
+
+
+def migrate_live_jobs_v2_to_v3(
+    value: LiveJobCollectionV2,
+    *,
+    legacy_sources: JDSourceCollection,
+    sources: JDSourceCollectionV3,
+    catalog: RoleCatalog,
+) -> LiveJobCollectionV3:
+    if not isinstance(value, LiveJobCollectionV2):
+        raise TypeError("value must be a schema 2 LiveJobCollection")
+    value.validate(catalog, legacy_sources)
+    if value.source_collection_id != sources.collection_id:
+        raise Phase2ValidationError("source migration collection identity changed")
+    migrated_jobs: list[LiveJobV3] = []
+    verified_listing_statuses = {
+        ListingStatus.VERIFIED_OFFICIAL_OPEN,
+        ListingStatus.VERIFIED_PLATFORM_OPEN,
+    }
+    verified_application_statuses = {
+        ApplicationURLStatus.VERIFIED_ACTIVE,
+        ApplicationURLStatus.VERIFIED_UNAVAILABLE,
+    }
+    for job in value.jobs:
+        listing_capture = None
+        if job.last_verified_at is not None:
+            legacy_listing_source = legacy_sources.source(
+                job.canonical_source_reference
+            )
+            listing_capture = _unique_migration_capture(
+                sources=sources,
+                source_id=job.canonical_source_reference,
+                content_hash=legacy_listing_source.content_hash,
+                required=True,
+                label=f"job {job.job_id} listing",
+            )
+        elif job.listing_status in verified_listing_statuses:
+            raise Phase2ValidationError(
+                f"job {job.job_id} verified listing migration requires verification time"
+            )
+        application_capture = None
+        if job.application_url_status in verified_application_statuses:
+            if job.application_url_source_reference is None:
+                raise Phase2ValidationError(
+                    f"job {job.job_id} verified application migration requires source"
+                )
+            legacy_application_source = legacy_sources.source(
+                job.application_url_source_reference
+            )
+            application_capture = _unique_migration_capture(
+                sources=sources,
+                source_id=job.application_url_source_reference,
+                content_hash=legacy_application_source.content_hash,
+                required=True,
+                label=f"job {job.job_id} application URL",
+            )
+        data = job.to_dict()
+        data["listing_verification_capture_reference"] = (
+            None if listing_capture is None else listing_capture.capture_id
+        )
+        data["application_verification_capture_reference"] = (
+            None if application_capture is None else application_capture.capture_id
+        )
+        migrated_jobs.append(LiveJobV3.from_dict(data))
+    result = LiveJobCollectionV3(
+        collection_id=value.collection_id,
+        catalog_version=value.catalog_version,
+        collection_type=value.collection_type,
+        source_collection_id=value.source_collection_id,
+        captured_at=value.captured_at,
+        jobs=tuple(migrated_jobs),
+    )
+    result.validate(catalog, sources)
+    return result
+
+
+@dataclass(frozen=True, eq=True)
 class LiveJobCollection:
     collection_id: str
     catalog_version: str
@@ -782,6 +1268,8 @@ class LiveJobCollection:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> LiveJobCollection:
         data = _mapping(value, "live_jobs")
+        if data.get("schema_version") == 3:
+            return LiveJobCollectionV3.from_dict(data)  # type: ignore[return-value]
         if data.get("schema_version") == 2:
             return LiveJobCollectionV2.from_dict(data)  # type: ignore[return-value]
         allowed = {
@@ -848,16 +1336,21 @@ class LiveJobCollection:
 
 
 def save_live_job_collection(
-    value: LiveJobCollection | LiveJobCollectionV2,
+    value: LiveJobCollection | LiveJobCollectionV2 | LiveJobCollectionV3,
     path: str | Path,
     *,
     catalog: RoleCatalog,
-    sources: JDSourceCollection | None = None,
+    sources: JDSourceCollection | JDSourceCollectionV3 | None = None,
 ) -> Path:
-    if not isinstance(value, (LiveJobCollection, LiveJobCollectionV2)):
+    if not isinstance(value, (LiveJobCollection, LiveJobCollectionV2, LiveJobCollectionV3)):
         raise TypeError("value must be a LiveJobCollection")
-    if isinstance(value, LiveJobCollectionV2):
-        if sources is None:
+    if isinstance(value, LiveJobCollectionV3):
+        if not isinstance(sources, JDSourceCollectionV3):
+            raise Phase2ValidationError("Live Job schema 3 requires JD Source schema 3")
+        value.validate(catalog, sources)
+        canonical = LiveJobCollectionV3.from_dict(value.to_dict())
+    elif isinstance(value, LiveJobCollectionV2):
+        if not isinstance(sources, JDSourceCollection):
             raise Phase2ValidationError("Live Job schema 2 requires a JD Source Collection")
         value.validate(catalog, sources)
         canonical = LiveJobCollectionV2.from_dict(value.to_dict())
@@ -873,13 +1366,17 @@ def load_live_job_collection(
     path: str | Path,
     *,
     catalog: RoleCatalog,
-    sources: JDSourceCollection | None = None,
-) -> LiveJobCollection | LiveJobCollectionV2:
+    sources: JDSourceCollection | JDSourceCollectionV3 | None = None,
+) -> LiveJobCollection | LiveJobCollectionV2 | LiveJobCollectionV3:
     from .phase2_storage import load_phase2_json
 
     value = LiveJobCollection.from_dict(load_phase2_json(path))
-    if isinstance(value, LiveJobCollectionV2):
-        if sources is None:
+    if isinstance(value, LiveJobCollectionV3):
+        if not isinstance(sources, JDSourceCollectionV3):
+            raise Phase2ValidationError("Live Job schema 3 requires JD Source schema 3")
+        value.validate(catalog, sources)
+    elif isinstance(value, LiveJobCollectionV2):
+        if not isinstance(sources, JDSourceCollection):
             raise Phase2ValidationError("Live Job schema 2 requires a JD Source Collection")
         value.validate(catalog, sources)
     else:

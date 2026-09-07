@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
 
-from .jd_sources import JDSourceCollection
+from .jd_sources import JDSourceCollection, JDSourceCollectionV3
 from .role_catalog import (
     CatalogType,
     Phase2ValidationError,
@@ -29,7 +29,9 @@ from .role_catalog import (
 CURATION_SCHEMA = "aarvia.jd_curation"
 CURATION_SCHEMA_VERSION = 2
 CURATION_SCHEMA_V3_VERSION = 3
+CURATION_SCHEMA_V4_VERSION = 4
 CANDIDATE_ID_VERSION = "requirement-candidate-v1"
+CANDIDATE_V4_ID_VERSION = "requirement-candidate-v2"
 REVIEW_ID_VERSION = "candidate-review-v1"
 
 
@@ -247,7 +249,11 @@ class RequirementCandidate:
         return candidate
 
     def _validate_review(self, path: str, *, schema_version: int) -> None:
-        if schema_version not in {CURATION_SCHEMA_VERSION, CURATION_SCHEMA_V3_VERSION}:
+        if schema_version not in {
+            CURATION_SCHEMA_VERSION,
+            CURATION_SCHEMA_V3_VERSION,
+            CURATION_SCHEMA_V4_VERSION,
+        }:
             raise Phase2ValidationError(f"{path} uses unsupported Curation schema version")
         if (
             schema_version == CURATION_SCHEMA_VERSION
@@ -317,6 +323,144 @@ class RequirementCandidate:
             "decision_reason": self.decision_reason,
             "reviewed_at": self.reviewed_at,
         }
+
+
+def generate_candidate_v4_id(
+    source_id: str,
+    capture_id: str,
+    evidence: EvidenceLocator,
+    proposed_name: str,
+) -> str:
+    identity = "|".join(
+        (
+            CANDIDATE_V4_ID_VERSION,
+            _stable_id(source_id, "source_id"),
+            _stable_id(capture_id, "capture_id"),
+            evidence.source_content_hash,
+            evidence.section.casefold().strip(),
+            str(evidence.start_offset),
+            str(evidence.end_offset),
+            proposed_name.casefold().strip(),
+        )
+    )
+    return f"candidate_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+
+
+@dataclass(frozen=True, eq=True)
+class RequirementCandidateV4(RequirementCandidate):
+    capture_id: str
+
+    @classmethod
+    def from_extraction(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        source_id: str,
+        capture_id: str,
+        source_content_hash: str,
+        extraction: ExtractionMetadata,
+    ) -> RequirementCandidateV4:
+        data = _mapping(payload, "provider_candidate")
+        allowed = {
+            "evidence", "proposed_name", "proposed_description", "proposed_category",
+            "proposed_importance", "mapped_role_id", "mapped_specialization_id",
+        }
+        _reject_unknown(data, allowed, "provider_candidate")
+        evidence = EvidenceLocator.from_dict(data.get("evidence"), "provider_candidate.evidence")
+        name = _text(data.get("proposed_name"), "provider_candidate.proposed_name")
+        return cls(
+            candidate_id=generate_candidate_v4_id(source_id, capture_id, evidence, name),
+            source_id=_stable_id(source_id, "source_id"),
+            source_content_hash=_text(source_content_hash, "source_content_hash"),
+            evidence=evidence,
+            proposed_name=name,
+            proposed_description=_text(data.get("proposed_description"), "provider_candidate.proposed_description"),
+            proposed_category=_enum(data.get("proposed_category"), RequirementCategory, "provider_candidate.proposed_category"),
+            proposed_importance=_enum(data.get("proposed_importance"), RequirementImportance, "provider_candidate.proposed_importance"),
+            mapped_role_id=_stable_id(data.get("mapped_role_id"), "provider_candidate.mapped_role_id"),
+            mapped_specialization_id=(None if data.get("mapped_specialization_id") is None else _stable_id(data.get("mapped_specialization_id"), "provider_candidate.mapped_specialization_id")),
+            extraction=extraction,
+            status=CandidateLifecycleStatus.CANDIDATE_EXTRACTED,
+            cluster_id=None,
+            reviewer_decision=ReviewerDecision.PENDING,
+            decision_reason=None,
+            reviewed_at=None,
+            capture_id=_stable_id(capture_id, "capture_id"),
+        )
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any], path: str = "candidate"
+    ) -> RequirementCandidateV4:
+        data = _mapping(value, path)
+        capture_id = _stable_id(data.get("capture_id"), f"{path}.capture_id")
+        provided_candidate_id = _stable_id(
+            data.get("candidate_id"), f"{path}.candidate_id"
+        )
+        legacy_data = dict(data)
+        legacy_data.pop("capture_id", None)
+        evidence = EvidenceLocator.from_dict(data.get("evidence"), f"{path}.evidence")
+        name = _text(data.get("proposed_name"), f"{path}.proposed_name")
+        source_id = _stable_id(data.get("source_id"), f"{path}.source_id")
+        legacy_data["candidate_id"] = generate_candidate_id(source_id, evidence, name)
+        base = RequirementCandidate.from_dict(
+            legacy_data, path, schema_version=CURATION_SCHEMA_V4_VERSION
+        )
+        expected = generate_candidate_v4_id(
+            base.source_id, capture_id, base.evidence, base.proposed_name
+        )
+        if provided_candidate_id != expected:
+            raise Phase2ValidationError(f"{path}.candidate_id was not generated by Aarvia")
+        return cls(
+            **{**base.__dict__, "candidate_id": provided_candidate_id},
+            capture_id=capture_id,
+        )
+
+    def validate(self, sources: JDSourceCollectionV3, catalog: RoleCatalog) -> None:
+        canonical = RequirementCandidateV4.from_dict(
+            self.to_dict(), f"candidate {self.candidate_id}"
+        )
+        if canonical != self:
+            raise Phase2ValidationError(f"candidate {self.candidate_id} is not canonical")
+        source = sources.source(self.source_id)
+        capture = sources.capture(self.capture_id)
+        if capture.source_reference != source.source_id:
+            raise Phase2ValidationError(
+                f"candidate {self.candidate_id} capture belongs to another source"
+            )
+        if capture.content_hash != self.source_content_hash:
+            raise Phase2ValidationError(
+                f"candidate {self.candidate_id} source content hash does not match capture"
+            )
+        if self.evidence.source_content_hash != capture.content_hash:
+            raise Phase2ValidationError(
+                f"candidate {self.candidate_id} evidence hash does not match capture"
+            )
+        if self.evidence.start_offset is None or self.evidence.end_offset is None:
+            raise Phase2ValidationError(
+                f"candidate {self.candidate_id} schema 4 evidence requires explicit offsets"
+            )
+        if not capture.contains_offsets(
+            self.evidence.start_offset, self.evidence.end_offset
+        ):
+            raise Phase2ValidationError(
+                f"candidate {self.candidate_id} evidence offsets are outside capture"
+            )
+        role = catalog.role(self.mapped_role_id)
+        if self.mapped_specialization_id is not None and self.mapped_specialization_id not in {
+            item.specialization_id for item in role.specializations
+        }:
+            raise Phase2ValidationError(
+                f"candidate {self.candidate_id} references unknown specialization"
+            )
+        self._validate_review(
+            f"candidate {self.candidate_id}", schema_version=CURATION_SCHEMA_V4_VERSION
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        result["capture_id"] = self.capture_id
+        return result
 
 
 @dataclass(frozen=True, eq=True)
@@ -850,7 +994,7 @@ class CurationArtifactV3:
                     raise Phase2ValidationError(
                         f"review {review.review_id} approved successor lacks matching review provenance"
                     )
-        self._reject_lineage_cycles(edges)
+        CurationArtifactV3._reject_lineage_cycles(edges)
         for candidate in self.candidates:
             own_review = review_by_parent.get(candidate.candidate_id)
             origin_review = incoming.get(candidate.candidate_id)
@@ -919,6 +1063,199 @@ class CurationArtifactV3:
         }
 
 
+@dataclass(frozen=True, eq=True)
+class CurationArtifactV4:
+    artifact_id: str
+    artifact_type: CatalogType
+    source_collection_id: str
+    catalog_version: str
+    created_at: str
+    candidates: tuple[RequirementCandidateV4, ...]
+    clusters: tuple[RequirementCluster, ...]
+    review_records: tuple[CandidateReviewRecord, ...]
+    schema: str = CURATION_SCHEMA
+    schema_version: int = CURATION_SCHEMA_V4_VERSION
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> CurationArtifactV4:
+        data = _mapping(value, "curation")
+        _reject_unknown(
+            data,
+            {
+                "schema", "schema_version", "artifact_id", "artifact_type",
+                "source_collection_id", "catalog_version", "created_at",
+                "candidates", "clusters", "review_records",
+            },
+            "curation",
+        )
+        if data.get("schema") != CURATION_SCHEMA or data.get("schema_version") != CURATION_SCHEMA_V4_VERSION:
+            raise Phase2ValidationError("unsupported Curation schema version")
+        raw_candidates = data.get("candidates")
+        raw_clusters = data.get("clusters")
+        raw_reviews = data.get("review_records")
+        if not isinstance(raw_candidates, list) or not isinstance(raw_clusters, list) or not isinstance(raw_reviews, list):
+            raise Phase2ValidationError("curation candidates, clusters, and review_records must be lists")
+        return cls(
+            artifact_id=_stable_id(data.get("artifact_id"), "curation.artifact_id"),
+            artifact_type=_enum(data.get("artifact_type"), CatalogType, "curation.artifact_type"),
+            source_collection_id=_stable_id(data.get("source_collection_id"), "curation.source_collection_id"),
+            catalog_version=_version(data.get("catalog_version"), "curation.catalog_version"),
+            created_at=_iso_datetime(data.get("created_at"), "curation.created_at"),
+            candidates=tuple(RequirementCandidateV4.from_dict(item, f"curation.candidates[{index}]") for index, item in enumerate(raw_candidates)),
+            clusters=tuple(RequirementCluster.from_dict(item, f"curation.clusters[{index}]") for index, item in enumerate(raw_clusters)),
+            review_records=tuple(CandidateReviewRecord.from_dict(item, f"curation.review_records[{index}]") for index, item in enumerate(raw_reviews)),
+        )
+
+    def validate(self, sources: JDSourceCollectionV3, catalog: RoleCatalog) -> None:
+        if not isinstance(sources, JDSourceCollectionV3):
+            raise Phase2ValidationError("Curation schema 4 requires JD Source schema 3")
+        canonical = CurationArtifactV4.from_dict(self.to_dict())
+        if canonical != self:
+            raise Phase2ValidationError("Curation artifact contains non-canonical data")
+        if self.source_collection_id != sources.collection_id:
+            raise Phase2ValidationError("Curation artifact references another Source Collection")
+        if self.catalog_version != catalog.catalog_version:
+            raise Phase2ValidationError("Curation artifact Catalog version does not match")
+        candidate_map = {item.candidate_id: item for item in self.candidates}
+        cluster_map = {item.cluster_id: item for item in self.clusters}
+        review_map = {item.review_id: item for item in self.review_records}
+        if len(candidate_map) != len(self.candidates):
+            raise Phase2ValidationError("Curation artifact contains duplicate candidate IDs")
+        if len(cluster_map) != len(self.clusters):
+            raise Phase2ValidationError("Curation artifact contains duplicate cluster IDs")
+        if len(review_map) != len(self.review_records):
+            raise Phase2ValidationError("Curation artifact contains duplicate review IDs")
+        if self.artifact_type == CatalogType.PRODUCTION and any(source.is_test_fixture for source in sources.sources):
+            raise Phase2ValidationError("production Curation artifact cannot use test fixtures")
+        for candidate in self.candidates:
+            candidate.validate(sources, catalog)
+            if candidate.cluster_id is not None and candidate.cluster_id not in cluster_map:
+                raise Phase2ValidationError(f"candidate {candidate.candidate_id} references unknown cluster")
+        for cluster in self.clusters:
+            role = catalog.role(cluster.role_id)
+            if cluster.specialization_id is not None and cluster.specialization_id not in {
+                item.specialization_id for item in role.specializations
+            }:
+                raise Phase2ValidationError(f"cluster {cluster.cluster_id} references unknown specialization")
+            if len(set(cluster.candidate_ids)) != len(cluster.candidate_ids):
+                raise Phase2ValidationError(f"cluster {cluster.cluster_id} contains duplicate candidates")
+            for candidate_id in cluster.candidate_ids:
+                candidate = candidate_map.get(candidate_id)
+                if candidate is None or candidate.cluster_id != cluster.cluster_id:
+                    raise Phase2ValidationError(f"cluster {cluster.cluster_id} has inconsistent candidate reference")
+        CurationArtifactV3._validate_lineage(self, candidate_map)  # type: ignore[arg-type]
+        for review in self.review_records:
+            parent = candidate_map[review.parent_candidate_id]
+            for successor_id in review.successor_candidate_ids:
+                if candidate_map[successor_id].capture_id != parent.capture_id:
+                    raise Phase2ValidationError(
+                        f"review {review.review_id} cannot rebase capture provenance"
+                    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "schema_version": self.schema_version,
+            "artifact_id": self.artifact_id,
+            "artifact_type": self.artifact_type.value,
+            "source_collection_id": self.source_collection_id,
+            "catalog_version": self.catalog_version,
+            "created_at": self.created_at,
+            "candidates": [item.to_dict() for item in self.candidates],
+            "clusters": [item.to_dict() for item in self.clusters],
+            "review_records": [item.to_dict() for item in self.review_records],
+        }
+
+
+def migrate_v3_to_v4(
+    value: CurationArtifactV3,
+    *,
+    sources: JDSourceCollectionV3,
+    catalog: RoleCatalog,
+) -> CurationArtifactV4:
+    if not isinstance(value, CurationArtifactV3):
+        raise TypeError("value must be a schema 3 CurationArtifact")
+    if CurationArtifactV3.from_dict(value.to_dict()) != value:
+        raise Phase2ValidationError("schema 3 Curation artifact is not canonical")
+    candidate_ids: dict[str, str] = {}
+    migrated_candidates: list[RequirementCandidateV4] = []
+    for candidate in value.candidates:
+        matches = sources.matching_captures(
+            candidate.source_id, candidate.source_content_hash
+        )
+        if len(matches) != 1:
+            raise Phase2ValidationError(
+                f"candidate {candidate.candidate_id} migration requires exactly one matching capture"
+            )
+        capture = matches[0]
+        if not capture.contains_offsets(
+            candidate.evidence.start_offset, candidate.evidence.end_offset
+        ):
+            raise Phase2ValidationError(
+                f"candidate {candidate.candidate_id} evidence cannot be bounded by capture"
+            )
+        new_id = generate_candidate_v4_id(
+            candidate.source_id,
+            capture.capture_id,
+            candidate.evidence,
+            candidate.proposed_name,
+        )
+        candidate_ids[candidate.candidate_id] = new_id
+        migrated_candidates.append(
+            RequirementCandidateV4(
+                **{**candidate.__dict__, "candidate_id": new_id},
+                capture_id=capture.capture_id,
+            )
+        )
+
+    def migrated_id(candidate_id: str, path: str) -> str:
+        try:
+            return candidate_ids[candidate_id]
+        except KeyError as error:
+            raise Phase2ValidationError(
+                f"{path} references a missing Candidate during migration"
+            ) from error
+
+    migrated_clusters = tuple(
+        replace(
+            cluster,
+            candidate_ids=tuple(
+                migrated_id(item, f"cluster {cluster.cluster_id}")
+                for item in cluster.candidate_ids
+            ),
+        )
+        for cluster in value.clusters
+    )
+    migrated_reviews = tuple(
+        CandidateReviewRecord.create(
+            parent_candidate_id=migrated_id(
+                review.parent_candidate_id, f"review {review.review_id}"
+            ),
+            action=review.action,
+            successor_candidate_ids=tuple(
+                migrated_id(item, f"review {review.review_id}")
+                for item in review.successor_candidate_ids
+            ),
+            reviewer_reference=review.reviewer_reference,
+            reviewed_at=review.reviewed_at,
+            decision_reason=review.decision_reason,
+        )
+        for review in value.review_records
+    )
+    result = CurationArtifactV4(
+        artifact_id=value.artifact_id,
+        artifact_type=value.artifact_type,
+        source_collection_id=value.source_collection_id,
+        catalog_version=value.catalog_version,
+        created_at=value.created_at,
+        candidates=tuple(migrated_candidates),
+        clusters=migrated_clusters,
+        review_records=migrated_reviews,
+    )
+    result.validate(sources, catalog)
+    return result
+
+
 def migrate_v2_to_v3(value: CurationArtifact) -> CurationArtifactV3:
     if not isinstance(value, CurationArtifact):
         raise TypeError("value must be a schema 2 CurationArtifact")
@@ -937,11 +1274,11 @@ def migrate_v2_to_v3(value: CurationArtifact) -> CurationArtifactV3:
 
 
 def _reviewable_candidate(
-    artifact: CurationArtifactV3,
+    artifact: CurationArtifactV3 | CurationArtifactV4,
     candidate_id: str,
     *,
     allow_approved_successor: bool = False,
-) -> RequirementCandidate:
+) -> RequirementCandidate | RequirementCandidateV4:
     matches = [item for item in artifact.candidates if item.candidate_id == candidate_id]
     if not matches:
         raise Phase2ValidationError(f"unknown Candidate ID: {candidate_id}")
@@ -994,15 +1331,15 @@ def _review_record(
 
 
 def _finish_review(
-    artifact: CurationArtifactV3,
+    artifact: CurationArtifactV3 | CurationArtifactV4,
     *,
-    parent: RequirementCandidate,
-    reviewed_parent: RequirementCandidate,
-    successors: Sequence[RequirementCandidate],
+    parent: RequirementCandidate | RequirementCandidateV4,
+    reviewed_parent: RequirementCandidate | RequirementCandidateV4,
+    successors: Sequence[RequirementCandidate | RequirementCandidateV4],
     review: CandidateReviewRecord,
-    sources: JDSourceCollection,
+    sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3:
+) -> CurationArtifactV3 | CurationArtifactV4:
     candidates = tuple(
         reviewed_parent if item.candidate_id == parent.candidate_id else item
         for item in artifact.candidates
@@ -1017,15 +1354,15 @@ def _finish_review(
 
 
 def approve_candidate(
-    artifact: CurationArtifactV3,
+    artifact: CurationArtifactV3 | CurationArtifactV4,
     candidate_id: str,
     *,
     reviewer_reference: str,
     reviewed_at: str,
     decision_reason: str,
-    sources: JDSourceCollection,
+    sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3:
+) -> CurationArtifactV3 | CurationArtifactV4:
     parent = _reviewable_candidate(artifact, candidate_id)
     if parent.cluster_id is None:
         raise Phase2ValidationError("approved candidate must belong to a proposed cluster")
@@ -1056,15 +1393,15 @@ def approve_candidate(
 
 
 def reject_candidate(
-    artifact: CurationArtifactV3,
+    artifact: CurationArtifactV3 | CurationArtifactV4,
     candidate_id: str,
     *,
     reviewer_reference: str,
     reviewed_at: str,
     decision_reason: str,
-    sources: JDSourceCollection,
+    sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3:
+) -> CurationArtifactV3 | CurationArtifactV4:
     parent = _reviewable_candidate(artifact, candidate_id)
     reviewed_parent = replace(
         parent,
@@ -1093,12 +1430,12 @@ def reject_candidate(
 
 
 def _successor_candidate(
-    parent: RequirementCandidate,
+    parent: RequirementCandidate | RequirementCandidateV4,
     revision: CandidateRevision,
     *,
     decision_reason: str,
     reviewed_at: str,
-) -> RequirementCandidate:
+) -> RequirementCandidate | RequirementCandidateV4:
     if not isinstance(revision, CandidateRevision):
         raise TypeError("revision must be a CandidateRevision")
     evidence = revision.evidence or parent.evidence
@@ -1116,28 +1453,37 @@ def _successor_candidate(
         RequirementImportance,
         "revision.proposed_importance",
     )
-    return RequirementCandidate(
-        candidate_id=generate_candidate_id(parent.source_id, evidence, name),
-        source_id=parent.source_id,
-        source_content_hash=parent.source_content_hash,
-        evidence=evidence,
-        proposed_name=name,
-        proposed_description=description,
-        proposed_category=category,
-        proposed_importance=importance,
-        mapped_role_id=parent.mapped_role_id,
-        mapped_specialization_id=parent.mapped_specialization_id,
-        extraction=parent.extraction,
-        status=CandidateLifecycleStatus.APPROVED,
-        cluster_id=None,
-        reviewer_decision=ReviewerDecision.APPROVE,
-        decision_reason=_text(decision_reason, "decision_reason"),
-        reviewed_at=_iso_datetime(reviewed_at, "reviewed_at"),
+    candidate_id = (
+        generate_candidate_v4_id(parent.source_id, parent.capture_id, evidence, name)
+        if isinstance(parent, RequirementCandidateV4)
+        else generate_candidate_id(parent.source_id, evidence, name)
     )
+    candidate_type = RequirementCandidateV4 if isinstance(parent, RequirementCandidateV4) else RequirementCandidate
+    kwargs: dict[str, Any] = {
+        "candidate_id": candidate_id,
+        "source_id": parent.source_id,
+        "source_content_hash": parent.source_content_hash,
+        "evidence": evidence,
+        "proposed_name": name,
+        "proposed_description": description,
+        "proposed_category": category,
+        "proposed_importance": importance,
+        "mapped_role_id": parent.mapped_role_id,
+        "mapped_specialization_id": parent.mapped_specialization_id,
+        "extraction": parent.extraction,
+        "status": CandidateLifecycleStatus.APPROVED,
+        "cluster_id": None,
+        "reviewer_decision": ReviewerDecision.APPROVE,
+        "decision_reason": _text(decision_reason, "decision_reason"),
+        "reviewed_at": _iso_datetime(reviewed_at, "reviewed_at"),
+    }
+    if isinstance(parent, RequirementCandidateV4):
+        kwargs["capture_id"] = parent.capture_id
+    return candidate_type(**kwargs)
 
 
 def _replace_candidate(
-    artifact: CurationArtifactV3,
+    artifact: CurationArtifactV3 | CurationArtifactV4,
     candidate_id: str,
     revisions: Sequence[CandidateRevision],
     *,
@@ -1145,9 +1491,9 @@ def _replace_candidate(
     reviewer_reference: str,
     reviewed_at: str,
     decision_reason: str,
-    sources: JDSourceCollection,
+    sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3:
+) -> CurationArtifactV3 | CurationArtifactV4:
     parent = _reviewable_candidate(
         artifact, candidate_id, allow_approved_successor=True
     )
@@ -1192,16 +1538,16 @@ def _replace_candidate(
 
 
 def revise_candidate(
-    artifact: CurationArtifactV3,
+    artifact: CurationArtifactV3 | CurationArtifactV4,
     candidate_id: str,
     revision: CandidateRevision,
     *,
     reviewer_reference: str,
     reviewed_at: str,
     decision_reason: str,
-    sources: JDSourceCollection,
+    sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3:
+) -> CurationArtifactV3 | CurationArtifactV4:
     return _replace_candidate(
         artifact,
         candidate_id,
@@ -1216,16 +1562,16 @@ def revise_candidate(
 
 
 def split_candidate(
-    artifact: CurationArtifactV3,
+    artifact: CurationArtifactV3 | CurationArtifactV4,
     candidate_id: str,
     revisions: Sequence[CandidateRevision],
     *,
     reviewer_reference: str,
     reviewed_at: str,
     decision_reason: str,
-    sources: JDSourceCollection,
+    sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3:
+) -> CurationArtifactV3 | CurationArtifactV4:
     if len(revisions) < 2:
         raise Phase2ValidationError("split action requires at least two successors")
     return _replace_candidate(
@@ -1241,22 +1587,26 @@ def split_candidate(
     )
 
 
-CurationArtifactType = CurationArtifact | CurationArtifactV3
+CurationArtifactType = CurationArtifact | CurationArtifactV3 | CurationArtifactV4
 
 
-def save_curation_artifact(value: CurationArtifactType, path: str | Path, *, sources: JDSourceCollection, catalog: RoleCatalog) -> Path:
-    if not isinstance(value, (CurationArtifact, CurationArtifactV3)):
+def save_curation_artifact(value: CurationArtifactType, path: str | Path, *, sources: JDSourceCollection | JDSourceCollectionV3, catalog: RoleCatalog) -> Path:
+    if not isinstance(value, (CurationArtifact, CurationArtifactV3, CurationArtifactV4)):
         raise TypeError("value must be a CurationArtifact")
+    if isinstance(value, CurationArtifactV4) != isinstance(sources, JDSourceCollectionV3):
+        raise Phase2ValidationError("Curation schema 4 requires JD Source schema 3; legacy Curation requires schema 2")
     value.validate(sources, catalog)
     from .phase2_storage import save_phase2_json
-    if isinstance(value, CurationArtifactV3):
+    if isinstance(value, CurationArtifactV4):
+        canonical = CurationArtifactV4.from_dict(value.to_dict())
+    elif isinstance(value, CurationArtifactV3):
         canonical = CurationArtifactV3.from_dict(value.to_dict())
     else:
         canonical = CurationArtifact.from_dict(value.to_dict())
     return save_phase2_json(canonical.to_dict(), path)
 
 
-def load_curation_artifact(path: str | Path, *, sources: JDSourceCollection, catalog: RoleCatalog) -> CurationArtifactType:
+def load_curation_artifact(path: str | Path, *, sources: JDSourceCollection | JDSourceCollectionV3, catalog: RoleCatalog) -> CurationArtifactType:
     from .phase2_storage import load_phase2_json
     data = _mapping(load_phase2_json(path), "curation")
     schema_version = data.get("schema_version")
@@ -1264,7 +1614,11 @@ def load_curation_artifact(path: str | Path, *, sources: JDSourceCollection, cat
         value: CurationArtifactType = CurationArtifact.from_dict(data)
     elif schema_version == CURATION_SCHEMA_V3_VERSION:
         value = CurationArtifactV3.from_dict(data)
+    elif schema_version == CURATION_SCHEMA_V4_VERSION:
+        value = CurationArtifactV4.from_dict(data)
     else:
         raise Phase2ValidationError("unsupported Curation schema version")
+    if isinstance(value, CurationArtifactV4) != isinstance(sources, JDSourceCollectionV3):
+        raise Phase2ValidationError("Curation schema 4 requires JD Source schema 3; legacy Curation requires schema 2")
     value.validate(sources, catalog)
     return value
