@@ -19,12 +19,14 @@ from aarvia.jd_curation import (
     CurationArtifact,
     CurationArtifactV3,
     CurationArtifactV4,
+    CurationArtifactV5,
     EvidenceLocator,
     migrate_v2_to_v3,
     approve_candidate,
     generate_candidate_id,
     generate_candidate_v4_id,
     migrate_v3_to_v4,
+    migrate_curation_v4_to_v5,
 )
 from aarvia.jd_sources import (
     JDSourceCollection,
@@ -32,6 +34,7 @@ from aarvia.jd_sources import (
     content_sha256,
     generate_canonical_job_id,
     migrate_source_v2_to_v3,
+    normalize_jd_content,
 )
 from aarvia.role_catalog import Phase2ValidationError, production_role_catalog
 from phase2b_fixtures import (
@@ -39,6 +42,7 @@ from phase2b_fixtures import (
     NOW,
     approved_candidate_data,
     cluster_data,
+    confirmed_assignments,
     curation_data,
     source_collection_data,
     source_data,
@@ -74,11 +78,27 @@ def upgrade_for_builder(
     sources = migrate_source_v2_to_v3(
         legacy_sources,
         scope_by_source_id={item["source_id"]: "full_job_description" for item in sources_data if item["content_hash"] is not None},
-        content_length_by_source_id={item["source_id"]: 1000 for item in sources_data if item["content_hash"] is not None},
+        content_length_by_source_id={item["source_id"]: len(normalize_jd_content("Build reliable machine learning applications.\nUse Python.\n")) for item in sources_data if item["content_hash"] is not None},
     )
     return sources, migrate_v3_to_v4(
         curation, sources=sources, catalog=production_role_catalog()
     )
+
+
+def build_fixture(**kwargs):
+    curation = kwargs["curation"]
+    if isinstance(curation, CurationArtifactV4) and not isinstance(curation, CurationArtifactV5):
+        assignments, contents = confirmed_assignments(kwargs["sources"])
+        kwargs["curation"] = migrate_curation_v4_to_v5(
+            curation,
+            assignments=assignments,
+            sources=kwargs["sources"],
+            catalog=kwargs["catalog"],
+            capture_contents=contents,
+        )
+        kwargs["assignments"] = assignments
+        kwargs["capture_contents"] = contents
+    return build_catalog_draft(**kwargs)
 
 
 def contexts(company_count: int, *, tier_a_count: int | None = None, support_count: int | None = None):
@@ -197,7 +217,7 @@ def test_tier_a_share_uses_canonical_sample_counts() -> None:
 
 def test_builder_blocks_five_companies_and_insufficient_tier_a_share() -> None:
     _, sources, curation, samples = contexts(5)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -205,7 +225,7 @@ def test_builder_blocks_five_companies_and_insufficient_tier_a_share() -> None:
     assert BuildBlockerCode.INSUFFICIENT_COMPANIES in {item.code for item in result.blockers}
 
     _, sources, curation, samples = contexts(10, tier_a_count=5)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -214,7 +234,7 @@ def test_builder_blocks_five_companies_and_insufficient_tier_a_share() -> None:
 
 def test_builder_blocks_empty_and_ineligible_samples() -> None:
     data, sources, curation, _ = contexts(1)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=(), sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -228,7 +248,7 @@ def test_builder_blocks_empty_and_ineligible_samples() -> None:
     career_sources, career_curation = upgrade_for_builder(
         [career_page], career_curation_v3
     )
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=(RoleSample(data[0]["source_id"], "applied_ai_engineer"),),
         sources=career_sources, curation=career_curation, catalog=production_role_catalog(),
@@ -254,7 +274,7 @@ def test_same_company_contributes_only_one_role_sample() -> None:
     rebuilt_sources, rebuilt_curation = upgrade_for_builder(
         rebuilt_data, rebuilt_curation_v3
     )
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=tuple(RoleSample(item["source_id"], "applied_ai_engineer") for item in rebuilt_data),
         sources=rebuilt_sources, curation=rebuilt_curation, catalog=production_role_catalog(),
@@ -264,7 +284,7 @@ def test_same_company_contributes_only_one_role_sample() -> None:
 
 def test_approved_only_builder_produces_deterministic_draft_and_prevalence() -> None:
     _, sources, curation, samples = contexts(10, tier_a_count=6, support_count=7)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -285,7 +305,7 @@ def test_schema_v2_approved_candidate_is_blocked_from_catalog_building() -> None
         RoleSample(item["source_id"], "applied_ai_engineer") for item in data
     )
 
-    first = build_catalog_draft(
+    first = build_fixture(
         draft_id="fixture_legacy_draft",
         target_catalog_version="1.1.0",
         created_at=NOW,
@@ -294,7 +314,7 @@ def test_schema_v2_approved_candidate_is_blocked_from_catalog_building() -> None
         curation=legacy,
         catalog=production_role_catalog(),
     )
-    second = build_catalog_draft(
+    second = build_fixture(
         draft_id="fixture_legacy_draft",
         target_catalog_version="1.1.0",
         created_at=NOW,
@@ -309,7 +329,7 @@ def test_schema_v2_approved_candidate_is_blocked_from_catalog_building() -> None
     assert [item.to_dict() for item in first.blockers] == [
         {
             "code": "curation_schema_upgrade_required",
-            "message": "Catalog building requires Curation schema 4 capture and review provenance",
+            "message": "Catalog building requires Curation schema 5 Role Assignment provenance",
             "references": ["fixture_curation", "schema_version=2"],
         }
     ]
@@ -321,7 +341,7 @@ def test_schema_v2_non_approved_states_cannot_produce_requirements(status) -> No
     legacy_sources = JDSourceCollection.from_dict(source_collection_data(data))
     sources = migrate_source_v2_to_v3(
         legacy_sources,
-        content_length_by_source_id={item["source_id"]: 1000 for item in data},
+        content_length_by_source_id={item["source_id"]: len(normalize_jd_content("Build reliable machine learning applications.\nUse Python.\n")) for item in data},
     )
     raw = curation_data(data)
     for candidate in raw["candidates"]:
@@ -332,7 +352,7 @@ def test_schema_v2_non_approved_states_cannot_produce_requirements(status) -> No
             candidate["reviewed_at"] = None
     legacy = CurationArtifact.from_dict(raw)
 
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_legacy_draft",
         target_catalog_version="1.1.0",
         created_at=NOW,
@@ -387,13 +407,13 @@ def test_pending_v2_requires_explicit_migration_and_review_before_building() -> 
     sources = migrate_source_v2_to_v3(
         legacy_sources,
         scope_by_source_id={item["source_id"]: "full_job_description" for item in data},
-        content_length_by_source_id={item["source_id"]: 1000 for item in data},
+        content_length_by_source_id={item["source_id"]: len(normalize_jd_content("Build reliable machine learning applications.\nUse Python.\n")) for item in data},
     )
     v4 = migrate_v3_to_v4(
         v3, sources=sources, catalog=production_role_catalog()
     )
 
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_reviewed_draft",
         target_catalog_version="1.1.0",
         created_at=NOW,
@@ -415,7 +435,7 @@ def test_v3_approved_candidate_without_review_record_cannot_build() -> None:
     tampered["review_records"] = []
 
     with pytest.raises(Phase2ValidationError, match="terminal provenance"):
-        build_catalog_draft(
+        build_fixture(
             draft_id="fixture_tampered_draft",
             target_catalog_version="1.1.0",
             created_at=NOW,
@@ -431,7 +451,7 @@ def test_v3_builder_consumes_approved_leaves_without_inflating_company_count() -
     v3 = curation_v3_with_split_leaf(curation)
     v3.validate(sources, production_role_catalog())
 
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_v3_draft",
         target_catalog_version="1.1.0",
         created_at=NOW,
@@ -465,7 +485,7 @@ def test_discovery_source_does_not_inflate_company_or_tier_a_counts() -> None:
     curation_v3 = reviewed_fixture_v3(CurationArtifact.from_dict(curation_data(data)))
     sources, curation = upgrade_for_builder(all_sources, curation_v3)
 
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -481,7 +501,7 @@ def test_unapproved_candidate_does_not_enter_catalog_draft() -> None:
     )
     curation_v3 = reviewed_fixture_v3(CurationArtifact.from_dict(curation_raw))
     _, curation = upgrade_for_builder(data, curation_v3)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -510,7 +530,7 @@ def test_tier_c_cannot_be_the_only_requirement_evidence() -> None:
     curation_raw["clusters"] = [cluster_data([candidate["candidate_id"]])]
     curation_v3 = reviewed_fixture_v3(CurationArtifact.from_dict(curation_raw))
     sources, curation = upgrade_for_builder(all_sources_data, curation_v3)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -520,7 +540,7 @@ def test_tier_c_cannot_be_the_only_requirement_evidence() -> None:
 def test_candidate_outside_selected_sample_is_a_structured_blocker() -> None:
     data, sources, curation, _ = contexts(7)
     samples = tuple(RoleSample(item["source_id"], "applied_ai_engineer") for item in data[:6])
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -530,7 +550,7 @@ def test_candidate_outside_selected_sample_is_a_structured_blocker() -> None:
 
 def test_published_catalog_draft_requires_human_publication_approval() -> None:
     _, sources, curation, samples = contexts(6)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -545,12 +565,19 @@ def test_published_catalog_draft_requires_human_publication_approval() -> None:
         publication_decision_reason="Fixture reviewer approved publication.",
         publication_reviewed_at=NOW,
     )
-    CatalogDraft.from_dict(published).validate(sources, curation, production_role_catalog())
+    assignments, contents = confirmed_assignments(sources)
+    curation_v5 = migrate_curation_v4_to_v5(
+        curation, assignments=assignments, sources=sources,
+        catalog=production_role_catalog(), capture_contents=contents,
+    )
+    CatalogDraft.from_dict(published).validate(
+        sources, curation_v5, production_role_catalog(), assignments, contents
+    )
 
 
 def test_catalog_draft_requires_newer_semantic_version() -> None:
     _, sources, curation, samples = contexts(6)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
@@ -578,7 +605,7 @@ def test_catalog_draft_requires_approved_requirements() -> None:
         CurationArtifact.from_dict(empty_curation_data)
     )
     _, empty_curation = upgrade_for_builder(data, empty_curation_v3)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=empty_curation,
         catalog=production_role_catalog(),
@@ -586,7 +613,7 @@ def test_catalog_draft_requires_approved_requirements() -> None:
     assert result.draft is None
     assert BuildBlockerCode.NO_APPROVED_EVIDENCE in {item.code for item in result.blockers}
 
-    valid = build_catalog_draft(
+    valid = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources,
         curation=curation,
@@ -601,51 +628,64 @@ def test_catalog_draft_requires_approved_requirements() -> None:
 
 def test_catalog_draft_typed_storage_round_trip_and_context(tmp_path, monkeypatch) -> None:
     data, sources, curation, samples = contexts(6)
-    result = build_catalog_draft(
+    result = build_fixture(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
     assert result.draft is not None
+    assignments, contents = confirmed_assignments(sources)
+    curation_v5 = migrate_curation_v4_to_v5(
+        curation, assignments=assignments, sources=sources,
+        catalog=production_role_catalog(), capture_contents=contents,
+    )
     path = save_catalog_draft(
         result.draft, tmp_path / "draft.json", sources=sources,
-        curation=curation, catalog=production_role_catalog(),
+        curation=curation_v5, catalog=production_role_catalog(),
+        assignments=assignments, capture_contents=contents,
     )
     duplicate = save_catalog_draft(
         result.draft, tmp_path / "copy.json", sources=sources,
-        curation=curation, catalog=production_role_catalog(),
+        curation=curation_v5, catalog=production_role_catalog(),
+        assignments=assignments, capture_contents=contents,
     )
     assert load_catalog_draft(
-        path, sources=sources, curation=curation, catalog=production_role_catalog()
+        path, sources=sources, curation=curation_v5, catalog=production_role_catalog(),
+        assignments=assignments, capture_contents=contents,
     ) == result.draft
     assert path.read_bytes() == duplicate.read_bytes()
 
     legacy = CurationArtifact.from_dict(curation_data(data))
-    with pytest.raises(Phase2ValidationError, match="requires a validated Curation schema 4"):
+    with pytest.raises(Phase2ValidationError, match="Curation schema 5"):
         load_catalog_draft(
             path,
             sources=sources,
             curation=legacy,
             catalog=production_role_catalog(),
+            assignments=assignments,
+            capture_contents=contents,
         )
-    with pytest.raises(Phase2ValidationError, match="requires a validated Curation schema 4"):
+    with pytest.raises((Phase2ValidationError, TypeError), match="Curation schema 5|CurationArtifactV5"):
         save_catalog_draft(
             result.draft,
             tmp_path / "legacy-bypass.json",
             sources=sources,
             curation=legacy,
             catalog=production_role_catalog(),
+            assignments=assignments,
+            capture_contents=contents,
         )
 
     tampered = result.draft.to_dict()
     tampered["requirements"][0]["supporting_company_count"] = 0
     with pytest.raises(Phase2ValidationError, match="prevalence|counts do not match evidence"):
-        CatalogDraft.from_dict(tampered).validate(sources, curation, production_role_catalog())
+        CatalogDraft.from_dict(tampered).validate(sources, curation_v5, production_role_catalog(), assignments, contents)
 
     original = path.read_bytes()
     monkeypatch.setattr("aarvia.phase2_storage.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace failed")))
     with pytest.raises(OSError, match="replace failed"):
         save_catalog_draft(
             result.draft, path, sources=sources,
-            curation=curation, catalog=production_role_catalog(),
+            curation=curation_v5, catalog=production_role_catalog(),
+            assignments=assignments, capture_contents=contents,
         )
     assert path.read_bytes() == original

@@ -11,6 +11,55 @@ FAKE_JD = "Build reliable machine learning applications.\nUse Python.\n"
 FAKE_HASH = content_sha256(FAKE_JD)
 
 
+def confirmed_assignments(sources, *, role_id="applied_ai_engineer", specialization_id="agentic_ai"):
+    """Build synthetic human-confirmed assignments and their capture content."""
+    from aarvia.role_assignments import (
+        RoleAssignmentArtifact,
+        RoleEvidenceReference,
+        confirm_initial_role_assignment,
+    )
+    from aarvia.role_catalog import CatalogType, production_role_catalog
+
+    artifact = RoleAssignmentArtifact(
+        artifact_id="fixture_role_assignments",
+        artifact_type=CatalogType.TEST_FIXTURE,
+        source_collection_id=sources.collection_id,
+        catalog_version="1.0.0",
+        created_at=NOW,
+        assignments=(),
+        review_records=(),
+    )
+    contents = {capture.capture_id: FAKE_JD for capture in sources.captures}
+    excerpt = "Build reliable machine learning applications."
+    for item in sources.sources:
+        if item.canonical_job_id is None or item.canonical_source_reference not in {None, item.source_id}:
+            continue
+        capture = sources.matching_captures(item.source_id, FAKE_HASH)[0]
+        evidence = RoleEvidenceReference(
+            source_id=item.source_id,
+            capture_id=capture.capture_id,
+            content_hash=capture.content_hash,
+            start_offset=0,
+            end_offset=len(excerpt),
+            exact_value_snapshot=excerpt,
+        )
+        artifact = confirm_initial_role_assignment(
+            artifact,
+            canonical_job_id=item.canonical_job_id,
+            source_id=item.source_id,
+            role_id=role_id,
+            specialization_id=specialization_id,
+            evidence_references=(evidence,),
+            reviewer_reference="fixture.role_reviewer",
+            reviewed_at=NOW,
+            decision_reason="Fixture human confirmed the Role mapping.",
+            sources=sources,
+            catalog=production_role_catalog(),
+            capture_contents=contents,
+        )
+    return artifact, contents
+
+
 def source_data(
     index: int = 1,
     *,
@@ -94,6 +143,43 @@ def source_collection_data(sources: list[dict]) -> dict:
         "collection_type": "test_fixture",
         "created_at": NOW,
         "sources": sources,
+    }
+
+
+def live_v2_data(source: dict) -> dict:
+    return {
+        "schema": "aarvia.live_jobs",
+        "schema_version": 2,
+        "collection_id": "fixture_live_jobs_v2",
+        "catalog_version": "1.0.0",
+        "collection_type": "test_fixture",
+        "source_collection_id": "fixture_source_collection",
+        "captured_at": NOW,
+        "jobs": [{
+            "job_id": source["canonical_job_id"],
+            "canonical_job_id": source["canonical_job_id"],
+            "canonical_source_reference": source["source_id"],
+            "discovery_source_references": [],
+            "company_id": source["company_id"],
+            "company": source["company_display_name"],
+            "exact_job_title": source["exact_job_title"],
+            "job_url": source["source_url"],
+            "application_url": source["application_url"],
+            "application_url_status": "verified_active",
+            "application_url_last_verified_at": source["last_verified_at"],
+            "application_url_source_reference": source["source_id"],
+            "location": source["location"],
+            "employment_type": "internship",
+            "posting_date": None,
+            "expiration_date": None,
+            "last_verified_at": source["last_verified_at"],
+            "listing_status": "verified_official_open",
+            "mapped_role_id": "applied_ai_engineer",
+            "mapped_specialization_id": "agentic_ai",
+            "eligibility_status": "unknown",
+            "preliminary_match_status": "not_analyzed",
+            "structured_jd_requirements": [],
+        }],
     }
 
 

@@ -8,7 +8,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.6.4 — 不可变 JD capture/revision 契约已完成。**
+**版本 0.6.5 — 可审计 Role Assignment 契约基础已完成。**
 
 - ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
 - ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
@@ -17,6 +17,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 - ✅ 面向美国 early-career 证据的版本化逻辑来源与不可变 JD capture
 - ✅ Tier A/B/C provenance、canonical dedup、人工 curation 与 prevalence 基础
 - ✅ Requirement Candidate 的 approve、reject、revise、split 可机读 lineage
+- ✅ 每个 canonical job 的 Role Family 以人工确认的 Role Assignment 为唯一权威来源
 - ⏳ 有来源的 Role Requirements、推荐、Gap 和真实岗位尚未实现
 
 当前 production Catalog 故意保持 **0 条 requirement、0 个 source**。它是一套带护栏的 taxonomy，不是一件塞满虚构就业市场知识的风衣。🕵️
@@ -140,8 +141,12 @@ Phase 2B 开始排名前，Aarvia 仍需建立一份经过审查、由真实官�
 - Live Job schema 3 将 listing 与申请链接验证分别绑定到明确 capture。新增 capture 不会自动改写旧 Job artifact。
 - Curation schema 4 要求每个 Candidate 明确引用 source、capture、hash 和 evidence locator。revise/split successor 必须继承 capture，除非未来另行设计显式 rebase。
 - Source v2、Live Job v1/v2 与 Curation v2/v3 继续显式可读。迁移必须主动调用，不会虚构完整 capture；hash 匹配不唯一时会安全阻断。
-- Catalog draft 只消费 schema 4 approved leaf；同一公司的多个 capture、Candidate 或 split 证据仍只计一个公司样本。
+- Role Assignment schema 1 记录人工确认的初始映射与重新分类，包含精确 capture 证据、确定性 lineage、审核人、时间和理由。
+- Live Job schema 4 与 Curation schema 5 仅将兼容 Role 字段作为 current Assignment 的受验证 projection；旧 schema 仍显式可读。
+- Reclassification 会整体更新 Assignment、Live Job 与 Curation。仅未审核 Candidate 和单岗位 proposed Cluster 可安全自动处理；已有审核、lineage、confirmed/rejected Cluster 或 mixed-job Cluster 会结构化阻断。
+- Catalog draft 只消费与 confirmed Assignment 一致的 schema 5 approved leaf。同一 canonical job 不能进入两个 Role Family，多个 capture 或 Candidate 也不能扩大公司样本数。
 - 完整 JD 与 Pilot artifact 只能保存在被忽略的 `local_data/`；本次契约修复不会修改它们。
+- 真实 Pilot 中待重新分类的岗位尚未迁移；Clause Coverage 与样本计数只能在另行批准的本地迁移后重新生成。
 - Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。包含推荐用户能力的完整 Phase 2B 才会升级为项目版本 `0.7.0`。
 
 ## 设计原则

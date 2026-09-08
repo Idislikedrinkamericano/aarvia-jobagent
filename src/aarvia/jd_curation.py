@@ -30,9 +30,11 @@ CURATION_SCHEMA = "aarvia.jd_curation"
 CURATION_SCHEMA_VERSION = 2
 CURATION_SCHEMA_V3_VERSION = 3
 CURATION_SCHEMA_V4_VERSION = 4
+CURATION_SCHEMA_V5_VERSION = 5
 CANDIDATE_ID_VERSION = "requirement-candidate-v1"
 CANDIDATE_V4_ID_VERSION = "requirement-candidate-v2"
 REVIEW_ID_VERSION = "candidate-review-v1"
+CLUSTER_V5_ID_VERSION = "requirement-cluster-v1"
 
 
 class CandidateLifecycleStatus(str, Enum):
@@ -1167,6 +1169,293 @@ class CurationArtifactV4:
         }
 
 
+@dataclass(frozen=True, eq=True)
+class RequirementCandidateV5(RequirementCandidateV4):
+    role_assignment_reference: str = ""
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any], path: str = "candidate"
+    ) -> RequirementCandidateV5:
+        data = _mapping(value, path)
+        assignment_reference = _stable_id(
+            data.get("role_assignment_reference"),
+            f"{path}.role_assignment_reference",
+        )
+        legacy = dict(data)
+        legacy.pop("role_assignment_reference", None)
+        base = RequirementCandidateV4.from_dict(legacy, path)
+        return cls(**base.__dict__, role_assignment_reference=assignment_reference)
+
+    def _legacy_view(self) -> RequirementCandidateV4:
+        return RequirementCandidateV4(
+            **{
+                field: getattr(self, field)
+                for field in RequirementCandidateV4.__dataclass_fields__
+            }
+        )
+
+    def validate(
+        self,
+        sources: JDSourceCollectionV3,
+        catalog: RoleCatalog,
+        assignments: "RoleAssignmentArtifact",
+    ) -> None:
+        if RequirementCandidateV5.from_dict(self.to_dict(), f"candidate {self.candidate_id}") != self:
+            raise Phase2ValidationError(f"candidate {self.candidate_id} is not canonical")
+        self._legacy_view().validate(sources, catalog)
+        assignment = assignments.current_for_source(self.source_id, sources)
+        if self.role_assignment_reference != assignment.assignment_id:
+            raise Phase2ValidationError(
+                f"candidate {self.candidate_id} does not reference its current Role Assignment"
+            )
+        if (
+            self.mapped_role_id != assignment.role_id
+            or self.mapped_specialization_id != assignment.specialization_id
+        ):
+            raise Phase2ValidationError(
+                f"candidate {self.candidate_id} Role projection does not match current assignment"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = self._legacy_view().to_dict()
+        result["role_assignment_reference"] = self.role_assignment_reference
+        return result
+
+
+def generate_cluster_v5_id(
+    *,
+    normalized_name: str,
+    role_id: str,
+    specialization_id: str | None,
+    category: RequirementCategory,
+    role_assignment_references: Sequence[str],
+) -> str:
+    assignments = tuple(sorted(_stable_id(item, "role_assignment_reference") for item in role_assignment_references))
+    identity = "|".join(
+        (
+            CLUSTER_V5_ID_VERSION,
+            _text(normalized_name, "normalized_name").casefold(),
+            _stable_id(role_id, "role_id"),
+            "" if specialization_id is None else _stable_id(specialization_id, "specialization_id"),
+            category.value,
+            *assignments,
+        )
+    )
+    return f"cluster_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+
+
+@dataclass(frozen=True, eq=True)
+class RequirementClusterV5(RequirementCluster):
+    role_assignment_references: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any], path: str = "cluster"
+    ) -> RequirementClusterV5:
+        data = _mapping(value, path)
+        raw_assignments = data.get("role_assignment_references")
+        if not isinstance(raw_assignments, list) or not raw_assignments:
+            raise Phase2ValidationError(
+                f"{path}.role_assignment_references must be a non-empty list"
+            )
+        legacy = dict(data)
+        legacy.pop("role_assignment_references", None)
+        base = RequirementCluster.from_dict(legacy, path)
+        assignments = tuple(
+            _stable_id(item, f"{path}.role_assignment_references")
+            for item in raw_assignments
+        )
+        if assignments != tuple(sorted(set(assignments))):
+            raise Phase2ValidationError(
+                f"{path}.role_assignment_references must be sorted and unique"
+            )
+        result = cls(**base.__dict__, role_assignment_references=assignments)
+        expected = generate_cluster_v5_id(
+            normalized_name=result.normalized_name,
+            role_id=result.role_id,
+            specialization_id=result.specialization_id,
+            category=result.category,
+            role_assignment_references=result.role_assignment_references,
+        )
+        if result.cluster_id != expected:
+            raise Phase2ValidationError(f"{path}.cluster_id was not generated by Aarvia")
+        return result
+
+    def to_dict(self) -> dict[str, Any]:
+        result = RequirementCluster(**{
+            field: getattr(self, field) for field in RequirementCluster.__dataclass_fields__
+        }).to_dict()
+        result["role_assignment_references"] = list(self.role_assignment_references)
+        return result
+
+
+@dataclass(frozen=True, eq=True)
+class CurationArtifactV5(CurationArtifactV4):
+    candidates: tuple[RequirementCandidateV5, ...]
+    clusters: tuple[RequirementClusterV5, ...]
+    role_assignment_artifact_id: str = ""
+    schema_version: int = CURATION_SCHEMA_V5_VERSION
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> CurationArtifactV5:
+        data = _mapping(value, "curation")
+        _reject_unknown(
+            data,
+            {
+                "schema", "schema_version", "artifact_id", "artifact_type",
+                "source_collection_id", "catalog_version", "created_at",
+                "candidates", "clusters", "review_records",
+                "role_assignment_artifact_id",
+            },
+            "curation",
+        )
+        if data.get("schema") != CURATION_SCHEMA or data.get("schema_version") != CURATION_SCHEMA_V5_VERSION:
+            raise Phase2ValidationError("unsupported Curation schema version")
+        raw_candidates = data.get("candidates")
+        raw_clusters = data.get("clusters")
+        raw_reviews = data.get("review_records")
+        if not isinstance(raw_candidates, list) or not isinstance(raw_clusters, list) or not isinstance(raw_reviews, list):
+            raise Phase2ValidationError("curation candidates, clusters, and review_records must be lists")
+        return cls(
+            artifact_id=_stable_id(data.get("artifact_id"), "curation.artifact_id"),
+            artifact_type=_enum(data.get("artifact_type"), CatalogType, "curation.artifact_type"),
+            source_collection_id=_stable_id(data.get("source_collection_id"), "curation.source_collection_id"),
+            catalog_version=_version(data.get("catalog_version"), "curation.catalog_version"),
+            created_at=_iso_datetime(data.get("created_at"), "curation.created_at"),
+            candidates=tuple(RequirementCandidateV5.from_dict(item, f"curation.candidates[{index}]") for index, item in enumerate(raw_candidates)),
+            clusters=tuple(RequirementClusterV5.from_dict(item, f"curation.clusters[{index}]") for index, item in enumerate(raw_clusters)),
+            review_records=tuple(CandidateReviewRecord.from_dict(item, f"curation.review_records[{index}]") for index, item in enumerate(raw_reviews)),
+            role_assignment_artifact_id=_stable_id(data.get("role_assignment_artifact_id"), "curation.role_assignment_artifact_id"),
+        )
+
+    def validate(
+        self,
+        sources: JDSourceCollectionV3,
+        catalog: RoleCatalog,
+        assignments: "RoleAssignmentArtifact",
+    ) -> None:
+        if CurationArtifactV5.from_dict(self.to_dict()) != self:
+            raise Phase2ValidationError("Curation artifact contains non-canonical data")
+        if self.source_collection_id != sources.collection_id or self.source_collection_id != assignments.source_collection_id:
+            raise Phase2ValidationError("Curation artifact references another Source Collection")
+        if self.catalog_version != catalog.catalog_version or self.catalog_version != assignments.catalog_version:
+            raise Phase2ValidationError("Curation artifact Catalog version does not match")
+        if self.role_assignment_artifact_id != assignments.artifact_id:
+            raise Phase2ValidationError("Curation artifact references another Role Assignment artifact")
+        if self.artifact_type == CatalogType.PRODUCTION and any(
+            item.is_test_fixture for item in sources.sources
+        ):
+            raise Phase2ValidationError(
+                "production Curation artifact cannot use test fixtures"
+            )
+        candidate_map = {item.candidate_id: item for item in self.candidates}
+        cluster_map = {item.cluster_id: item for item in self.clusters}
+        review_map = {item.review_id: item for item in self.review_records}
+        if len(candidate_map) != len(self.candidates) or len(cluster_map) != len(self.clusters) or len(review_map) != len(self.review_records):
+            raise Phase2ValidationError("Curation artifact contains duplicate IDs")
+        for candidate in self.candidates:
+            candidate.validate(sources, catalog, assignments)
+            if candidate.cluster_id is not None and candidate.cluster_id not in cluster_map:
+                raise Phase2ValidationError(f"candidate {candidate.candidate_id} references unknown cluster")
+        for cluster in self.clusters:
+            role = catalog.role(cluster.role_id)
+            if cluster.specialization_id is not None and cluster.specialization_id not in {item.specialization_id for item in role.specializations}:
+                raise Phase2ValidationError(f"cluster {cluster.cluster_id} references unknown specialization")
+            members = []
+            for candidate_id in cluster.candidate_ids:
+                candidate = candidate_map.get(candidate_id)
+                if candidate is None or candidate.cluster_id != cluster.cluster_id:
+                    raise Phase2ValidationError(f"cluster {cluster.cluster_id} has inconsistent candidate reference")
+                members.append(candidate)
+            if any(candidate.mapped_role_id != cluster.role_id or candidate.mapped_specialization_id != cluster.specialization_id for candidate in members):
+                raise Phase2ValidationError(f"cluster {cluster.cluster_id} mixes Role Assignments")
+            expected_assignments = tuple(sorted({item.role_assignment_reference for item in members}))
+            if cluster.role_assignment_references != expected_assignments:
+                raise Phase2ValidationError(f"cluster {cluster.cluster_id} Role Assignment references do not match members")
+            if RequirementClusterV5.from_dict(cluster.to_dict(), f"cluster {cluster.cluster_id}") != cluster:
+                raise Phase2ValidationError(f"cluster {cluster.cluster_id} is not canonical")
+        CurationArtifactV3._validate_lineage(self, candidate_map)  # type: ignore[arg-type]
+        for review in self.review_records:
+            parent = candidate_map[review.parent_candidate_id]
+            for successor_id in review.successor_candidate_ids:
+                successor = candidate_map[successor_id]
+                if successor.capture_id != parent.capture_id or successor.role_assignment_reference != parent.role_assignment_reference:
+                    raise Phase2ValidationError(f"review {review.review_id} cannot change capture or Role Assignment provenance")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "schema_version": self.schema_version,
+            "artifact_id": self.artifact_id,
+            "artifact_type": self.artifact_type.value,
+            "source_collection_id": self.source_collection_id,
+            "catalog_version": self.catalog_version,
+            "created_at": self.created_at,
+            "role_assignment_artifact_id": self.role_assignment_artifact_id,
+            "candidates": [item.to_dict() for item in self.candidates],
+            "clusters": [item.to_dict() for item in self.clusters],
+            "review_records": [item.to_dict() for item in self.review_records],
+        }
+
+
+def migrate_curation_v4_to_v5(
+    value: CurationArtifactV4,
+    *,
+    assignments: "RoleAssignmentArtifact",
+    sources: JDSourceCollectionV3,
+    catalog: RoleCatalog,
+    capture_contents: Mapping[str, str],
+) -> CurationArtifactV5:
+    from .role_assignments import RoleAssignmentArtifact
+
+    if not isinstance(value, CurationArtifactV4) or isinstance(value, CurationArtifactV5):
+        raise TypeError("value must be a schema 4 CurationArtifact")
+    if not isinstance(assignments, RoleAssignmentArtifact):
+        raise TypeError("assignments must be a RoleAssignmentArtifact")
+    value.validate(sources, catalog)
+    assignments.validate(sources, catalog, capture_contents)
+    candidates: list[RequirementCandidateV5] = []
+    for candidate in value.candidates:
+        assignment = assignments.current_for_source(candidate.source_id, sources)
+        if candidate.mapped_role_id != assignment.role_id or candidate.mapped_specialization_id != assignment.specialization_id:
+            raise Phase2ValidationError(f"candidate {candidate.candidate_id} legacy Role projection does not match confirmed assignment")
+        candidates.append(RequirementCandidateV5.from_dict({**candidate.to_dict(), "role_assignment_reference": assignment.assignment_id}))
+    candidate_map = {item.candidate_id: item for item in candidates}
+    cluster_ids: dict[str, str] = {}
+    clusters: list[RequirementClusterV5] = []
+    for cluster in value.clusters:
+        members = [candidate_map[item] for item in cluster.candidate_ids]
+        if any(item.mapped_role_id != cluster.role_id or item.mapped_specialization_id != cluster.specialization_id for item in members):
+            raise Phase2ValidationError(f"cluster {cluster.cluster_id} legacy Role projection is inconsistent")
+        assignment_refs = tuple(sorted({item.role_assignment_reference for item in members}))
+        new_id = generate_cluster_v5_id(
+            normalized_name=cluster.normalized_name,
+            role_id=cluster.role_id,
+            specialization_id=cluster.specialization_id,
+            category=cluster.category,
+            role_assignment_references=assignment_refs,
+        )
+        if new_id in cluster_ids.values():
+            raise Phase2ValidationError("Curation migration produced duplicate cluster IDs")
+        cluster_ids[cluster.cluster_id] = new_id
+        clusters.append(RequirementClusterV5.from_dict({**cluster.to_dict(), "cluster_id": new_id, "role_assignment_references": list(assignment_refs)}))
+    migrated_candidates = tuple(replace(item, cluster_id=None if item.cluster_id is None else cluster_ids[item.cluster_id]) for item in candidates)
+    result = CurationArtifactV5(
+        artifact_id=value.artifact_id,
+        artifact_type=value.artifact_type,
+        source_collection_id=value.source_collection_id,
+        catalog_version=value.catalog_version,
+        created_at=value.created_at,
+        candidates=migrated_candidates,
+        clusters=tuple(clusters),
+        review_records=value.review_records,
+        role_assignment_artifact_id=assignments.artifact_id,
+    )
+    result.validate(sources, catalog, assignments)
+    return result
+
+
 def migrate_v3_to_v4(
     value: CurationArtifactV3,
     *,
@@ -1331,7 +1620,7 @@ def _review_record(
 
 
 def _finish_review(
-    artifact: CurationArtifactV3 | CurationArtifactV4,
+    artifact: CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5,
     *,
     parent: RequirementCandidate | RequirementCandidateV4,
     reviewed_parent: RequirementCandidate | RequirementCandidateV4,
@@ -1339,7 +1628,9 @@ def _finish_review(
     review: CandidateReviewRecord,
     sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3 | CurationArtifactV4:
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5:
     candidates = tuple(
         reviewed_parent if item.candidate_id == parent.candidate_id else item
         for item in artifact.candidates
@@ -1349,12 +1640,19 @@ def _finish_review(
         candidates=candidates,
         review_records=(*artifact.review_records, review),
     )
-    result.validate(sources, catalog)
+    if isinstance(result, CurationArtifactV5):
+        from .role_assignments import RoleAssignmentArtifact
+        if not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None or not isinstance(sources, JDSourceCollectionV3):
+            raise Phase2ValidationError("Curation schema 5 review requires Role Assignments and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        result.validate(sources, catalog, assignments)
+    else:
+        result.validate(sources, catalog)
     return result
 
 
 def approve_candidate(
-    artifact: CurationArtifactV3 | CurationArtifactV4,
+    artifact: CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5,
     candidate_id: str,
     *,
     reviewer_reference: str,
@@ -1362,7 +1660,9 @@ def approve_candidate(
     decision_reason: str,
     sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3 | CurationArtifactV4:
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5:
     parent = _reviewable_candidate(artifact, candidate_id)
     if parent.cluster_id is None:
         raise Phase2ValidationError("approved candidate must belong to a proposed cluster")
@@ -1389,11 +1689,13 @@ def approve_candidate(
         review=review,
         sources=sources,
         catalog=catalog,
+        assignments=assignments,
+        capture_contents=capture_contents,
     )
 
 
 def reject_candidate(
-    artifact: CurationArtifactV3 | CurationArtifactV4,
+    artifact: CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5,
     candidate_id: str,
     *,
     reviewer_reference: str,
@@ -1401,7 +1703,9 @@ def reject_candidate(
     decision_reason: str,
     sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3 | CurationArtifactV4:
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5:
     parent = _reviewable_candidate(artifact, candidate_id)
     reviewed_parent = replace(
         parent,
@@ -1426,6 +1730,8 @@ def reject_candidate(
         review=review,
         sources=sources,
         catalog=catalog,
+        assignments=assignments,
+        capture_contents=capture_contents,
     )
 
 
@@ -1458,7 +1764,13 @@ def _successor_candidate(
         if isinstance(parent, RequirementCandidateV4)
         else generate_candidate_id(parent.source_id, evidence, name)
     )
-    candidate_type = RequirementCandidateV4 if isinstance(parent, RequirementCandidateV4) else RequirementCandidate
+    candidate_type = (
+        RequirementCandidateV5
+        if isinstance(parent, RequirementCandidateV5)
+        else RequirementCandidateV4
+        if isinstance(parent, RequirementCandidateV4)
+        else RequirementCandidate
+    )
     kwargs: dict[str, Any] = {
         "candidate_id": candidate_id,
         "source_id": parent.source_id,
@@ -1479,11 +1791,13 @@ def _successor_candidate(
     }
     if isinstance(parent, RequirementCandidateV4):
         kwargs["capture_id"] = parent.capture_id
+    if isinstance(parent, RequirementCandidateV5):
+        kwargs["role_assignment_reference"] = parent.role_assignment_reference
     return candidate_type(**kwargs)
 
 
 def _replace_candidate(
-    artifact: CurationArtifactV3 | CurationArtifactV4,
+    artifact: CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5,
     candidate_id: str,
     revisions: Sequence[CandidateRevision],
     *,
@@ -1493,7 +1807,9 @@ def _replace_candidate(
     decision_reason: str,
     sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3 | CurationArtifactV4:
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5:
     parent = _reviewable_candidate(
         artifact, candidate_id, allow_approved_successor=True
     )
@@ -1534,11 +1850,13 @@ def _replace_candidate(
         review=review,
         sources=sources,
         catalog=catalog,
+        assignments=assignments,
+        capture_contents=capture_contents,
     )
 
 
 def revise_candidate(
-    artifact: CurationArtifactV3 | CurationArtifactV4,
+    artifact: CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5,
     candidate_id: str,
     revision: CandidateRevision,
     *,
@@ -1547,7 +1865,9 @@ def revise_candidate(
     decision_reason: str,
     sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3 | CurationArtifactV4:
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5:
     return _replace_candidate(
         artifact,
         candidate_id,
@@ -1558,11 +1878,13 @@ def revise_candidate(
         decision_reason=decision_reason,
         sources=sources,
         catalog=catalog,
+        assignments=assignments,
+        capture_contents=capture_contents,
     )
 
 
 def split_candidate(
-    artifact: CurationArtifactV3 | CurationArtifactV4,
+    artifact: CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5,
     candidate_id: str,
     revisions: Sequence[CandidateRevision],
     *,
@@ -1571,7 +1893,9 @@ def split_candidate(
     decision_reason: str,
     sources: JDSourceCollection | JDSourceCollectionV3,
     catalog: RoleCatalog,
-) -> CurationArtifactV3 | CurationArtifactV4:
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5:
     if len(revisions) < 2:
         raise Phase2ValidationError("split action requires at least two successors")
     return _replace_candidate(
@@ -1584,20 +1908,41 @@ def split_candidate(
         decision_reason=decision_reason,
         sources=sources,
         catalog=catalog,
+        assignments=assignments,
+        capture_contents=capture_contents,
     )
 
 
-CurationArtifactType = CurationArtifact | CurationArtifactV3 | CurationArtifactV4
+CurationArtifactType = CurationArtifact | CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5
 
 
-def save_curation_artifact(value: CurationArtifactType, path: str | Path, *, sources: JDSourceCollection | JDSourceCollectionV3, catalog: RoleCatalog) -> Path:
-    if not isinstance(value, (CurationArtifact, CurationArtifactV3, CurationArtifactV4)):
+def save_curation_artifact(
+    value: CurationArtifactType,
+    path: str | Path,
+    *,
+    sources: JDSourceCollection | JDSourceCollectionV3,
+    catalog: RoleCatalog,
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> Path:
+    from .role_assignments import RoleAssignmentArtifact
+
+    if not isinstance(value, (CurationArtifact, CurationArtifactV3, CurationArtifactV4, CurationArtifactV5)):
         raise TypeError("value must be a CurationArtifact")
-    if isinstance(value, CurationArtifactV4) != isinstance(sources, JDSourceCollectionV3):
+    if isinstance(value, CurationArtifactV5):
+        if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+            raise Phase2ValidationError("Curation schema 5 requires Source schema 3, Role Assignments, and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        value.validate(sources, catalog, assignments)
+        canonical = CurationArtifactV5.from_dict(value.to_dict())
+    elif isinstance(value, CurationArtifactV4) != isinstance(sources, JDSourceCollectionV3):
         raise Phase2ValidationError("Curation schema 4 requires JD Source schema 3; legacy Curation requires schema 2")
-    value.validate(sources, catalog)
+    else:
+        value.validate(sources, catalog)
     from .phase2_storage import save_phase2_json
-    if isinstance(value, CurationArtifactV4):
+    if isinstance(value, CurationArtifactV5):
+        pass
+    elif isinstance(value, CurationArtifactV4):
         canonical = CurationArtifactV4.from_dict(value.to_dict())
     elif isinstance(value, CurationArtifactV3):
         canonical = CurationArtifactV3.from_dict(value.to_dict())
@@ -1606,8 +1951,16 @@ def save_curation_artifact(value: CurationArtifactType, path: str | Path, *, sou
     return save_phase2_json(canonical.to_dict(), path)
 
 
-def load_curation_artifact(path: str | Path, *, sources: JDSourceCollection | JDSourceCollectionV3, catalog: RoleCatalog) -> CurationArtifactType:
+def load_curation_artifact(
+    path: str | Path,
+    *,
+    sources: JDSourceCollection | JDSourceCollectionV3,
+    catalog: RoleCatalog,
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> CurationArtifactType:
     from .phase2_storage import load_phase2_json
+    from .role_assignments import RoleAssignmentArtifact
     data = _mapping(load_phase2_json(path), "curation")
     schema_version = data.get("schema_version")
     if schema_version == CURATION_SCHEMA_VERSION:
@@ -1616,8 +1969,16 @@ def load_curation_artifact(path: str | Path, *, sources: JDSourceCollection | JD
         value = CurationArtifactV3.from_dict(data)
     elif schema_version == CURATION_SCHEMA_V4_VERSION:
         value = CurationArtifactV4.from_dict(data)
+    elif schema_version == CURATION_SCHEMA_V5_VERSION:
+        value = CurationArtifactV5.from_dict(data)
     else:
         raise Phase2ValidationError("unsupported Curation schema version")
+    if isinstance(value, CurationArtifactV5):
+        if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+            raise Phase2ValidationError("Curation schema 5 requires Source schema 3, Role Assignments, and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        value.validate(sources, catalog, assignments)
+        return value
     if isinstance(value, CurationArtifactV4) != isinstance(sources, JDSourceCollectionV3):
         raise Phase2ValidationError("Curation schema 4 requires JD Source schema 3; legacy Curation requires schema 2")
     value.validate(sources, catalog)

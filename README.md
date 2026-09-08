@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.6.4 — immutable JD capture/revision contract complete.**
+**Version 0.6.5 — auditable Role Assignment contract foundation complete.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -17,6 +17,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 - ✅ Versioned logical sources and immutable JD captures for US early-career evidence
 - ✅ Tier A/B/C provenance, canonical dedup, human curation, and prevalence foundations
 - ✅ Machine-readable approve, reject, revise, and split lineage for requirement candidates
+- ✅ Human-confirmed Role Assignment is the authority for each canonical job's Role Family
 - ⏳ Source-backed Role Requirements, recommendations, gaps, and live jobs are not implemented
 
 The production Catalog deliberately contains **zero requirements and zero sources** today. It is a taxonomy with guardrails, not a trench coat full of invented labor-market facts. 🕵️
@@ -140,8 +141,12 @@ Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Ro
 - Live Job schema 3 binds listing and application-link verification to explicit captures. Adding a capture never rewrites an old job artifact.
 - Curation schema 4 binds every Candidate to one source, capture, hash, and evidence locator. Revise/split successors keep that capture unless a future explicit rebase workflow is designed.
 - Legacy Source v2, Live Job v1/v2, and Curation v2/v3 remain explicitly readable. Migration is opt-in, never invents a complete capture, and ambiguous hash matches stop safely.
-- Catalog drafts consume only schema 4 approved leaves. Multiple captures, Candidates, or split evidence from one company still count as one company sample.
+- Role Assignment schema 1 records human-confirmed initial mappings and reclassifications with exact capture evidence, deterministic lineage, reviewer, time, and reason.
+- Live Job schema 4 and Curation schema 5 keep compatibility Role fields only as validated projections of the current Role Assignment. Their legacy schemas remain explicitly readable.
+- Reclassification is all-or-nothing across Assignment, Live Job, and Curation artifacts. It safely handles unreviewed Candidates and proposed single-job Clusters; reviewed Candidates, lineage, confirmed/rejected Clusters, and mixed-job Clusters block automation.
+- Catalog drafts consume only schema 5 approved leaves whose samples agree with confirmed Assignments. The same canonical job cannot enter two Role Families, and multiple captures or Candidates still cannot inflate company counts.
 - Full JD text and Pilot artifacts belong only under ignored `local_data/`; this contract fix does not modify them.
+- The real Pilot job identified for reclassification has not been migrated. Clause Coverage and sample counts must be regenerated only after a separately approved local migration.
 - The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Phase 2B completion, including recommendation behavior, will use project version `0.7.0`.
 
 ## Design Principles

@@ -1162,6 +1162,188 @@ class LiveJobCollectionV3:
         }
 
 
+@dataclass(frozen=True, eq=True)
+class LiveJobV4(LiveJobV3):
+    """Live Job whose Role fields are projections of a confirmed assignment."""
+
+    role_assignment_reference: str = ""
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any], path: str = "job") -> LiveJobV4:
+        data = _mapping(value, path)
+        role_assignment_reference = _stable_id(
+            data.get("role_assignment_reference"),
+            f"{path}.role_assignment_reference",
+        )
+        legacy = dict(data)
+        legacy.pop("role_assignment_reference", None)
+        base = LiveJobV3.from_dict(legacy, path)
+        return cls(**base.__dict__, role_assignment_reference=role_assignment_reference)
+
+    def validate(
+        self,
+        sources: JDSourceCollectionV3,
+        catalog: RoleCatalog,
+        assignments: "RoleAssignmentArtifact",
+    ) -> None:
+        if LiveJobV4.from_dict(self.to_dict(), f"job {self.job_id}") != self:
+            raise Phase2ValidationError(f"job {self.job_id} contains non-canonical data")
+        self._legacy_view_v3().validate(sources, catalog)
+        assignment = assignments.current_for_job(self.canonical_job_id)
+        if self.role_assignment_reference != assignment.assignment_id:
+            raise Phase2ValidationError(
+                f"job {self.job_id} does not reference its current Role Assignment"
+            )
+        if assignment.source_id != self.canonical_source_reference:
+            raise Phase2ValidationError(
+                f"job {self.job_id} Role Assignment uses another source"
+            )
+        if (
+            self.mapped_role_id != assignment.role_id
+            or self.mapped_specialization_id != assignment.specialization_id
+        ):
+            raise Phase2ValidationError(
+                f"job {self.job_id} Role projection does not match current assignment"
+            )
+
+    def _legacy_view_v3(self) -> LiveJobV3:
+        return LiveJobV3(
+            **{field: getattr(self, field) for field in LiveJobV3.__dataclass_fields__}
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = self._legacy_view_v3().to_dict()
+        result["role_assignment_reference"] = self.role_assignment_reference
+        return result
+
+
+@dataclass(frozen=True, eq=True)
+class LiveJobCollectionV4(LiveJobCollectionV3):
+    jobs: tuple[LiveJobV4, ...]
+    role_assignment_artifact_id: str = ""
+    schema_version: int = 4
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> LiveJobCollectionV4:
+        data = _mapping(value, "live_jobs")
+        _reject_unknown(
+            data,
+            {
+                "schema", "schema_version", "collection_id", "catalog_version",
+                "collection_type", "source_collection_id", "captured_at", "jobs",
+                "role_assignment_artifact_id",
+            },
+            "live_jobs",
+        )
+        if data.get("schema") != "aarvia.live_jobs" or data.get("schema_version") != 4:
+            raise Phase2ValidationError("unsupported Live Job schema version")
+        raw_jobs = data.get("jobs")
+        if not isinstance(raw_jobs, list):
+            raise Phase2ValidationError("live_jobs.jobs must be a list")
+        result = cls(
+            collection_id=_stable_id(data.get("collection_id"), "live_jobs.collection_id"),
+            catalog_version=_version(data.get("catalog_version"), "live_jobs.catalog_version"),
+            collection_type=_enum(data.get("collection_type"), CatalogType, "live_jobs.collection_type"),
+            source_collection_id=_stable_id(data.get("source_collection_id"), "live_jobs.source_collection_id"),
+            captured_at=_iso_datetime(data.get("captured_at"), "live_jobs.captured_at"),
+            jobs=tuple(LiveJobV4.from_dict(item, f"live_jobs.jobs[{index}]") for index, item in enumerate(raw_jobs)),
+            role_assignment_artifact_id=_stable_id(data.get("role_assignment_artifact_id"), "live_jobs.role_assignment_artifact_id"),
+        )
+        if len({item.job_id for item in result.jobs}) != len(result.jobs):
+            raise Phase2ValidationError("Live Job collection contains duplicate job IDs")
+        return result
+
+    def validate(
+        self,
+        catalog: RoleCatalog,
+        sources: JDSourceCollectionV3,
+        assignments: "RoleAssignmentArtifact",
+    ) -> None:
+        if LiveJobCollectionV4.from_dict(self.to_dict()) != self:
+            raise Phase2ValidationError("Live Job collection contains non-canonical data")
+        if self.role_assignment_artifact_id != assignments.artifact_id:
+            raise Phase2ValidationError("Live Job collection references another Role Assignment artifact")
+        if self.source_collection_id != sources.collection_id:
+            raise Phase2ValidationError("Live Job collection references another Source Collection")
+        if self.catalog_version != catalog.catalog_version:
+            raise Phase2ValidationError("Live Job collection catalog version does not match Role Catalog")
+        if self.collection_type == CatalogType.PRODUCTION and any(
+            item.is_test_fixture for item in sources.sources
+        ):
+            raise Phase2ValidationError(
+                "production Live Job collection cannot use test fixtures"
+            )
+        collection_time = datetime.fromisoformat(self.captured_at.replace("Z", "+00:00"))
+        for job in self.jobs:
+            job.validate(sources, catalog, assignments)
+            for capture_id in (
+                job.listing_verification_capture_reference,
+                job.application_verification_capture_reference,
+            ):
+                if capture_id is not None and datetime.fromisoformat(sources.capture(capture_id).captured_at.replace("Z", "+00:00")) > collection_time:
+                    raise Phase2ValidationError(f"job {job.job_id} capture cannot follow collection capture")
+            for timestamp in (job.last_verified_at, job.application_url_last_verified_at):
+                if timestamp is not None and datetime.fromisoformat(timestamp.replace("Z", "+00:00")) > collection_time:
+                    raise Phase2ValidationError(f"job {job.job_id} verification cannot follow collection capture")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "schema_version": self.schema_version,
+            "collection_id": self.collection_id,
+            "catalog_version": self.catalog_version,
+            "collection_type": self.collection_type.value,
+            "source_collection_id": self.source_collection_id,
+            "captured_at": self.captured_at,
+            "role_assignment_artifact_id": self.role_assignment_artifact_id,
+            "jobs": [item.to_dict() for item in self.jobs],
+        }
+
+
+def migrate_live_jobs_v3_to_v4(
+    value: LiveJobCollectionV3,
+    *,
+    assignments: "RoleAssignmentArtifact",
+    sources: JDSourceCollectionV3,
+    catalog: RoleCatalog,
+    capture_contents: Mapping[str, str],
+) -> LiveJobCollectionV4:
+    from .role_assignments import RoleAssignmentArtifact
+
+    if not isinstance(value, LiveJobCollectionV3) or isinstance(value, LiveJobCollectionV4):
+        raise TypeError("value must be a schema 3 LiveJobCollection")
+    if not isinstance(assignments, RoleAssignmentArtifact):
+        raise TypeError("assignments must be a RoleAssignmentArtifact")
+    value.validate(catalog, sources)
+    assignments.validate(sources, catalog, capture_contents)
+    jobs: list[LiveJobV4] = []
+    for job in value.jobs:
+        assignment = assignments.current_for_job(job.canonical_job_id)
+        if (
+            job.mapped_role_id != assignment.role_id
+            or job.mapped_specialization_id != assignment.specialization_id
+        ):
+            raise Phase2ValidationError(
+                f"job {job.job_id} legacy Role projection does not match confirmed assignment"
+            )
+        jobs.append(
+            LiveJobV4.from_dict(
+                {**job.to_dict(), "role_assignment_reference": assignment.assignment_id}
+            )
+        )
+    result = LiveJobCollectionV4(
+        collection_id=value.collection_id,
+        catalog_version=value.catalog_version,
+        collection_type=value.collection_type,
+        source_collection_id=value.source_collection_id,
+        captured_at=value.captured_at,
+        jobs=tuple(jobs),
+        role_assignment_artifact_id=assignments.artifact_id,
+    )
+    result.validate(catalog, sources, assignments)
+    return result
+
+
 def _unique_migration_capture(
     *,
     sources: JDSourceCollectionV3,
@@ -1268,6 +1450,8 @@ class LiveJobCollection:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> LiveJobCollection:
         data = _mapping(value, "live_jobs")
+        if data.get("schema_version") == 4:
+            return LiveJobCollectionV4.from_dict(data)  # type: ignore[return-value]
         if data.get("schema_version") == 3:
             return LiveJobCollectionV3.from_dict(data)  # type: ignore[return-value]
         if data.get("schema_version") == 2:
@@ -1336,15 +1520,25 @@ class LiveJobCollection:
 
 
 def save_live_job_collection(
-    value: LiveJobCollection | LiveJobCollectionV2 | LiveJobCollectionV3,
+    value: LiveJobCollection | LiveJobCollectionV2 | LiveJobCollectionV3 | LiveJobCollectionV4,
     path: str | Path,
     *,
     catalog: RoleCatalog,
     sources: JDSourceCollection | JDSourceCollectionV3 | None = None,
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
 ) -> Path:
-    if not isinstance(value, (LiveJobCollection, LiveJobCollectionV2, LiveJobCollectionV3)):
+    from .role_assignments import RoleAssignmentArtifact
+
+    if not isinstance(value, (LiveJobCollection, LiveJobCollectionV2, LiveJobCollectionV3, LiveJobCollectionV4)):
         raise TypeError("value must be a LiveJobCollection")
-    if isinstance(value, LiveJobCollectionV3):
+    if isinstance(value, LiveJobCollectionV4):
+        if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+            raise Phase2ValidationError("Live Job schema 4 requires Source schema 3, Role Assignments, and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        value.validate(catalog, sources, assignments)
+        canonical = LiveJobCollectionV4.from_dict(value.to_dict())
+    elif isinstance(value, LiveJobCollectionV3):
         if not isinstance(sources, JDSourceCollectionV3):
             raise Phase2ValidationError("Live Job schema 3 requires JD Source schema 3")
         value.validate(catalog, sources)
@@ -1367,11 +1561,19 @@ def load_live_job_collection(
     *,
     catalog: RoleCatalog,
     sources: JDSourceCollection | JDSourceCollectionV3 | None = None,
-) -> LiveJobCollection | LiveJobCollectionV2 | LiveJobCollectionV3:
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
+) -> LiveJobCollection | LiveJobCollectionV2 | LiveJobCollectionV3 | LiveJobCollectionV4:
     from .phase2_storage import load_phase2_json
+    from .role_assignments import RoleAssignmentArtifact
 
     value = LiveJobCollection.from_dict(load_phase2_json(path))
-    if isinstance(value, LiveJobCollectionV3):
+    if isinstance(value, LiveJobCollectionV4):
+        if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+            raise Phase2ValidationError("Live Job schema 4 requires Source schema 3, Role Assignments, and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        value.validate(catalog, sources, assignments)
+    elif isinstance(value, LiveJobCollectionV3):
         if not isinstance(sources, JDSourceCollectionV3):
             raise Phase2ValidationError("Live Job schema 3 requires JD Source schema 3")
         value.validate(catalog, sources)

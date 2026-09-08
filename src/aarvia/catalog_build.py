@@ -15,6 +15,7 @@ from .jd_curation import (
     CurationArtifact,
     CurationArtifactV3,
     CurationArtifactV4,
+    CurationArtifactV5,
     RequirementCandidate,
     ReviewerDecision,
 )
@@ -66,6 +67,9 @@ class BuildBlockerCode(str, Enum):
     TIER_C_ONLY_EVIDENCE = "tier_c_only_evidence"
     UNAPPROVED_CANDIDATE = "unapproved_candidate"
     UNCONFIRMED_CLUSTER = "unconfirmed_cluster"
+    ROLE_ASSIGNMENT_REQUIRED = "role_assignment_required"
+    ROLE_SAMPLE_MISMATCH = "role_sample_mismatch"
+    DUPLICATE_CANONICAL_JOB = "duplicate_canonical_job"
 
 
 @dataclass(frozen=True, eq=True)
@@ -294,15 +298,17 @@ class CatalogDraft:
     def validate(
         self,
         sources: JDSourceCollectionV3,
-        curation: CurationArtifactV4,
+        curation: CurationArtifactV5,
         catalog: RoleCatalog,
+        assignments: "RoleAssignmentArtifact",
+        capture_contents: Mapping[str, str],
     ) -> None:
         canonical = CatalogDraft.from_dict(self.to_dict())
         if canonical != self:
             raise Phase2ValidationError("Catalog Draft contains non-canonical data")
-        if not isinstance(curation, CurationArtifactV4):
+        if not isinstance(curation, CurationArtifactV5):
             raise Phase2ValidationError(
-                "Catalog Draft requires a validated Curation schema 4 artifact"
+                "Catalog Draft requires a validated Curation schema 5 artifact"
             )
         if not isinstance(sources, JDSourceCollectionV3):
             raise Phase2ValidationError(
@@ -312,7 +318,8 @@ class CatalogDraft:
             raise Phase2ValidationError("Catalog Draft base version does not match Catalog")
         if self.source_collection_id != sources.collection_id or self.curation_artifact_id != curation.artifact_id:
             raise Phase2ValidationError("Catalog Draft context references do not match")
-        curation.validate(sources, catalog)
+        assignments.validate(sources, catalog, capture_contents)
+        curation.validate(sources, catalog, assignments)
         candidate_map = {item.candidate_id: item for item in curation.candidates}
         cluster_map = {item.cluster_id: item for item in curation.clusters}
         source_ids = {item.source_id for item in sources.sources}
@@ -321,6 +328,7 @@ class CatalogDraft:
             raise Phase2ValidationError("Catalog Draft contains duplicate requirement IDs")
         samples_by_role: dict[str, list[JDSource]] = {}
         seen_company_role: set[tuple[str, str]] = set()
+        seen_canonical_jobs: set[str] = set()
         for sample in self.samples:
             source = sources.source(sample.source_id)
             catalog.role(sample.role_id)
@@ -328,6 +336,12 @@ class CatalogDraft:
                 raise Phase2ValidationError("Catalog Draft sample must be a verified Tier A or Tier B job posting")
             if source.canonical_job_id is None or source.canonical_source_reference not in {None, source.source_id}:
                 raise Phase2ValidationError("Catalog Draft sample must use its canonical source")
+            if source.canonical_job_id in seen_canonical_jobs:
+                raise Phase2ValidationError("Catalog Draft contains duplicate canonical job sample")
+            seen_canonical_jobs.add(source.canonical_job_id)
+            assignment = assignments.current_for_job(source.canonical_job_id)
+            if assignment.source_id != source.source_id or assignment.role_id != sample.role_id:
+                raise Phase2ValidationError("Catalog Draft sample does not match current Role Assignment")
             company_role = (source.company_id, sample.role_id)
             if company_role in seen_company_role:
                 raise Phase2ValidationError("Catalog Draft contains duplicate company sample")
@@ -427,32 +441,47 @@ def build_catalog_draft(
     created_at: str,
     samples: Iterable[RoleSample],
     sources: JDSourceCollectionV3,
-    curation: CurationArtifact | CurationArtifactV3 | CurationArtifactV4,
+    curation: CurationArtifact | CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5,
     catalog: RoleCatalog,
+    assignments: "RoleAssignmentArtifact | None" = None,
+    capture_contents: Mapping[str, str] | None = None,
 ) -> CatalogBuildResult:
+    from .role_assignments import RoleAssignmentArtifact
+
     sources.validate()
-    if not isinstance(curation, CurationArtifactV4):
+    if not isinstance(curation, CurationArtifactV5):
         return CatalogBuildResult(
             None,
             (
                 BuildBlocker(
                     BuildBlockerCode.CURATION_SCHEMA_UPGRADE_REQUIRED,
-                    "Catalog building requires Curation schema 4 capture and review provenance",
+                    "Catalog building requires Curation schema 5 Role Assignment provenance",
                     (curation.artifact_id, f"schema_version={curation.schema_version}"),
                 ),
             ),
+        )
+    if not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+        return CatalogBuildResult(
+            None,
+            (BuildBlocker(
+                BuildBlockerCode.ROLE_ASSIGNMENT_REQUIRED,
+                "Catalog building requires validated Role Assignments and capture content",
+                (curation.artifact_id,),
+            ),),
         )
     if not isinstance(sources, JDSourceCollectionV3):
         raise Phase2ValidationError(
             "Catalog building requires JD Source schema 3 capture provenance"
         )
-    curation.validate(sources, catalog)
+    assignments.validate(sources, catalog, capture_contents)
+    curation.validate(sources, catalog, assignments)
     sample_items = tuple(samples)
     blockers: list[BuildBlocker] = []
     if not sample_items:
         blockers.append(BuildBlocker(BuildBlockerCode.NO_SAMPLES, "Catalog draft requires verified job samples"))
     by_role: dict[str, list[tuple[RoleSample, JDSource]]] = {}
     seen_company_role: set[tuple[str, str]] = set()
+    seen_canonical_jobs: set[str] = set()
     for sample in sample_items:
         source = sources.source(sample.source_id)
         catalog.role(sample.role_id)
@@ -465,6 +494,22 @@ def build_catalog_draft(
             continue
         if source.canonical_job_id is None or source.canonical_source_reference not in {None, source.source_id}:
             blockers.append(BuildBlocker(BuildBlockerCode.NON_CANONICAL_SAMPLE, "sample must use its canonical source", (sample.source_id,)))
+            continue
+        if source.canonical_job_id in seen_canonical_jobs:
+            blockers.append(BuildBlocker(
+                BuildBlockerCode.DUPLICATE_CANONICAL_JOB,
+                "one canonical job may appear only once in a Catalog sample",
+                (source.canonical_job_id,),
+            ))
+            continue
+        seen_canonical_jobs.add(source.canonical_job_id)
+        assignment = assignments.current_for_job(source.canonical_job_id)
+        if assignment.source_id != source.source_id or assignment.role_id != sample.role_id:
+            blockers.append(BuildBlocker(
+                BuildBlockerCode.ROLE_SAMPLE_MISMATCH,
+                "sample Role must match its current confirmed Role Assignment",
+                (sample.source_id, sample.role_id, assignment.assignment_id),
+            ))
             continue
         company_key = (source.company_id, sample.role_id)
         if company_key in seen_company_role:
@@ -570,18 +615,18 @@ def build_catalog_draft(
         samples=sample_items,
         requirements=tuple(sorted(requirements, key=lambda item: item.requirement_id)),
     )
-    draft.validate(sources, curation, catalog)
+    draft.validate(sources, curation, catalog, assignments, capture_contents)
     return CatalogBuildResult(draft, ())
 
 
-def save_catalog_draft(value: CatalogDraft, path: str | Path, *, sources: JDSourceCollectionV3, curation: CurationArtifactV4, catalog: RoleCatalog) -> Path:
-    value.validate(sources, curation, catalog)
+def save_catalog_draft(value: CatalogDraft, path: str | Path, *, sources: JDSourceCollectionV3, curation: CurationArtifactV5, catalog: RoleCatalog, assignments: "RoleAssignmentArtifact", capture_contents: Mapping[str, str]) -> Path:
+    value.validate(sources, curation, catalog, assignments, capture_contents)
     from .phase2_storage import save_phase2_json
     return save_phase2_json(CatalogDraft.from_dict(value.to_dict()).to_dict(), path)
 
 
-def load_catalog_draft(path: str | Path, *, sources: JDSourceCollectionV3, curation: CurationArtifactV4, catalog: RoleCatalog) -> CatalogDraft:
+def load_catalog_draft(path: str | Path, *, sources: JDSourceCollectionV3, curation: CurationArtifactV5, catalog: RoleCatalog, assignments: "RoleAssignmentArtifact", capture_contents: Mapping[str, str]) -> CatalogDraft:
     from .phase2_storage import load_phase2_json
     value = CatalogDraft.from_dict(load_phase2_json(path))
-    value.validate(sources, curation, catalog)
+    value.validate(sources, curation, catalog, assignments, capture_contents)
     return value
