@@ -10,6 +10,12 @@ import re
 from typing import Any, Mapping, Sequence
 
 from .jd_sources import JDSourceCollection, JDSourceCollectionV3
+from .jd_sources import content_sha256, normalize_jd_content
+from .requirement_logic import (
+    RequirementLogicOperator,
+    RequirementModality,
+    canonical_logic_members,
+)
 from .role_catalog import (
     CatalogType,
     Phase2ValidationError,
@@ -31,10 +37,13 @@ CURATION_SCHEMA_VERSION = 2
 CURATION_SCHEMA_V3_VERSION = 3
 CURATION_SCHEMA_V4_VERSION = 4
 CURATION_SCHEMA_V5_VERSION = 5
+CURATION_SCHEMA_V6_VERSION = 6
 CANDIDATE_ID_VERSION = "requirement-candidate-v1"
 CANDIDATE_V4_ID_VERSION = "requirement-candidate-v2"
 REVIEW_ID_VERSION = "candidate-review-v1"
 CLUSTER_V5_ID_VERSION = "requirement-cluster-v1"
+LOGIC_GROUP_ID_VERSION = "candidate-logic-group-v1"
+LOGIC_GROUP_REVIEW_ID_VERSION = "candidate-logic-group-review-v1"
 
 
 class CandidateLifecycleStatus(str, Enum):
@@ -64,6 +73,17 @@ class CandidateReviewAction(str, Enum):
     REJECT = "reject"
     REVISE = "revise"
     SPLIT = "split"
+
+
+class CandidateLogicGroupStatus(str, Enum):
+    PROPOSED = "proposed"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
+class CandidateLogicGroupReviewAction(str, Enum):
+    CONFIRM = "confirm"
+    REJECT = "reject"
 
 
 @dataclass(frozen=True, eq=True)
@@ -1399,6 +1419,726 @@ class CurationArtifactV5(CurationArtifactV4):
         }
 
 
+def generate_candidate_logic_group_id(
+    *,
+    operator: RequirementLogicOperator,
+    member_candidate_references: Sequence[str],
+    source_reference: str,
+    capture_reference: str,
+    source_content_hash: str,
+    evidence_start: int,
+    evidence_end: int,
+    role_assignment_reference: str,
+    modality: RequirementModality,
+) -> str:
+    if not isinstance(operator, RequirementLogicOperator):
+        raise Phase2ValidationError("operator must be a RequirementLogicOperator")
+    if not isinstance(modality, RequirementModality):
+        raise Phase2ValidationError("modality must be a RequirementModality")
+    members = canonical_logic_members(member_candidate_references)
+    start = evidence_start
+    end = evidence_end
+    if not isinstance(start, int) or isinstance(start, bool) or start < 0:
+        raise Phase2ValidationError("evidence_start must be a non-negative integer")
+    if not isinstance(end, int) or isinstance(end, bool) or end <= start:
+        raise Phase2ValidationError("evidence_end must follow evidence_start")
+    identity = "|".join(
+        (
+            LOGIC_GROUP_ID_VERSION,
+            operator.value,
+            *members,
+            _stable_id(source_reference, "source_reference"),
+            _stable_id(capture_reference, "capture_reference"),
+            _text(source_content_hash, "source_content_hash"),
+            str(start),
+            str(end),
+            _stable_id(role_assignment_reference, "role_assignment_reference"),
+            modality.value,
+        )
+    )
+    return f"logic_group_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+
+
+@dataclass(frozen=True, eq=True)
+class CandidateLogicGroup:
+    logic_group_id: str
+    operator: RequirementLogicOperator
+    member_candidate_references: tuple[str, ...]
+    source_reference: str
+    capture_reference: str
+    source_content_hash: str
+    role_assignment_reference: str
+    mapped_role_id: str
+    mapped_specialization_id: str | None
+    evidence: EvidenceLocator
+    modality: RequirementModality
+    status: CandidateLogicGroupStatus
+
+    @classmethod
+    def create_proposed(
+        cls,
+        *,
+        operator: RequirementLogicOperator,
+        member_candidate_references: Sequence[str],
+        source_reference: str,
+        capture_reference: str,
+        source_content_hash: str,
+        role_assignment_reference: str,
+        mapped_role_id: str,
+        mapped_specialization_id: str | None,
+        evidence: EvidenceLocator,
+        modality: RequirementModality,
+    ) -> CandidateLogicGroup:
+        if not isinstance(operator, RequirementLogicOperator):
+            raise Phase2ValidationError("operator must be a RequirementLogicOperator")
+        if not isinstance(evidence, EvidenceLocator):
+            raise Phase2ValidationError("evidence must be an EvidenceLocator")
+        if not isinstance(modality, RequirementModality):
+            raise Phase2ValidationError("modality must be a RequirementModality")
+        members = canonical_logic_members(member_candidate_references)
+        if evidence.start_offset is None or evidence.end_offset is None:
+            raise Phase2ValidationError("logic group evidence requires explicit offsets")
+        return cls(
+            logic_group_id=generate_candidate_logic_group_id(
+                operator=operator,
+                member_candidate_references=members,
+                source_reference=source_reference,
+                capture_reference=capture_reference,
+                source_content_hash=source_content_hash,
+                evidence_start=evidence.start_offset,
+                evidence_end=evidence.end_offset,
+                role_assignment_reference=role_assignment_reference,
+                modality=modality,
+            ),
+            operator=operator,
+            member_candidate_references=members,
+            source_reference=_stable_id(source_reference, "source_reference"),
+            capture_reference=_stable_id(capture_reference, "capture_reference"),
+            source_content_hash=_text(source_content_hash, "source_content_hash"),
+            role_assignment_reference=_stable_id(
+                role_assignment_reference, "role_assignment_reference"
+            ),
+            mapped_role_id=_stable_id(mapped_role_id, "mapped_role_id"),
+            mapped_specialization_id=(
+                None
+                if mapped_specialization_id is None
+                else _stable_id(mapped_specialization_id, "mapped_specialization_id")
+            ),
+            evidence=evidence,
+            modality=modality,
+            status=CandidateLogicGroupStatus.PROPOSED,
+        )
+
+    @classmethod
+    def from_provider_proposal(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        member_candidate_references: Sequence[str],
+        source_reference: str,
+        capture_reference: str,
+        source_content_hash: str,
+        role_assignment_reference: str,
+        mapped_role_id: str,
+        mapped_specialization_id: str | None,
+    ) -> CandidateLogicGroup:
+        data = _mapping(payload, "provider_logic_group")
+        _reject_unknown(
+            data,
+            {"operator", "evidence", "modality"},
+            "provider_logic_group",
+        )
+        return cls.create_proposed(
+            operator=_enum(
+                data.get("operator"),
+                RequirementLogicOperator,
+                "provider_logic_group.operator",
+            ),
+            member_candidate_references=member_candidate_references,
+            source_reference=source_reference,
+            capture_reference=capture_reference,
+            source_content_hash=source_content_hash,
+            role_assignment_reference=role_assignment_reference,
+            mapped_role_id=mapped_role_id,
+            mapped_specialization_id=mapped_specialization_id,
+            evidence=EvidenceLocator.from_dict(
+                data.get("evidence"), "provider_logic_group.evidence"
+            ),
+            modality=_enum(
+                data.get("modality"),
+                RequirementModality,
+                "provider_logic_group.modality",
+            ),
+        )
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any], path: str = "candidate_logic_group"
+    ) -> CandidateLogicGroup:
+        data = _mapping(value, path)
+        _reject_unknown(
+            data,
+            {
+                "logic_group_id", "operator", "member_candidate_references",
+                "source_reference", "capture_reference", "source_content_hash",
+                "role_assignment_reference", "mapped_role_id",
+                "mapped_specialization_id", "evidence", "modality", "status",
+            },
+            path,
+        )
+        raw_members = data.get("member_candidate_references")
+        if not isinstance(raw_members, list):
+            raise Phase2ValidationError(
+                f"{path}.member_candidate_references must be a list"
+            )
+        members = canonical_logic_members(raw_members)
+        if tuple(raw_members) != members:
+            raise Phase2ValidationError(
+                f"{path}.member_candidate_references must be sorted and unique"
+            )
+        evidence = EvidenceLocator.from_dict(data.get("evidence"), f"{path}.evidence")
+        if evidence.start_offset is None or evidence.end_offset is None:
+            raise Phase2ValidationError(f"{path}.evidence requires explicit offsets")
+        operator = _enum(data.get("operator"), RequirementLogicOperator, f"{path}.operator")
+        result = cls(
+            logic_group_id=_stable_id(data.get("logic_group_id"), f"{path}.logic_group_id"),
+            operator=operator,
+            member_candidate_references=members,
+            source_reference=_stable_id(data.get("source_reference"), f"{path}.source_reference"),
+            capture_reference=_stable_id(data.get("capture_reference"), f"{path}.capture_reference"),
+            source_content_hash=_text(data.get("source_content_hash"), f"{path}.source_content_hash"),
+            role_assignment_reference=_stable_id(data.get("role_assignment_reference"), f"{path}.role_assignment_reference"),
+            mapped_role_id=_stable_id(data.get("mapped_role_id"), f"{path}.mapped_role_id"),
+            mapped_specialization_id=(None if data.get("mapped_specialization_id") is None else _stable_id(data.get("mapped_specialization_id"), f"{path}.mapped_specialization_id")),
+            evidence=evidence,
+            modality=_enum(data.get("modality"), RequirementModality, f"{path}.modality"),
+            status=_enum(data.get("status"), CandidateLogicGroupStatus, f"{path}.status"),
+        )
+        expected = generate_candidate_logic_group_id(
+            operator=result.operator,
+            member_candidate_references=result.member_candidate_references,
+            source_reference=result.source_reference,
+            capture_reference=result.capture_reference,
+            source_content_hash=result.source_content_hash,
+            evidence_start=result.evidence.start_offset,
+            evidence_end=result.evidence.end_offset,
+            role_assignment_reference=result.role_assignment_reference,
+            modality=result.modality,
+        )
+        if result.logic_group_id != expected:
+            raise Phase2ValidationError(f"{path}.logic_group_id was not generated by Aarvia")
+        return result
+
+    def validate(
+        self,
+        *,
+        candidates: Mapping[str, RequirementCandidateV5],
+        sources: JDSourceCollectionV3,
+        catalog: RoleCatalog,
+        assignments: "RoleAssignmentArtifact",
+        capture_contents: Mapping[str, str],
+    ) -> None:
+        if not isinstance(self.operator, RequirementLogicOperator):
+            raise Phase2ValidationError("logic group operator is invalid")
+        if not isinstance(self.modality, RequirementModality):
+            raise Phase2ValidationError("logic group modality is invalid")
+        if not isinstance(self.status, CandidateLogicGroupStatus):
+            raise Phase2ValidationError("logic group status is invalid")
+        if not isinstance(self.evidence, EvidenceLocator):
+            raise Phase2ValidationError("logic group evidence is invalid")
+        if CandidateLogicGroup.from_dict(self.to_dict()) != self:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} is not canonical"
+            )
+        source = sources.source(self.source_reference)
+        capture = sources.capture(self.capture_reference)
+        if capture.source_reference != source.source_id:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} capture belongs to another source"
+            )
+        if capture.content_hash != self.source_content_hash or self.evidence.source_content_hash != capture.content_hash:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} content hash does not match capture"
+            )
+        if not capture.contains_offsets(self.evidence.start_offset, self.evidence.end_offset):
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} evidence offsets are outside capture"
+            )
+        raw_content = capture_contents.get(capture.capture_id)
+        if raw_content is None:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} requires capture content"
+            )
+        normalized = normalize_jd_content(
+            raw_content, version=capture.hash_normalization_version
+        )
+        if content_sha256(raw_content, version=capture.hash_normalization_version) != capture.content_hash:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} capture content hash is invalid"
+            )
+        if capture.content_length is not None and len(normalized) != capture.content_length:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} capture content length is invalid"
+            )
+        exact = normalized[self.evidence.start_offset:self.evidence.end_offset]
+        if self.evidence.minimal_excerpt is None or exact != self.evidence.minimal_excerpt:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} minimal excerpt does not match capture"
+            )
+        assignment = assignments.current_for_source(self.source_reference, sources)
+        if self.role_assignment_reference != assignment.assignment_id:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} does not reference its current Role Assignment"
+            )
+        if self.mapped_role_id != assignment.role_id or self.mapped_specialization_id != assignment.specialization_id:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} Role projection does not match current assignment"
+            )
+        role = catalog.role(self.mapped_role_id)
+        if self.mapped_specialization_id is not None and self.mapped_specialization_id not in {
+            item.specialization_id for item in role.specializations
+        }:
+            raise Phase2ValidationError(
+                f"logic group {self.logic_group_id} references unknown specialization"
+            )
+        for member_id in self.member_candidate_references:
+            candidate = candidates.get(member_id)
+            if candidate is None:
+                raise Phase2ValidationError(
+                    f"logic group {self.logic_group_id} references unknown Candidate"
+                )
+            if candidate.status in {
+                CandidateLifecycleStatus.SUPERSEDED,
+                CandidateLifecycleStatus.REJECTED,
+            }:
+                raise Phase2ValidationError(
+                    f"logic group {self.logic_group_id} references an inactive Candidate"
+                )
+            if (
+                candidate.source_id != self.source_reference
+                or candidate.capture_id != self.capture_reference
+                or candidate.source_content_hash != self.source_content_hash
+            ):
+                raise Phase2ValidationError(
+                    f"logic group {self.logic_group_id} members must share source and capture provenance"
+                )
+            if (
+                candidate.role_assignment_reference != self.role_assignment_reference
+                or candidate.mapped_role_id != self.mapped_role_id
+                or candidate.mapped_specialization_id != self.mapped_specialization_id
+            ):
+                raise Phase2ValidationError(
+                    f"logic group {self.logic_group_id} members must share one Role Assignment projection"
+                )
+            if (
+                candidate.evidence.start_offset is None
+                or candidate.evidence.end_offset is None
+                or candidate.evidence.start_offset < self.evidence.start_offset
+                or candidate.evidence.end_offset > self.evidence.end_offset
+            ):
+                raise Phase2ValidationError(
+                    f"logic group {self.logic_group_id} evidence must contain every member locator"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "logic_group_id": self.logic_group_id,
+            "operator": self.operator.value,
+            "member_candidate_references": list(self.member_candidate_references),
+            "source_reference": self.source_reference,
+            "capture_reference": self.capture_reference,
+            "source_content_hash": self.source_content_hash,
+            "role_assignment_reference": self.role_assignment_reference,
+            "mapped_role_id": self.mapped_role_id,
+            "mapped_specialization_id": self.mapped_specialization_id,
+            "evidence": self.evidence.to_dict(),
+            "modality": self.modality.value,
+            "status": self.status.value,
+        }
+
+
+def generate_candidate_logic_group_review_id(
+    *,
+    logic_group_reference: str,
+    action: CandidateLogicGroupReviewAction,
+    reviewer_reference: str,
+    reviewed_at: str,
+    decision_reason: str,
+) -> str:
+    if not isinstance(action, CandidateLogicGroupReviewAction):
+        raise Phase2ValidationError(
+            "action must be a CandidateLogicGroupReviewAction"
+        )
+    identity = "|".join(
+        (
+            LOGIC_GROUP_REVIEW_ID_VERSION,
+            _stable_id(logic_group_reference, "logic_group_reference"),
+            action.value,
+            _stable_id(reviewer_reference, "reviewer_reference"),
+            _iso_datetime(reviewed_at, "reviewed_at"),
+            _text(decision_reason, "decision_reason"),
+        )
+    )
+    return f"logic_review_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+
+
+@dataclass(frozen=True, eq=True)
+class CandidateLogicGroupReviewRecord:
+    review_id: str
+    logic_group_reference: str
+    action: CandidateLogicGroupReviewAction
+    reviewer_reference: str
+    reviewed_at: str
+    decision_reason: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        logic_group_reference: str,
+        action: CandidateLogicGroupReviewAction,
+        reviewer_reference: str,
+        reviewed_at: str,
+        decision_reason: str,
+    ) -> CandidateLogicGroupReviewRecord:
+        return cls.from_dict(
+            {
+                "review_id": generate_candidate_logic_group_review_id(
+                    logic_group_reference=logic_group_reference,
+                    action=action,
+                    reviewer_reference=reviewer_reference,
+                    reviewed_at=reviewed_at,
+                    decision_reason=decision_reason,
+                ),
+                "logic_group_reference": logic_group_reference,
+                "action": action.value,
+                "reviewer_reference": reviewer_reference,
+                "reviewed_at": reviewed_at,
+                "decision_reason": decision_reason,
+            }
+        )
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any], path: str = "candidate_logic_group_review"
+    ) -> CandidateLogicGroupReviewRecord:
+        data = _mapping(value, path)
+        _reject_unknown(
+            data,
+            {
+                "review_id", "logic_group_reference", "action",
+                "reviewer_reference", "reviewed_at", "decision_reason",
+            },
+            path,
+        )
+        action = _enum(
+            data.get("action"), CandidateLogicGroupReviewAction, f"{path}.action"
+        )
+        result = cls(
+            review_id=_stable_id(data.get("review_id"), f"{path}.review_id"),
+            logic_group_reference=_stable_id(data.get("logic_group_reference"), f"{path}.logic_group_reference"),
+            action=action,
+            reviewer_reference=_stable_id(data.get("reviewer_reference"), f"{path}.reviewer_reference"),
+            reviewed_at=_iso_datetime(data.get("reviewed_at"), f"{path}.reviewed_at"),
+            decision_reason=_text(data.get("decision_reason"), f"{path}.decision_reason"),
+        )
+        expected = generate_candidate_logic_group_review_id(
+            logic_group_reference=result.logic_group_reference,
+            action=result.action,
+            reviewer_reference=result.reviewer_reference,
+            reviewed_at=result.reviewed_at,
+            decision_reason=result.decision_reason,
+        )
+        if result.review_id != expected:
+            raise Phase2ValidationError(f"{path}.review_id was not generated by Aarvia")
+        return result
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "review_id": self.review_id,
+            "logic_group_reference": self.logic_group_reference,
+            "action": self.action.value,
+            "reviewer_reference": self.reviewer_reference,
+            "reviewed_at": self.reviewed_at,
+            "decision_reason": self.decision_reason,
+        }
+
+
+@dataclass(frozen=True, eq=True)
+class CurationArtifactV6(CurationArtifactV5):
+    logic_groups: tuple[CandidateLogicGroup, ...] = ()
+    logic_group_review_records: tuple[CandidateLogicGroupReviewRecord, ...] = ()
+    schema_version: int = CURATION_SCHEMA_V6_VERSION
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> CurationArtifactV6:
+        data = _mapping(value, "curation")
+        _reject_unknown(
+            data,
+            {
+                "schema", "schema_version", "artifact_id", "artifact_type",
+                "source_collection_id", "catalog_version", "created_at",
+                "candidates", "clusters", "review_records",
+                "role_assignment_artifact_id", "logic_groups",
+                "logic_group_review_records",
+            },
+            "curation",
+        )
+        if data.get("schema") != CURATION_SCHEMA or data.get("schema_version") != CURATION_SCHEMA_V6_VERSION:
+            raise Phase2ValidationError("unsupported Curation schema version")
+        raw_candidates = data.get("candidates")
+        raw_clusters = data.get("clusters")
+        raw_reviews = data.get("review_records")
+        raw_groups = data.get("logic_groups")
+        raw_group_reviews = data.get("logic_group_review_records")
+        if not all(
+            isinstance(item, list)
+            for item in (
+                raw_candidates, raw_clusters, raw_reviews, raw_groups,
+                raw_group_reviews,
+            )
+        ):
+            raise Phase2ValidationError(
+                "curation candidates, clusters, reviews, and logic groups must be lists"
+            )
+        return cls(
+            artifact_id=_stable_id(data.get("artifact_id"), "curation.artifact_id"),
+            artifact_type=_enum(data.get("artifact_type"), CatalogType, "curation.artifact_type"),
+            source_collection_id=_stable_id(data.get("source_collection_id"), "curation.source_collection_id"),
+            catalog_version=_version(data.get("catalog_version"), "curation.catalog_version"),
+            created_at=_iso_datetime(data.get("created_at"), "curation.created_at"),
+            candidates=tuple(RequirementCandidateV5.from_dict(item, f"curation.candidates[{index}]") for index, item in enumerate(raw_candidates)),
+            clusters=tuple(RequirementClusterV5.from_dict(item, f"curation.clusters[{index}]") for index, item in enumerate(raw_clusters)),
+            review_records=tuple(CandidateReviewRecord.from_dict(item, f"curation.review_records[{index}]") for index, item in enumerate(raw_reviews)),
+            role_assignment_artifact_id=_stable_id(data.get("role_assignment_artifact_id"), "curation.role_assignment_artifact_id"),
+            logic_groups=tuple(CandidateLogicGroup.from_dict(item, f"curation.logic_groups[{index}]") for index, item in enumerate(raw_groups)),
+            logic_group_review_records=tuple(CandidateLogicGroupReviewRecord.from_dict(item, f"curation.logic_group_review_records[{index}]") for index, item in enumerate(raw_group_reviews)),
+        )
+
+    def _v5_view(self) -> CurationArtifactV5:
+        return CurationArtifactV5(
+            artifact_id=self.artifact_id,
+            artifact_type=self.artifact_type,
+            source_collection_id=self.source_collection_id,
+            catalog_version=self.catalog_version,
+            created_at=self.created_at,
+            candidates=self.candidates,
+            clusters=self.clusters,
+            review_records=self.review_records,
+            role_assignment_artifact_id=self.role_assignment_artifact_id,
+        )
+
+    def validate(
+        self,
+        sources: JDSourceCollectionV3,
+        catalog: RoleCatalog,
+        assignments: "RoleAssignmentArtifact",
+        capture_contents: Mapping[str, str],
+    ) -> None:
+        if any(not isinstance(item, CandidateLogicGroup) for item in self.logic_groups):
+            raise Phase2ValidationError("Curation schema 6 logic_groups contain an invalid object")
+        if any(
+            not isinstance(item.status, CandidateLogicGroupStatus)
+            or not isinstance(item.operator, RequirementLogicOperator)
+            or not isinstance(item.modality, RequirementModality)
+            for item in self.logic_groups
+        ):
+            raise Phase2ValidationError("Curation schema 6 logic group status, operator, or modality is invalid")
+        if any(
+            not isinstance(item, CandidateLogicGroupReviewRecord)
+            or not isinstance(item.action, CandidateLogicGroupReviewAction)
+            for item in self.logic_group_review_records
+        ):
+            raise Phase2ValidationError("Curation schema 6 logic group review is invalid")
+        if CurationArtifactV6.from_dict(self.to_dict()) != self:
+            raise Phase2ValidationError("Curation schema 6 artifact contains non-canonical data")
+        self._v5_view().validate(sources, catalog, assignments)
+        group_map = {item.logic_group_id: item for item in self.logic_groups}
+        review_map = {item.review_id: item for item in self.logic_group_review_records}
+        if len(group_map) != len(self.logic_groups):
+            raise Phase2ValidationError("Curation artifact contains duplicate logic group IDs")
+        if len(review_map) != len(self.logic_group_review_records):
+            raise Phase2ValidationError("Curation artifact contains duplicate logic group review IDs")
+        candidate_map = {item.candidate_id: item for item in self.candidates}
+        reviews_by_group: dict[str, list[CandidateLogicGroupReviewRecord]] = {}
+        for review in self.logic_group_review_records:
+            if review.logic_group_reference not in group_map:
+                raise Phase2ValidationError(
+                    f"logic group review {review.review_id} references unknown group"
+                )
+            reviews_by_group.setdefault(review.logic_group_reference, []).append(review)
+        for group in self.logic_groups:
+            group.validate(
+                candidates=candidate_map,
+                sources=sources,
+                catalog=catalog,
+                assignments=assignments,
+                capture_contents=capture_contents,
+            )
+            reviews = reviews_by_group.get(group.logic_group_id, [])
+            if len(reviews) > 1:
+                raise Phase2ValidationError(
+                    f"logic group {group.logic_group_id} has multiple terminal reviews"
+                )
+            if group.status == CandidateLogicGroupStatus.PROPOSED:
+                if reviews:
+                    raise Phase2ValidationError(
+                        f"proposed logic group {group.logic_group_id} cannot have terminal review"
+                    )
+                continue
+            if len(reviews) != 1:
+                raise Phase2ValidationError(
+                    f"terminal logic group {group.logic_group_id} requires exactly one review"
+                )
+            expected = (
+                CandidateLogicGroupReviewAction.CONFIRM
+                if group.status == CandidateLogicGroupStatus.CONFIRMED
+                else CandidateLogicGroupReviewAction.REJECT
+            )
+            if reviews[0].action != expected:
+                raise Phase2ValidationError(
+                    f"logic group {group.logic_group_id} status contradicts review action"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = self._v5_view().to_dict()
+        result["schema_version"] = CURATION_SCHEMA_V6_VERSION
+        result["logic_groups"] = [item.to_dict() for item in self.logic_groups]
+        result["logic_group_review_records"] = [
+            item.to_dict() for item in self.logic_group_review_records
+        ]
+        return result
+
+
+def migrate_curation_v5_to_v6(
+    value: CurationArtifactV5,
+    *,
+    sources: JDSourceCollectionV3,
+    catalog: RoleCatalog,
+    assignments: "RoleAssignmentArtifact",
+    capture_contents: Mapping[str, str],
+) -> CurationArtifactV6:
+    if not isinstance(value, CurationArtifactV5) or isinstance(value, CurationArtifactV6):
+        raise TypeError("value must be a schema 5 CurationArtifact")
+    value.validate(sources, catalog, assignments)
+    result = CurationArtifactV6(
+        artifact_id=value.artifact_id,
+        artifact_type=value.artifact_type,
+        source_collection_id=value.source_collection_id,
+        catalog_version=value.catalog_version,
+        created_at=value.created_at,
+        candidates=value.candidates,
+        clusters=value.clusters,
+        review_records=value.review_records,
+        role_assignment_artifact_id=value.role_assignment_artifact_id,
+        logic_groups=(),
+        logic_group_review_records=(),
+    )
+    result.validate(sources, catalog, assignments, capture_contents)
+    return result
+
+
+def _review_candidate_logic_group(
+    artifact: CurationArtifactV6,
+    logic_group_id: str,
+    *,
+    action: CandidateLogicGroupReviewAction,
+    reviewer_reference: str,
+    reviewed_at: str,
+    decision_reason: str,
+    sources: JDSourceCollectionV3,
+    catalog: RoleCatalog,
+    assignments: "RoleAssignmentArtifact",
+    capture_contents: Mapping[str, str],
+) -> CurationArtifactV6:
+    if not isinstance(artifact, CurationArtifactV6):
+        raise TypeError("artifact must be a CurationArtifactV6")
+    artifact.validate(sources, catalog, assignments, capture_contents)
+    matches = [
+        item for item in artifact.logic_groups if item.logic_group_id == logic_group_id
+    ]
+    if not matches:
+        raise Phase2ValidationError(f"unknown Candidate Logic Group ID: {logic_group_id}")
+    group = matches[0]
+    if group.status != CandidateLogicGroupStatus.PROPOSED:
+        raise Phase2ValidationError(f"logic group {logic_group_id} already has a terminal review")
+    status = (
+        CandidateLogicGroupStatus.CONFIRMED
+        if action == CandidateLogicGroupReviewAction.CONFIRM
+        else CandidateLogicGroupStatus.REJECTED
+    )
+    reviewed_group = replace(group, status=status)
+    review = CandidateLogicGroupReviewRecord.create(
+        logic_group_reference=logic_group_id,
+        action=action,
+        reviewer_reference=reviewer_reference,
+        reviewed_at=reviewed_at,
+        decision_reason=decision_reason,
+    )
+    result = replace(
+        artifact,
+        logic_groups=tuple(
+            reviewed_group if item.logic_group_id == logic_group_id else item
+            for item in artifact.logic_groups
+        ),
+        logic_group_review_records=(*artifact.logic_group_review_records, review),
+    )
+    result.validate(sources, catalog, assignments, capture_contents)
+    return result
+
+
+def confirm_candidate_logic_group(
+    artifact: CurationArtifactV6,
+    logic_group_id: str,
+    *,
+    reviewer_reference: str,
+    reviewed_at: str,
+    decision_reason: str,
+    sources: JDSourceCollectionV3,
+    catalog: RoleCatalog,
+    assignments: "RoleAssignmentArtifact",
+    capture_contents: Mapping[str, str],
+) -> CurationArtifactV6:
+    return _review_candidate_logic_group(
+        artifact,
+        logic_group_id,
+        action=CandidateLogicGroupReviewAction.CONFIRM,
+        reviewer_reference=reviewer_reference,
+        reviewed_at=reviewed_at,
+        decision_reason=decision_reason,
+        sources=sources,
+        catalog=catalog,
+        assignments=assignments,
+        capture_contents=capture_contents,
+    )
+
+
+def reject_candidate_logic_group(
+    artifact: CurationArtifactV6,
+    logic_group_id: str,
+    *,
+    reviewer_reference: str,
+    reviewed_at: str,
+    decision_reason: str,
+    sources: JDSourceCollectionV3,
+    catalog: RoleCatalog,
+    assignments: "RoleAssignmentArtifact",
+    capture_contents: Mapping[str, str],
+) -> CurationArtifactV6:
+    return _review_candidate_logic_group(
+        artifact,
+        logic_group_id,
+        action=CandidateLogicGroupReviewAction.REJECT,
+        reviewer_reference=reviewer_reference,
+        reviewed_at=reviewed_at,
+        decision_reason=decision_reason,
+        sources=sources,
+        catalog=catalog,
+        assignments=assignments,
+        capture_contents=capture_contents,
+    )
+
+
 def migrate_curation_v4_to_v5(
     value: CurationArtifactV4,
     *,
@@ -1640,7 +2380,13 @@ def _finish_review(
         candidates=candidates,
         review_records=(*artifact.review_records, review),
     )
-    if isinstance(result, CurationArtifactV5):
+    if isinstance(result, CurationArtifactV6):
+        from .role_assignments import RoleAssignmentArtifact
+        if not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None or not isinstance(sources, JDSourceCollectionV3):
+            raise Phase2ValidationError("Curation schema 6 review requires Role Assignments and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        result.validate(sources, catalog, assignments, capture_contents)
+    elif isinstance(result, CurationArtifactV5):
         from .role_assignments import RoleAssignmentArtifact
         if not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None or not isinstance(sources, JDSourceCollectionV3):
             raise Phase2ValidationError("Curation schema 5 review requires Role Assignments and capture content")
@@ -1913,7 +2659,7 @@ def split_candidate(
     )
 
 
-CurationArtifactType = CurationArtifact | CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5
+CurationArtifactType = CurationArtifact | CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5 | CurationArtifactV6
 
 
 def save_curation_artifact(
@@ -1927,9 +2673,15 @@ def save_curation_artifact(
 ) -> Path:
     from .role_assignments import RoleAssignmentArtifact
 
-    if not isinstance(value, (CurationArtifact, CurationArtifactV3, CurationArtifactV4, CurationArtifactV5)):
+    if not isinstance(value, (CurationArtifact, CurationArtifactV3, CurationArtifactV4, CurationArtifactV5, CurationArtifactV6)):
         raise TypeError("value must be a CurationArtifact")
-    if isinstance(value, CurationArtifactV5):
+    if isinstance(value, CurationArtifactV6):
+        if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+            raise Phase2ValidationError("Curation schema 6 requires Source schema 3, Role Assignments, and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        value.validate(sources, catalog, assignments, capture_contents)
+        canonical = CurationArtifactV6.from_dict(value.to_dict())
+    elif isinstance(value, CurationArtifactV5):
         if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
             raise Phase2ValidationError("Curation schema 5 requires Source schema 3, Role Assignments, and capture content")
         assignments.validate(sources, catalog, capture_contents)
@@ -1940,7 +2692,7 @@ def save_curation_artifact(
     else:
         value.validate(sources, catalog)
     from .phase2_storage import save_phase2_json
-    if isinstance(value, CurationArtifactV5):
+    if isinstance(value, (CurationArtifactV5, CurationArtifactV6)):
         pass
     elif isinstance(value, CurationArtifactV4):
         canonical = CurationArtifactV4.from_dict(value.to_dict())
@@ -1971,8 +2723,16 @@ def load_curation_artifact(
         value = CurationArtifactV4.from_dict(data)
     elif schema_version == CURATION_SCHEMA_V5_VERSION:
         value = CurationArtifactV5.from_dict(data)
+    elif schema_version == CURATION_SCHEMA_V6_VERSION:
+        value = CurationArtifactV6.from_dict(data)
     else:
         raise Phase2ValidationError("unsupported Curation schema version")
+    if isinstance(value, CurationArtifactV6):
+        if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+            raise Phase2ValidationError("Curation schema 6 requires Source schema 3, Role Assignments, and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        value.validate(sources, catalog, assignments, capture_contents)
+        return value
     if isinstance(value, CurationArtifactV5):
         if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
             raise Phase2ValidationError("Curation schema 5 requires Source schema 3, Role Assignments, and capture content")

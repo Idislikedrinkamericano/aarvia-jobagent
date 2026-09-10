@@ -8,7 +8,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.6.5 — 可审计 Role Assignment 契约基础已完成。**
+**版本 0.6.6 — Requirement Logic Foundation 已完成。**
 
 - ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
 - ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
@@ -18,6 +18,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 - ✅ Tier A/B/C provenance、canonical dedup、人工 curation 与 prevalence 基础
 - ✅ Requirement Candidate 的 approve、reject、revise、split 可机读 lineage
 - ✅ 每个 canonical job 的 Role Family 以人工确认的 Role Assignment 为唯一权威来源
+- ✅ 非递归 `all_of` / `any_of` Candidate 逻辑与确定性人工审核 provenance
 - ⏳ 有来源的 Role Requirements、推荐、Gap 和真实岗位尚未实现
 
 当前 production Catalog 故意保持 **0 条 requirement、0 个 source**。它是一套带护栏的 taxonomy，不是一件塞满虚构就业市场知识的风衣。🕵️
@@ -144,9 +145,12 @@ Phase 2B 开始排名前，Aarvia 仍需建立一份经过审查、由真实官�
 - Role Assignment schema 1 记录人工确认的初始映射与重新分类，包含精确 capture 证据、确定性 lineage、审核人、时间和理由。
 - Live Job schema 4 与 Curation schema 5 仅将兼容 Role 字段作为 current Assignment 的受验证 projection；旧 schema 仍显式可读。
 - Reclassification 会整体更新 Assignment、Live Job 与 Curation。仅未审核 Candidate 和单岗位 proposed Cluster 可安全自动处理；已有审核、lineage、confirmed/rejected Cluster 或 mixed-job Cluster 会结构化阻断。
-- Catalog draft 只消费与 confirmed Assignment 一致的 schema 5 approved leaf。同一 canonical job 不能进入两个 Role Family，多个 capture 或 Candidate 也不能扩大公司样本数。
+- Curation schema 6 可以把同一来源 clause 保存为一组非递归 `all_of` 或 `any_of` 原子 Candidate。Python 负责稳定 ID、验证和真值聚合；Provider 只能提出逻辑；人工负责确认或拒绝。
+- Catalog draft 只消费与 confirmed Assignment 一致的 schema 6 approved leaf。Logic Group member 不会被静默展平成独立 requirement；confirmed group 会返回 `production_requirement_logic_contract_required`，直到未来 Production Catalog 能无损表达该逻辑。
+- 同一 canonical job 不能进入两个 Role Family，多个 capture、split successor 或 logic branch 也不能扩大公司样本数。
 - 完整 JD 与 Pilot artifact 只能保存在被忽略的 `local_data/`；本次契约修复不会修改它们。
 - 真实 Pilot 中待重新分类的岗位尚未迁移；Clause Coverage 与样本计数只能在另行批准的本地迁移后重新生成。
+- 真实 Candidate Completion Plan 尚未迁移，没有创建或确认真实 Logic Group，也没有计算正式 prevalence。
 - Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。包含推荐用户能力的完整 Phase 2B 才会升级为项目版本 `0.7.0`。
 
 ## 设计原则

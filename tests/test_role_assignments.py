@@ -14,6 +14,7 @@ from aarvia.jd_curation import (
     CandidateRevision,
     generate_candidate_v4_id,
     migrate_curation_v4_to_v5,
+    migrate_curation_v5_to_v6,
     migrate_v2_to_v3,
     migrate_v3_to_v4,
     revise_candidate,
@@ -622,10 +623,14 @@ def test_mixed_job_cluster_blocks_reclassification() -> None:
 
 def test_builder_rejects_forged_role_and_duplicate_canonical_job() -> None:
     ctx = context()
+    curation = migrate_curation_v5_to_v6(
+        ctx[6], sources=ctx[1], catalog=production_role_catalog(),
+        assignments=ctx[4], capture_contents=ctx[2],
+    )
     wrong = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=(RoleSample(ctx[0]["source_id"], "machine_learning_engineer"),),
-        sources=ctx[1], curation=ctx[6], catalog=production_role_catalog(),
+        sources=ctx[1], curation=curation, catalog=production_role_catalog(),
         assignments=ctx[4], capture_contents=ctx[2],
     )
     assert BuildBlockerCode.ROLE_SAMPLE_MISMATCH in {item.code for item in wrong.blockers}
@@ -635,7 +640,7 @@ def test_builder_rejects_forged_role_and_duplicate_canonical_job() -> None:
             RoleSample(ctx[0]["source_id"], "applied_ai_engineer"),
             RoleSample(ctx[0]["source_id"], "machine_learning_engineer"),
         ),
-        sources=ctx[1], curation=ctx[6], catalog=production_role_catalog(),
+        sources=ctx[1], curation=curation, catalog=production_role_catalog(),
         assignments=ctx[4], capture_contents=ctx[2],
     )
     assert BuildBlockerCode.DUPLICATE_CANONICAL_JOB in {item.code for item in duplicate.blockers}

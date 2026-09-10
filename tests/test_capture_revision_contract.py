@@ -16,6 +16,7 @@ from aarvia.jd_curation import (
     migrate_v2_to_v3,
     migrate_v3_to_v4,
     migrate_curation_v4_to_v5,
+    migrate_curation_v5_to_v6,
     generate_candidate_v4_id,
     revise_candidate,
     save_curation_artifact,
@@ -515,7 +516,7 @@ def test_curation_v4_typed_round_trip_and_atomic_failure(tmp_path, monkeypatch) 
     assert path.read_bytes() == original
 
 
-def test_builder_requires_schema_v5_and_confirmed_role_assignments() -> None:
+def test_builder_requires_schema_v6_and_confirmed_role_assignments() -> None:
     data, legacy_sources, sources = source_v3_fixture(6)
     legacy = CurationArtifact.from_dict(curation_data(data))
     # Schema 2 terminal state cannot be migrated automatically, so construct its
@@ -558,9 +559,21 @@ def test_builder_requires_schema_v5_and_confirmed_role_assignments() -> None:
         v4, assignments=assignments, sources=sources,
         catalog=production_role_catalog(), capture_contents=contents,
     )
-    built = build_catalog_draft(
+    blocked_v5 = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=samples, sources=sources, curation=v5,
+        catalog=production_role_catalog(), assignments=assignments,
+        capture_contents=contents,
+    )
+    assert blocked_v5.draft is None
+    assert blocked_v5.blockers[0].code == BuildBlockerCode.CURATION_SCHEMA_UPGRADE_REQUIRED
+    v6 = migrate_curation_v5_to_v6(
+        v5, sources=sources, catalog=production_role_catalog(),
+        assignments=assignments, capture_contents=contents,
+    )
+    built = build_catalog_draft(
+        draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
+        samples=samples, sources=sources, curation=v6,
         catalog=production_role_catalog(), assignments=assignments,
         capture_contents=contents,
     )
@@ -575,7 +588,7 @@ def test_builder_requires_schema_v5_and_confirmed_role_assignments() -> None:
     expanded_contents = dict(contents)
     rebuilt = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
-        samples=samples, sources=expanded_sources, curation=v5,
+        samples=samples, sources=expanded_sources, curation=v6,
         catalog=production_role_catalog(), assignments=assignments,
         capture_contents=expanded_contents,
     )

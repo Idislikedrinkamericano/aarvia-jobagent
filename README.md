@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.6.5 — auditable Role Assignment contract foundation complete.**
+**Version 0.6.6 — Requirement Logic Foundation complete.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -18,6 +18,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 - ✅ Tier A/B/C provenance, canonical dedup, human curation, and prevalence foundations
 - ✅ Machine-readable approve, reject, revise, and split lineage for requirement candidates
 - ✅ Human-confirmed Role Assignment is the authority for each canonical job's Role Family
+- ✅ Non-recursive `all_of` / `any_of` Candidate logic with deterministic review provenance
 - ⏳ Source-backed Role Requirements, recommendations, gaps, and live jobs are not implemented
 
 The production Catalog deliberately contains **zero requirements and zero sources** today. It is a taxonomy with guardrails, not a trench coat full of invented labor-market facts. 🕵️
@@ -144,9 +145,12 @@ Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Ro
 - Role Assignment schema 1 records human-confirmed initial mappings and reclassifications with exact capture evidence, deterministic lineage, reviewer, time, and reason.
 - Live Job schema 4 and Curation schema 5 keep compatibility Role fields only as validated projections of the current Role Assignment. Their legacy schemas remain explicitly readable.
 - Reclassification is all-or-nothing across Assignment, Live Job, and Curation artifacts. It safely handles unreviewed Candidates and proposed single-job Clusters; reviewed Candidates, lineage, confirmed/rejected Clusters, and mixed-job Clusters block automation.
-- Catalog drafts consume only schema 5 approved leaves whose samples agree with confirmed Assignments. The same canonical job cannot enter two Role Families, and multiple captures or Candidates still cannot inflate company counts.
+- Curation schema 6 can preserve a source clause as a non-recursive `all_of` or `any_of` group of atomic Candidates. Python owns stable IDs, validation, and truth-table evaluation; Providers may only propose logic; humans confirm or reject it.
+- Catalog drafts consume only schema 6 approved leaves whose samples agree with confirmed Assignments. Logic-group members are never silently flattened. A confirmed group returns `production_requirement_logic_contract_required` until a future production Catalog can preserve that logic.
+- The same canonical job cannot enter two Role Families, and multiple captures, split successors, or logic branches cannot inflate company counts.
 - Full JD text and Pilot artifacts belong only under ignored `local_data/`; this contract fix does not modify them.
 - The real Pilot job identified for reclassification has not been migrated. Clause Coverage and sample counts must be regenerated only after a separately approved local migration.
+- The real Candidate Completion Plan has not been migrated, no real logic group has been created or confirmed, and no formal prevalence has been calculated.
 - The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Phase 2B completion, including recommendation behavior, will use project version `0.7.0`.
 
 ## Design Principles

@@ -11,6 +11,7 @@ from .jd_curation import (
     CandidateLifecycleStatus,
     ClusterLifecycleStatus,
     CurationArtifactV5,
+    CurationArtifactV6,
     RequirementClusterV5,
     generate_cluster_v5_id,
 )
@@ -53,7 +54,7 @@ class RoleReclassificationBlocker:
 class RoleReclassificationResult:
     assignments: RoleAssignmentArtifact | None
     live_jobs: LiveJobCollectionV4 | None
-    curation: CurationArtifactV5 | None
+    curation: CurationArtifactV5 | CurationArtifactV6 | None
     invalidated_derived_references: tuple[str, ...]
     blockers: tuple[RoleReclassificationBlocker, ...]
 
@@ -66,7 +67,7 @@ def validate_role_direction_context(
     *,
     assignments: RoleAssignmentArtifact,
     live_jobs: LiveJobCollectionV4,
-    curation: CurationArtifactV5,
+    curation: CurationArtifactV5 | CurationArtifactV6,
     sources: JDSourceCollectionV3,
     catalog: RoleCatalog,
     capture_contents: Mapping[str, str],
@@ -76,10 +77,15 @@ def validate_role_direction_context(
     if not isinstance(live_jobs, LiveJobCollectionV4):
         raise Phase2ValidationError("Role direction context requires Live Job schema 4")
     if not isinstance(curation, CurationArtifactV5):
-        raise Phase2ValidationError("Role direction context requires Curation schema 5")
+        raise Phase2ValidationError(
+            "Role direction context requires Curation schema 5 or 6"
+        )
     assignments.validate(sources, catalog, capture_contents)
     live_jobs.validate(catalog, sources, assignments)
-    curation.validate(sources, catalog, assignments)
+    if isinstance(curation, CurationArtifactV6):
+        curation.validate(sources, catalog, assignments, capture_contents)
+    else:
+        curation.validate(sources, catalog, assignments)
     if live_jobs.role_assignment_artifact_id != assignments.artifact_id or curation.role_assignment_artifact_id != assignments.artifact_id:
         raise Phase2ValidationError("Role direction artifacts reference different assignments")
     job_ids = {item.canonical_job_id for item in live_jobs.jobs}
@@ -111,7 +117,7 @@ def reclassify_job_role(
     *,
     assignments: RoleAssignmentArtifact,
     live_jobs: LiveJobCollectionV4,
-    curation: CurationArtifactV5,
+    curation: CurationArtifactV5 | CurationArtifactV6,
     sources: JDSourceCollectionV3,
     catalog: RoleCatalog,
     capture_contents: Mapping[str, str],

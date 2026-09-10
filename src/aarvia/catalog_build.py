@@ -16,6 +16,8 @@ from .jd_curation import (
     CurationArtifactV3,
     CurationArtifactV4,
     CurationArtifactV5,
+    CurationArtifactV6,
+    CandidateLogicGroupStatus,
     RequirementCandidate,
     ReviewerDecision,
 )
@@ -70,6 +72,8 @@ class BuildBlockerCode(str, Enum):
     ROLE_ASSIGNMENT_REQUIRED = "role_assignment_required"
     ROLE_SAMPLE_MISMATCH = "role_sample_mismatch"
     DUPLICATE_CANONICAL_JOB = "duplicate_canonical_job"
+    UNCONFIRMED_LOGIC_GROUP = "unconfirmed_logic_group"
+    PRODUCTION_REQUIREMENT_LOGIC_CONTRACT_REQUIRED = "production_requirement_logic_contract_required"
 
 
 @dataclass(frozen=True, eq=True)
@@ -298,7 +302,7 @@ class CatalogDraft:
     def validate(
         self,
         sources: JDSourceCollectionV3,
-        curation: CurationArtifactV5,
+        curation: CurationArtifactV6,
         catalog: RoleCatalog,
         assignments: "RoleAssignmentArtifact",
         capture_contents: Mapping[str, str],
@@ -306,9 +310,9 @@ class CatalogDraft:
         canonical = CatalogDraft.from_dict(self.to_dict())
         if canonical != self:
             raise Phase2ValidationError("Catalog Draft contains non-canonical data")
-        if not isinstance(curation, CurationArtifactV5):
+        if not isinstance(curation, CurationArtifactV6):
             raise Phase2ValidationError(
-                "Catalog Draft requires a validated Curation schema 5 artifact"
+                "Catalog Draft requires a validated Curation schema 6 artifact"
             )
         if not isinstance(sources, JDSourceCollectionV3):
             raise Phase2ValidationError(
@@ -319,7 +323,14 @@ class CatalogDraft:
         if self.source_collection_id != sources.collection_id or self.curation_artifact_id != curation.artifact_id:
             raise Phase2ValidationError("Catalog Draft context references do not match")
         assignments.validate(sources, catalog, capture_contents)
-        curation.validate(sources, catalog, assignments)
+        curation.validate(sources, catalog, assignments, capture_contents)
+        if any(
+            item.status == CandidateLogicGroupStatus.CONFIRMED
+            for item in curation.logic_groups
+        ):
+            raise Phase2ValidationError(
+                "Catalog schema 1 cannot preserve confirmed Candidate Logic Groups"
+            )
         candidate_map = {item.candidate_id: item for item in curation.candidates}
         cluster_map = {item.cluster_id: item for item in curation.clusters}
         source_ids = {item.source_id for item in sources.sources}
@@ -367,6 +378,16 @@ class CatalogDraft:
             if set(requirement.candidate_references) != set(cluster.candidate_ids):
                 raise Phase2ValidationError(f"draft requirement {requirement.requirement_id} does not include its complete cluster")
             candidates = [candidate_map[item] for item in requirement.candidate_references]
+            active_group_members = {
+                candidate_id
+                for group in curation.logic_groups
+                if group.status != CandidateLogicGroupStatus.REJECTED
+                for candidate_id in group.member_candidate_references
+            }
+            if set(requirement.candidate_references) & active_group_members:
+                raise Phase2ValidationError(
+                    f"draft requirement {requirement.requirement_id} would flatten Candidate Logic Group members"
+                )
             if any(
                 item.status != CandidateLifecycleStatus.APPROVED
                 or item.reviewer_decision != ReviewerDecision.APPROVE
@@ -441,7 +462,7 @@ def build_catalog_draft(
     created_at: str,
     samples: Iterable[RoleSample],
     sources: JDSourceCollectionV3,
-    curation: CurationArtifact | CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5,
+    curation: CurationArtifact | CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5 | CurationArtifactV6,
     catalog: RoleCatalog,
     assignments: "RoleAssignmentArtifact | None" = None,
     capture_contents: Mapping[str, str] | None = None,
@@ -449,13 +470,13 @@ def build_catalog_draft(
     from .role_assignments import RoleAssignmentArtifact
 
     sources.validate()
-    if not isinstance(curation, CurationArtifactV5):
+    if not isinstance(curation, CurationArtifactV6):
         return CatalogBuildResult(
             None,
             (
                 BuildBlocker(
                     BuildBlockerCode.CURATION_SCHEMA_UPGRADE_REQUIRED,
-                    "Catalog building requires Curation schema 5 Role Assignment provenance",
+                    "Catalog building requires Curation schema 6 requirement-logic provenance",
                     (curation.artifact_id, f"schema_version={curation.schema_version}"),
                 ),
             ),
@@ -474,7 +495,7 @@ def build_catalog_draft(
             "Catalog building requires JD Source schema 3 capture provenance"
         )
     assignments.validate(sources, catalog, capture_contents)
-    curation.validate(sources, catalog, assignments)
+    curation.validate(sources, catalog, assignments, capture_contents)
     sample_items = tuple(samples)
     blockers: list[BuildBlocker] = []
     if not sample_items:
@@ -526,6 +547,19 @@ def build_catalog_draft(
     candidate_map = {item.candidate_id: item for item in approved}
     cluster_map = {item.cluster_id: item for item in curation.clusters}
     requirements: list[DraftRequirement] = []
+    active_logic_members: set[str] = set()
+    for group in curation.logic_groups:
+        if group.status == CandidateLogicGroupStatus.CONFIRMED:
+            blockers.append(
+                BuildBlocker(
+                    BuildBlockerCode.PRODUCTION_REQUIREMENT_LOGIC_CONTRACT_REQUIRED,
+                    "Catalog schema 1 cannot preserve a confirmed Candidate Logic Group",
+                    (group.logic_group_id,),
+                )
+            )
+            active_logic_members.update(group.member_candidate_references)
+        elif group.status == CandidateLogicGroupStatus.PROPOSED:
+            active_logic_members.update(group.member_candidate_references)
     for role_id, role_samples in by_role.items():
         total = len(role_samples)
         tier_a = sum(source.source_tier == SourceTier.TIER_A_OFFICIAL for _, source in role_samples)
@@ -548,6 +582,23 @@ def build_catalog_draft(
             cluster_candidates = [candidate_map[item] for item in cluster.candidate_ids if item in candidate_map]
             if len(cluster_candidates) != len(cluster.candidate_ids):
                 blockers.append(BuildBlocker(BuildBlockerCode.UNAPPROVED_CANDIDATE, "cluster contains a candidate without complete approval", (cluster.cluster_id,)))
+                continue
+            grouped = tuple(sorted(set(cluster.candidate_ids) & active_logic_members))
+            if grouped:
+                proposed_groups = tuple(
+                    group.logic_group_id
+                    for group in curation.logic_groups
+                    if group.status == CandidateLogicGroupStatus.PROPOSED
+                    and set(group.member_candidate_references) & set(grouped)
+                )
+                if proposed_groups:
+                    blockers.append(
+                        BuildBlocker(
+                            BuildBlockerCode.UNCONFIRMED_LOGIC_GROUP,
+                            "Candidate Logic Group requires human confirmation before Catalog building",
+                            tuple(sorted(proposed_groups)),
+                        )
+                    )
                 continue
             sampled_job_ids = set(sampled_jobs)
             outside_sample: list[str] = []
@@ -619,13 +670,13 @@ def build_catalog_draft(
     return CatalogBuildResult(draft, ())
 
 
-def save_catalog_draft(value: CatalogDraft, path: str | Path, *, sources: JDSourceCollectionV3, curation: CurationArtifactV5, catalog: RoleCatalog, assignments: "RoleAssignmentArtifact", capture_contents: Mapping[str, str]) -> Path:
+def save_catalog_draft(value: CatalogDraft, path: str | Path, *, sources: JDSourceCollectionV3, curation: CurationArtifactV6, catalog: RoleCatalog, assignments: "RoleAssignmentArtifact", capture_contents: Mapping[str, str]) -> Path:
     value.validate(sources, curation, catalog, assignments, capture_contents)
     from .phase2_storage import save_phase2_json
     return save_phase2_json(CatalogDraft.from_dict(value.to_dict()).to_dict(), path)
 
 
-def load_catalog_draft(path: str | Path, *, sources: JDSourceCollectionV3, curation: CurationArtifactV5, catalog: RoleCatalog, assignments: "RoleAssignmentArtifact", capture_contents: Mapping[str, str]) -> CatalogDraft:
+def load_catalog_draft(path: str | Path, *, sources: JDSourceCollectionV3, curation: CurationArtifactV6, catalog: RoleCatalog, assignments: "RoleAssignmentArtifact", capture_contents: Mapping[str, str]) -> CatalogDraft:
     from .phase2_storage import load_phase2_json
     value = CatalogDraft.from_dict(load_phase2_json(path))
     value.validate(sources, curation, catalog, assignments, capture_contents)
