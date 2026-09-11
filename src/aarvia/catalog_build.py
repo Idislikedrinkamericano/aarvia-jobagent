@@ -17,6 +17,7 @@ from .jd_curation import (
     CurationArtifactV4,
     CurationArtifactV5,
     CurationArtifactV6,
+    CandidateLogicGroup,
     CandidateLogicGroupStatus,
     RequirementCandidate,
     ReviewerDecision,
@@ -74,6 +75,9 @@ class BuildBlockerCode(str, Enum):
     DUPLICATE_CANONICAL_JOB = "duplicate_canonical_job"
     UNCONFIRMED_LOGIC_GROUP = "unconfirmed_logic_group"
     PRODUCTION_REQUIREMENT_LOGIC_CONTRACT_REQUIRED = "production_requirement_logic_contract_required"
+    REJECTED_LOGIC_GROUP_MEMBER_REQUIRES_RESOLUTION = (
+        "rejected_logic_group_member_requires_resolution"
+    )
 
 
 @dataclass(frozen=True, eq=True)
@@ -84,6 +88,26 @@ class BuildBlocker:
 
     def to_dict(self) -> dict[str, Any]:
         return {"code": self.code.value, "message": self.message, "references": list(self.references)}
+
+
+def _logic_group_blocker(group: CandidateLogicGroup) -> BuildBlocker:
+    if group.status == CandidateLogicGroupStatus.PROPOSED:
+        return BuildBlocker(
+            BuildBlockerCode.UNCONFIRMED_LOGIC_GROUP,
+            "Candidate Logic Group requires human confirmation before Catalog building",
+            (group.logic_group_id,),
+        )
+    if group.status == CandidateLogicGroupStatus.CONFIRMED:
+        return BuildBlocker(
+            BuildBlockerCode.PRODUCTION_REQUIREMENT_LOGIC_CONTRACT_REQUIRED,
+            "Catalog schema 1 cannot preserve a confirmed Candidate Logic Group",
+            (group.logic_group_id,),
+        )
+    return BuildBlocker(
+        BuildBlockerCode.REJECTED_LOGIC_GROUP_MEMBER_REQUIRES_RESOLUTION,
+        "Rejected Candidate Logic Group members require an independent reviewed resolution",
+        (group.logic_group_id,),
+    )
 
 
 @dataclass(frozen=True, eq=True)
@@ -324,13 +348,14 @@ class CatalogDraft:
             raise Phase2ValidationError("Catalog Draft context references do not match")
         assignments.validate(sources, catalog, capture_contents)
         curation.validate(sources, catalog, assignments, capture_contents)
-        if any(
-            item.status == CandidateLogicGroupStatus.CONFIRMED
-            for item in curation.logic_groups
-        ):
-            raise Phase2ValidationError(
-                "Catalog schema 1 cannot preserve confirmed Candidate Logic Groups"
+        logic_blockers = tuple(
+            _logic_group_blocker(group)
+            for group in sorted(
+                curation.logic_groups, key=lambda item: item.logic_group_id
             )
+        )
+        if logic_blockers:
+            raise Phase2ValidationError(logic_blockers[0].message)
         candidate_map = {item.candidate_id: item for item in curation.candidates}
         cluster_map = {item.cluster_id: item for item in curation.clusters}
         source_ids = {item.source_id for item in sources.sources}
@@ -378,13 +403,12 @@ class CatalogDraft:
             if set(requirement.candidate_references) != set(cluster.candidate_ids):
                 raise Phase2ValidationError(f"draft requirement {requirement.requirement_id} does not include its complete cluster")
             candidates = [candidate_map[item] for item in requirement.candidate_references]
-            active_group_members = {
+            all_logic_bound_members = {
                 candidate_id
                 for group in curation.logic_groups
-                if group.status != CandidateLogicGroupStatus.REJECTED
                 for candidate_id in group.member_candidate_references
             }
-            if set(requirement.candidate_references) & active_group_members:
+            if set(requirement.candidate_references) & all_logic_bound_members:
                 raise Phase2ValidationError(
                     f"draft requirement {requirement.requirement_id} would flatten Candidate Logic Group members"
                 )
@@ -547,19 +571,15 @@ def build_catalog_draft(
     candidate_map = {item.candidate_id: item for item in approved}
     cluster_map = {item.cluster_id: item for item in curation.clusters}
     requirements: list[DraftRequirement] = []
-    active_logic_members: set[str] = set()
-    for group in curation.logic_groups:
-        if group.status == CandidateLogicGroupStatus.CONFIRMED:
-            blockers.append(
-                BuildBlocker(
-                    BuildBlockerCode.PRODUCTION_REQUIREMENT_LOGIC_CONTRACT_REQUIRED,
-                    "Catalog schema 1 cannot preserve a confirmed Candidate Logic Group",
-                    (group.logic_group_id,),
-                )
-            )
-            active_logic_members.update(group.member_candidate_references)
-        elif group.status == CandidateLogicGroupStatus.PROPOSED:
-            active_logic_members.update(group.member_candidate_references)
+    ordered_logic_groups = tuple(
+        sorted(curation.logic_groups, key=lambda item: item.logic_group_id)
+    )
+    blockers.extend(_logic_group_blocker(group) for group in ordered_logic_groups)
+    all_logic_bound_members = {
+        candidate_id
+        for group in ordered_logic_groups
+        for candidate_id in group.member_candidate_references
+    }
     for role_id, role_samples in by_role.items():
         total = len(role_samples)
         tier_a = sum(source.source_tier == SourceTier.TIER_A_OFFICIAL for _, source in role_samples)
@@ -583,22 +603,10 @@ def build_catalog_draft(
             if len(cluster_candidates) != len(cluster.candidate_ids):
                 blockers.append(BuildBlocker(BuildBlockerCode.UNAPPROVED_CANDIDATE, "cluster contains a candidate without complete approval", (cluster.cluster_id,)))
                 continue
-            grouped = tuple(sorted(set(cluster.candidate_ids) & active_logic_members))
+            grouped = tuple(
+                sorted(set(cluster.candidate_ids) & all_logic_bound_members)
+            )
             if grouped:
-                proposed_groups = tuple(
-                    group.logic_group_id
-                    for group in curation.logic_groups
-                    if group.status == CandidateLogicGroupStatus.PROPOSED
-                    and set(group.member_candidate_references) & set(grouped)
-                )
-                if proposed_groups:
-                    blockers.append(
-                        BuildBlocker(
-                            BuildBlockerCode.UNCONFIRMED_LOGIC_GROUP,
-                            "Candidate Logic Group requires human confirmation before Catalog building",
-                            tuple(sorted(proposed_groups)),
-                        )
-                    )
                 continue
             sampled_job_ids = set(sampled_jobs)
             outside_sample: list[str] = []

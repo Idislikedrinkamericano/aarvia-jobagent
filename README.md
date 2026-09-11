@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.6.6 — Requirement Logic Foundation complete.**
+**Version 0.6.7 — Logic-group publication safety fix complete.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -147,10 +147,13 @@ Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Ro
 - Reclassification is all-or-nothing across Assignment, Live Job, and Curation artifacts. It safely handles unreviewed Candidates and proposed single-job Clusters; reviewed Candidates, lineage, confirmed/rejected Clusters, and mixed-job Clusters block automation.
 - Curation schema 6 can preserve a source clause as a non-recursive `all_of` or `any_of` group of atomic Candidates. Python owns stable IDs, validation, and truth-table evaluation; Providers may only propose logic; humans confirm or reject it.
 - Catalog drafts consume only schema 6 approved leaves whose samples agree with confirmed Assignments. Logic-group members are never silently flattened. A confirmed group returns `production_requirement_logic_contract_required` until a future production Catalog can preserve that logic.
+- Rejecting a proposed Logic Group rejects only that relationship; it does not independently approve its members for publication. Proposed, confirmed, and rejected groups each block Catalog building until their semantics have an explicit safe path.
+- Builder diagnostics aggregate Logic Group blockers independently of Cluster status, so an unconfirmed Cluster cannot hide a group-level safety decision.
 - The same canonical job cannot enter two Role Families, and multiple captures, split successors, or logic branches cannot inflate company counts.
 - Full JD text and Pilot artifacts belong only under ignored `local_data/`; this contract fix does not modify them.
 - The real Pilot job identified for reclassification has not been migrated. Clause Coverage and sample counts must be regenerated only after a separately approved local migration.
 - The real Candidate Completion Plan has not been migrated, no real logic group has been created or confirmed, and no formal prevalence has been calculated.
+- A reviewed member-release workflow and a production requirement-logic schema are intentionally not implemented.
 - The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Phase 2B completion, including recommendation behavior, will use project version `0.7.0`.
 
 ## Design Principles

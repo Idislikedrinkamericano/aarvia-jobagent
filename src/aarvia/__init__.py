@@ -131,7 +131,7 @@ from .role_catalog import (
     save_role_catalog,
 )
 
-__version__ = "0.6.6"
+__version__ = "0.6.7"
 
 __all__ = [
     "BasicProfile",
