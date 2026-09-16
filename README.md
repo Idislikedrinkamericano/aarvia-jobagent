@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.6.7 — Logic-group publication safety fix complete.**
+**Version 0.6.8 — Curation workflow contracts complete.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -19,6 +19,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 - ✅ Machine-readable approve, reject, revise, and split lineage for requirement candidates
 - ✅ Human-confirmed Role Assignment is the authority for each canonical job's Role Family
 - ✅ Non-recursive `all_of` / `any_of` Candidate logic with deterministic review provenance
+- ✅ Independent Candidate review, controlled Cluster review, and explicit Logic Group resolution
 - ⏳ Source-backed Role Requirements, recommendations, gaps, and live jobs are not implemented
 
 The production Catalog deliberately contains **zero requirements and zero sources** today. It is a taxonomy with guardrails, not a trench coat full of invented labor-market facts. 🕵️
@@ -146,14 +147,15 @@ Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Ro
 - Live Job schema 4 and Curation schema 5 keep compatibility Role fields only as validated projections of the current Role Assignment. Their legacy schemas remain explicitly readable.
 - Reclassification is all-or-nothing across Assignment, Live Job, and Curation artifacts. It safely handles unreviewed Candidates and proposed single-job Clusters; reviewed Candidates, lineage, confirmed/rejected Clusters, and mixed-job Clusters block automation.
 - Curation schema 6 can preserve a source clause as a non-recursive `all_of` or `any_of` group of atomic Candidates. Python owns stable IDs, validation, and truth-table evaluation; Providers may only propose logic; humans confirm or reject it.
-- Catalog drafts consume only schema 6 approved leaves whose samples agree with confirmed Assignments. Logic-group members are never silently flattened. A confirmed group returns `production_requirement_logic_contract_required` until a future production Catalog can preserve that logic.
-- Rejecting a proposed Logic Group rejects only that relationship; it does not independently approve its members for publication. Proposed, confirmed, and rejected groups each block Catalog building until their semantics have an explicit safe path.
+- Curation schema 7 separates Candidate fact review from Cluster membership. Proposed Clusters use controlled create, assign, remove, merge, and split operations; confirmation or rejection creates deterministic human review provenance bound to the exact semantic snapshot.
+- Logic Groups now support six explicit outcomes: confirm, quarantine, reject members, release members, revise, and split. Current bindings are computed from reviewed lineage, so released or superseded history cannot masquerade as active logic.
+- Catalog drafts consume only schema 7 approved leaves in current confirmed Clusters whose samples agree with confirmed Assignments. Unclustered approvals and unresolved Logic Groups are blocked; confirmed logic still returns `production_requirement_logic_contract_required` until a production requirement-logic schema exists.
 - Builder diagnostics aggregate Logic Group blockers independently of Cluster status, so an unconfirmed Cluster cannot hide a group-level safety decision.
 - The same canonical job cannot enter two Role Families, and multiple captures, split successors, or logic branches cannot inflate company counts.
 - Full JD text and Pilot artifacts belong only under ignored `local_data/`; this contract fix does not modify them.
 - The real Pilot job identified for reclassification has not been migrated. Clause Coverage and sample counts must be regenerated only after a separately approved local migration.
-- The real Candidate Completion Plan has not been migrated, no real logic group has been created or confirmed, and no formal prevalence has been calculated.
-- A reviewed member-release workflow and a production requirement-logic schema are intentionally not implemented.
+- The real schema 6 Candidate Completion artifact remains local and unmodified. It has not been migrated to schema 7, no review state changed, and no formal prevalence has been calculated.
+- The real schema 6 Curation artifact has not been migrated or reviewed. Production requirement logic, prevalence publication, Gap Analysis, and Role Recommendation remain intentionally unimplemented.
 - The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Phase 2B completion, including recommendation behavior, will use project version `0.7.0`.
 
 ## Design Principles

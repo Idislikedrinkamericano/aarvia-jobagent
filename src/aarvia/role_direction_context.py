@@ -67,7 +67,7 @@ def validate_role_direction_context(
     *,
     assignments: RoleAssignmentArtifact,
     live_jobs: LiveJobCollectionV4,
-    curation: CurationArtifactV5 | CurationArtifactV6,
+    curation: Any,
     sources: JDSourceCollectionV3,
     catalog: RoleCatalog,
     capture_contents: Mapping[str, str],
@@ -76,13 +76,15 @@ def validate_role_direction_context(
         raise TypeError("assignments must be a RoleAssignmentArtifact")
     if not isinstance(live_jobs, LiveJobCollectionV4):
         raise Phase2ValidationError("Role direction context requires Live Job schema 4")
-    if not isinstance(curation, CurationArtifactV5):
+    from .curation_workflow import CurationArtifactV7
+
+    if not isinstance(curation, (CurationArtifactV5, CurationArtifactV7)):
         raise Phase2ValidationError(
-            "Role direction context requires Curation schema 5 or 6"
+            "Role direction context requires Curation schema 5, 6, or 7"
         )
     assignments.validate(sources, catalog, capture_contents)
     live_jobs.validate(catalog, sources, assignments)
-    if isinstance(curation, CurationArtifactV6):
+    if isinstance(curation, (CurationArtifactV6, CurationArtifactV7)):
         curation.validate(sources, catalog, assignments, capture_contents)
     else:
         curation.validate(sources, catalog, assignments)

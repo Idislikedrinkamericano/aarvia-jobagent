@@ -577,8 +577,8 @@ def test_builder_requires_schema_v6_and_confirmed_role_assignments() -> None:
         catalog=production_role_catalog(), assignments=assignments,
         capture_contents=contents,
     )
-    assert built.draft is not None
-    assert built.draft.requirements[0].supporting_company_count == 6
+    assert built.draft is None
+    assert built.blockers[0].code == BuildBlockerCode.CURATION_SCHEMA_UPGRADE_REQUIRED
 
     expanded_sources = replace(
         sources,
@@ -592,8 +592,8 @@ def test_builder_requires_schema_v6_and_confirmed_role_assignments() -> None:
         catalog=production_role_catalog(), assignments=assignments,
         capture_contents=expanded_contents,
     )
-    assert rebuilt.draft is not None
-    assert rebuilt.draft.requirements[0].supporting_company_count == 6
+    assert rebuilt.draft is None
+    assert rebuilt.blockers[0].code == BuildBlockerCode.CURATION_SCHEMA_UPGRADE_REQUIRED
 
 
 def test_schema_readers_do_not_silently_mix_versions(tmp_path) -> None:

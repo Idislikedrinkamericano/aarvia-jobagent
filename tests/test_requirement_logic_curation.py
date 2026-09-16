@@ -11,6 +11,7 @@ from aarvia.jd_curation import (
     CandidateLogicGroupReviewRecord,
     CandidateLogicGroupStatus,
     CandidateRevision,
+    ClusterLifecycleStatus,
     CurationArtifactV5,
     CurationArtifactV6,
     EvidenceLocator,
@@ -28,6 +29,10 @@ from aarvia.jd_curation import (
     save_curation_artifact,
 )
 from aarvia.requirement_logic import RequirementLogicOperator, RequirementModality
+from aarvia.curation_workflow import (
+    confirm_candidate_logic_group_v7,
+    migrate_curation_v6_to_v7,
+)
 from aarvia.role_catalog import Phase2ValidationError, production_role_catalog
 from phase2b_fixtures import FAKE_HASH, NOW, confirmed_assignments
 from test_catalog_build import contexts
@@ -501,8 +506,28 @@ def test_builder_blocks_schema5_and_logic_flattening() -> None:
         capture_contents=ctx[2],
     )
     assert old.blockers[0].code == BuildBlockerCode.CURATION_SCHEMA_UPGRADE_REQUIRED
-    confirmed = confirm_candidate_logic_group(
-        proposed, group.logic_group_id, **review_kwargs(ctx)
+    proposed = replace(
+        proposed,
+        clusters=tuple(
+            replace(
+                item,
+                status=ClusterLifecycleStatus.PROPOSED,
+                reviewer_decision=ReviewerDecision.PENDING,
+                decision_reason=None,
+                reviewed_at=None,
+            )
+            for item in proposed.clusters
+        ),
+    )
+    proposed_v7 = migrate_curation_v6_to_v7(
+        proposed,
+        sources=ctx[1],
+        catalog=production_role_catalog(),
+        assignments=ctx[4],
+        capture_contents=ctx[2],
+    )
+    confirmed = confirm_candidate_logic_group_v7(
+        proposed_v7, group.logic_group_id, **review_kwargs(ctx)
     )
     blocked = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,

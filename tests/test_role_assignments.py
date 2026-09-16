@@ -12,6 +12,7 @@ from aarvia.jd_curation import (
     CurationArtifactV5,
     EvidenceLocator,
     CandidateRevision,
+    approve_candidate,
     generate_candidate_v4_id,
     migrate_curation_v4_to_v5,
     migrate_curation_v5_to_v6,
@@ -47,6 +48,10 @@ from aarvia.role_assignments import (
     save_role_assignment_artifact,
 )
 from aarvia.role_catalog import CatalogType, Phase2ValidationError, production_role_catalog
+from aarvia.curation_workflow import (
+    confirm_cluster,
+    migrate_curation_v6_to_v7,
+)
 from aarvia.role_direction_context import (
     RoleReclassificationBlockerCode,
     reclassify_job_role,
@@ -627,6 +632,50 @@ def test_builder_rejects_forged_role_and_duplicate_canonical_job() -> None:
         ctx[6], sources=ctx[1], catalog=production_role_catalog(),
         assignments=ctx[4], capture_contents=ctx[2],
     )
+    curation = replace(
+        curation,
+        clusters=tuple(
+            replace(
+                item,
+                status=ClusterLifecycleStatus.PROPOSED,
+                reviewer_decision=ReviewerDecision.PENDING,
+                decision_reason=None,
+                reviewed_at=None,
+            )
+            for item in curation.clusters
+        ),
+    )
+    curation = migrate_curation_v6_to_v7(
+        curation,
+        sources=ctx[1],
+        catalog=production_role_catalog(),
+        assignments=ctx[4],
+        capture_contents=ctx[2],
+    )
+    for candidate in tuple(curation.candidates):
+        curation = approve_candidate(
+            curation,
+            candidate.candidate_id,
+            reviewer_reference="fixture.candidate_reviewer",
+            reviewed_at=NOW,
+            decision_reason="Fixture reviewer approved this capability.",
+            sources=ctx[1],
+            catalog=production_role_catalog(),
+            assignments=ctx[4],
+            capture_contents=ctx[2],
+        )
+    for cluster in tuple(curation.clusters):
+        curation = confirm_cluster(
+            curation,
+            cluster.cluster_id,
+            reviewer_reference="fixture.cluster_reviewer",
+            reviewed_at=NOW,
+            decision_reason="Fixture reviewer confirmed this semantic Cluster.",
+            sources=ctx[1],
+            catalog=production_role_catalog(),
+            assignments=ctx[4],
+            capture_contents=ctx[2],
+        )
     wrong = build_catalog_draft(
         draft_id="fixture_draft", target_catalog_version="1.1.0", created_at=NOW,
         samples=(RoleSample(ctx[0]["source_id"], "machine_learning_engineer"),),
@@ -644,6 +693,32 @@ def test_builder_rejects_forged_role_and_duplicate_canonical_job() -> None:
         assignments=ctx[4], capture_contents=ctx[2],
     )
     assert BuildBlockerCode.DUPLICATE_CANONICAL_JOB in {item.code for item in duplicate.blockers}
+
+
+def test_role_direction_context_accepts_valid_curation_schema7() -> None:
+    ctx = context()
+    curation = migrate_curation_v5_to_v6(
+        ctx[6],
+        sources=ctx[1],
+        catalog=production_role_catalog(),
+        assignments=ctx[4],
+        capture_contents=ctx[2],
+    )
+    curation = migrate_curation_v6_to_v7(
+        curation,
+        sources=ctx[1],
+        catalog=production_role_catalog(),
+        assignments=ctx[4],
+        capture_contents=ctx[2],
+    )
+    validate_role_direction_context(
+        assignments=ctx[4],
+        live_jobs=ctx[5],
+        curation=curation,
+        sources=ctx[1],
+        catalog=production_role_catalog(),
+        capture_contents=ctx[2],
+    )
 
 
 def test_validation_failure_changes_no_transaction_target(tmp_path) -> None:

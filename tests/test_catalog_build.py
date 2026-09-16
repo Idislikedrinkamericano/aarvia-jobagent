@@ -49,6 +49,17 @@ from aarvia.jd_sources import (
 )
 from aarvia.role_catalog import Phase2ValidationError, production_role_catalog
 from aarvia.requirement_logic import RequirementLogicOperator, RequirementModality
+from aarvia.curation_workflow import (
+    ClusterReviewAction,
+    ClusterReviewRecord,
+    CurationArtifactV7,
+    confirm_candidate_logic_group_v7,
+    confirm_cluster,
+    migrate_curation_v6_to_v7,
+    quarantine_candidate_logic_group,
+    reject_logic_group_and_members,
+    release_logic_group_members,
+)
 from phase2b_fixtures import (
     FAKE_HASH,
     NOW,
@@ -121,7 +132,112 @@ def build_fixture(**kwargs):
             assignments=kwargs["assignments"],
             capture_contents=kwargs["capture_contents"],
         )
+    if isinstance(kwargs["curation"], CurationArtifactV6) and not isinstance(
+        kwargs["curation"], CurationArtifactV7
+    ):
+        v6 = kwargs["curation"]
+        proposed_clusters = tuple(
+            replace(
+                item,
+                status=ClusterLifecycleStatus.PROPOSED,
+                reviewer_decision=ReviewerDecision.PENDING,
+                decision_reason=None,
+                reviewed_at=None,
+            )
+            for item in v6.clusters
+        )
+        v6 = replace(v6, clusters=proposed_clusters)
+        v7 = migrate_curation_v6_to_v7(
+            v6,
+            sources=kwargs["sources"],
+            catalog=kwargs["catalog"],
+            assignments=kwargs["assignments"],
+            capture_contents=kwargs["capture_contents"],
+        )
+        candidate_map = {item.candidate_id: item for item in v7.candidates}
+        for cluster in tuple(v7.clusters):
+            if all(
+                candidate_map[item].status == CandidateLifecycleStatus.APPROVED
+                for item in cluster.candidate_ids
+            ):
+                v7 = confirm_cluster(
+                    v7,
+                    cluster.cluster_id,
+                    reviewer_reference="fixture.cluster_reviewer",
+                    reviewed_at=NOW,
+                    decision_reason="Fixture reviewer confirmed this semantic Cluster.",
+                    sources=kwargs["sources"],
+                    catalog=kwargs["catalog"],
+                    assignments=kwargs["assignments"],
+                    capture_contents=kwargs["capture_contents"],
+                )
+        kwargs["curation"] = v7
     return build_catalog_draft(**kwargs)
+
+
+def upgrade_curation_to_v7(curation, sources, assignments, contents):
+    if isinstance(curation, CurationArtifactV4) and not isinstance(
+        curation, CurationArtifactV5
+    ):
+        curation = migrate_curation_v4_to_v5(
+            curation,
+            assignments=assignments,
+            sources=sources,
+            catalog=production_role_catalog(),
+            capture_contents=contents,
+        )
+    if isinstance(curation, CurationArtifactV5) and not isinstance(
+        curation, CurationArtifactV6
+    ):
+        curation = migrate_curation_v5_to_v6(
+            curation,
+            assignments=assignments,
+            sources=sources,
+            catalog=production_role_catalog(),
+            capture_contents=contents,
+        )
+    if isinstance(curation, CurationArtifactV6) and not isinstance(
+        curation, CurationArtifactV7
+    ):
+        curation = replace(
+            curation,
+            clusters=tuple(
+                replace(
+                    item,
+                    status=ClusterLifecycleStatus.PROPOSED,
+                    reviewer_decision=ReviewerDecision.PENDING,
+                    decision_reason=None,
+                    reviewed_at=None,
+                )
+                for item in curation.clusters
+            ),
+        )
+        curation = migrate_curation_v6_to_v7(
+            curation,
+            sources=sources,
+            catalog=production_role_catalog(),
+            assignments=assignments,
+            capture_contents=contents,
+        )
+        candidate_map = {item.candidate_id: item for item in curation.candidates}
+        for cluster in tuple(curation.clusters):
+            if all(
+                candidate_map[candidate_id].status
+                == CandidateLifecycleStatus.APPROVED
+                for candidate_id in cluster.candidate_ids
+            ):
+                curation = confirm_cluster(
+                    curation,
+                    cluster.cluster_id,
+                    reviewer_reference="fixture.cluster_reviewer",
+                    reviewed_at=NOW,
+                    decision_reason="Fixture reviewer confirmed this semantic Cluster.",
+                    sources=sources,
+                    catalog=production_role_catalog(),
+                    assignments=assignments,
+                    capture_contents=contents,
+                )
+    return curation
 
 
 def contexts(company_count: int, *, tier_a_count: int | None = None, support_count: int | None = None):
@@ -217,6 +333,19 @@ def logic_group_builder_context(
         catalog=production_role_catalog(),
         capture_contents=contents,
     )
+    v6 = replace(
+        v6,
+        clusters=tuple(
+            replace(
+                item,
+                status=ClusterLifecycleStatus.PROPOSED,
+                reviewer_decision=ReviewerDecision.PENDING,
+                decision_reason=None,
+                reviewed_at=None,
+            )
+            for item in v6.clusters
+        ),
+    )
     members = v6.candidates[-2:]
     exact = normalize_jd_content(contents[members[0].capture_id])[:10]
     group = CandidateLogicGroup.create_proposed(
@@ -237,9 +366,23 @@ def logic_group_builder_context(
         ),
         modality=RequirementModality.REQUIRED,
     )
-    proposed = replace(v6, logic_groups=(group,))
-    proposed.validate(sources, production_role_catalog(), assignments, contents)
-    return sources, samples, assignments, contents, proposed, group
+    proposed_v6 = replace(v6, logic_groups=(group,))
+    proposed_v6.validate(sources, production_role_catalog(), assignments, contents)
+    proposed = migrate_curation_v6_to_v7(
+        proposed_v6, sources=sources, catalog=production_role_catalog(),
+        assignments=assignments, capture_contents=contents,
+    )
+    candidate_map = {item.candidate_id: item for item in proposed.candidates}
+    for cluster in tuple(proposed.clusters):
+        if all(candidate_map[item].status == CandidateLifecycleStatus.APPROVED for item in cluster.candidate_ids):
+            proposed = confirm_cluster(
+                proposed, cluster.cluster_id,
+                reviewer_reference="fixture.cluster_reviewer", reviewed_at=NOW,
+                decision_reason="Fixture reviewer confirmed this semantic Cluster.",
+                sources=sources, catalog=production_role_catalog(),
+                assignments=assignments, capture_contents=contents,
+            )
+    return sources, samples, assignments, contents, proposed, proposed.logic_groups[0]
 
 
 def build_logic_fixture(curation, sources, samples, assignments, contents):
@@ -411,7 +554,7 @@ def test_schema_v2_approved_candidate_is_blocked_from_catalog_building() -> None
     assert [item.to_dict() for item in first.blockers] == [
         {
             "code": "curation_schema_upgrade_required",
-            "message": "Catalog building requires Curation schema 6 requirement-logic provenance",
+                "message": "Catalog building requires Curation schema 7 workflow provenance",
             "references": ["fixture_curation", "schema_version=2"],
         }
     ]
@@ -588,7 +731,7 @@ def test_unapproved_candidate_does_not_enter_catalog_draft() -> None:
         samples=samples, sources=sources, curation=curation, catalog=production_role_catalog(),
     )
     assert result.draft is None
-    assert BuildBlockerCode.UNAPPROVED_CANDIDATE in {item.code for item in result.blockers}
+    assert BuildBlockerCode.UNCONFIRMED_CLUSTER in {item.code for item in result.blockers}
 
 
 def test_tier_c_cannot_be_the_only_requirement_evidence() -> None:
@@ -648,16 +791,11 @@ def test_published_catalog_draft_requires_human_publication_approval() -> None:
         publication_reviewed_at=NOW,
     )
     assignments, contents = confirmed_assignments(sources)
-    curation_v5 = migrate_curation_v4_to_v5(
-        curation, assignments=assignments, sources=sources,
-        catalog=production_role_catalog(), capture_contents=contents,
-    )
-    curation_v6 = migrate_curation_v5_to_v6(
-        curation_v5, assignments=assignments, sources=sources,
-        catalog=production_role_catalog(), capture_contents=contents,
+    curation_v7 = upgrade_curation_to_v7(
+        curation, sources, assignments, contents
     )
     CatalogDraft.from_dict(published).validate(
-        sources, curation_v6, production_role_catalog(), assignments, contents
+        sources, curation_v7, production_role_catalog(), assignments, contents
     )
 
 
@@ -720,32 +858,27 @@ def test_catalog_draft_typed_storage_round_trip_and_context(tmp_path, monkeypatc
     )
     assert result.draft is not None
     assignments, contents = confirmed_assignments(sources)
-    curation_v5 = migrate_curation_v4_to_v5(
-        curation, assignments=assignments, sources=sources,
-        catalog=production_role_catalog(), capture_contents=contents,
-    )
-    curation_v6 = migrate_curation_v5_to_v6(
-        curation_v5, assignments=assignments, sources=sources,
-        catalog=production_role_catalog(), capture_contents=contents,
+    curation_v7 = upgrade_curation_to_v7(
+        curation, sources, assignments, contents
     )
     path = save_catalog_draft(
         result.draft, tmp_path / "draft.json", sources=sources,
-        curation=curation_v6, catalog=production_role_catalog(),
+        curation=curation_v7, catalog=production_role_catalog(),
         assignments=assignments, capture_contents=contents,
     )
     duplicate = save_catalog_draft(
         result.draft, tmp_path / "copy.json", sources=sources,
-        curation=curation_v6, catalog=production_role_catalog(),
+        curation=curation_v7, catalog=production_role_catalog(),
         assignments=assignments, capture_contents=contents,
     )
     assert load_catalog_draft(
-        path, sources=sources, curation=curation_v6, catalog=production_role_catalog(),
+        path, sources=sources, curation=curation_v7, catalog=production_role_catalog(),
         assignments=assignments, capture_contents=contents,
     ) == result.draft
     assert path.read_bytes() == duplicate.read_bytes()
 
     legacy = CurationArtifact.from_dict(curation_data(data))
-    with pytest.raises(Phase2ValidationError, match="Curation schema 6"):
+    with pytest.raises(Phase2ValidationError, match="Curation schema 7"):
         load_catalog_draft(
             path,
             sources=sources,
@@ -754,7 +887,7 @@ def test_catalog_draft_typed_storage_round_trip_and_context(tmp_path, monkeypatc
             assignments=assignments,
             capture_contents=contents,
         )
-    with pytest.raises((Phase2ValidationError, TypeError), match="Curation schema 6|CurationArtifactV6"):
+    with pytest.raises((Phase2ValidationError, TypeError), match="Curation schema 7|CurationArtifactV7"):
         save_catalog_draft(
             result.draft,
             tmp_path / "legacy-bypass.json",
@@ -768,14 +901,14 @@ def test_catalog_draft_typed_storage_round_trip_and_context(tmp_path, monkeypatc
     tampered = result.draft.to_dict()
     tampered["requirements"][0]["supporting_company_count"] = 0
     with pytest.raises(Phase2ValidationError, match="prevalence|counts do not match evidence"):
-        CatalogDraft.from_dict(tampered).validate(sources, curation_v6, production_role_catalog(), assignments, contents)
+        CatalogDraft.from_dict(tampered).validate(sources, curation_v7, production_role_catalog(), assignments, contents)
 
     original = path.read_bytes()
     monkeypatch.setattr("aarvia.phase2_storage.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace failed")))
     with pytest.raises(OSError, match="replace failed"):
         save_catalog_draft(
             result.draft, path, sources=sources,
-            curation=curation_v6, catalog=production_role_catalog(),
+            curation=curation_v7, catalog=production_role_catalog(),
             assignments=assignments, capture_contents=contents,
         )
     assert path.read_bytes() == original
@@ -794,7 +927,7 @@ def test_builder_never_flattens_candidate_logic_groups(operator) -> None:
         BuildBlockerCode.UNCONFIRMED_LOGIC_GROUP
     ) == 1
 
-    confirmed = confirm_candidate_logic_group(
+    confirmed = confirm_candidate_logic_group_v7(
         proposed, group.logic_group_id,
         reviewer_reference="fixture.logic_reviewer", reviewed_at=NOW,
         decision_reason="Fixture reviewer confirmed the alternatives.",
@@ -815,7 +948,7 @@ def test_builder_never_flattens_candidate_logic_groups(operator) -> None:
         "references": [group.logic_group_id],
     }]
 
-    rejected = reject_candidate_logic_group(
+    rejected = quarantine_candidate_logic_group(
         proposed, group.logic_group_id,
         reviewer_reference="fixture.logic_reviewer", reviewed_at=NOW,
         decision_reason="Fixture reviewer rejected the proposed relationship.",
@@ -830,14 +963,13 @@ def test_builder_never_flattens_candidate_logic_groups(operator) -> None:
         item
         for item in blocked.blockers
         if item.code
-        == BuildBlockerCode.REJECTED_LOGIC_GROUP_MEMBER_REQUIRES_RESOLUTION
+        == BuildBlockerCode.QUARANTINED_LOGIC_GROUP
     ]
     assert [item.to_dict() for item in resolution_blockers] == [
         {
-            "code": "rejected_logic_group_member_requires_resolution",
+            "code": "quarantined_logic_group",
             "message": (
-                "Rejected Candidate Logic Group members require an independent "
-                "reviewed resolution"
+                "Quarantined Candidate Logic Group requires an explicit final resolution"
             ),
             "references": [group.logic_group_id],
         }
@@ -856,7 +988,9 @@ def test_proposed_cluster_does_not_obscure_logic_group_blocker() -> None:
         decision_reason=None,
         reviewed_at=None,
     )
-    curation = replace(proposed, clusters=(proposed_cluster,))
+    curation = replace(
+        proposed, clusters=(proposed_cluster,), cluster_review_records=()
+    )
     curation.validate(sources, production_role_catalog(), assignments, contents)
 
     result = build_logic_fixture(
@@ -871,7 +1005,7 @@ def test_proposed_cluster_does_not_obscure_logic_group_blocker() -> None:
         if item.code == BuildBlockerCode.UNCONFIRMED_LOGIC_GROUP
     ).references == (group.logic_group_id,)
 
-    rejected = reject_candidate_logic_group(
+    rejected = quarantine_candidate_logic_group(
         curation,
         group.logic_group_id,
         reviewer_reference="fixture.logic_reviewer",
@@ -888,17 +1022,17 @@ def test_proposed_cluster_does_not_obscure_logic_group_blocker() -> None:
     codes = [item.code for item in result.blockers]
     assert result.draft is None
     assert (
-        BuildBlockerCode.REJECTED_LOGIC_GROUP_MEMBER_REQUIRES_RESOLUTION
+        BuildBlockerCode.QUARANTINED_LOGIC_GROUP
         in codes
     )
     assert BuildBlockerCode.UNCONFIRMED_CLUSTER in codes
 
 
-def test_rejected_logic_group_blocks_partial_and_separate_cluster_members() -> None:
+def test_quarantined_logic_group_members_cannot_build_independently() -> None:
     sources, samples, assignments, contents, proposed, group = (
         logic_group_builder_context()
     )
-    rejected = reject_candidate_logic_group(
+    quarantined = quarantine_candidate_logic_group(
         proposed,
         group.logic_group_id,
         reviewer_reference="fixture.logic_reviewer",
@@ -909,143 +1043,21 @@ def test_rejected_logic_group_blocks_partial_and_separate_cluster_members() -> N
         assignments=assignments,
         capture_contents=contents,
     )
-    members = [
-        next(item for item in rejected.candidates if item.candidate_id == member_id)
-        for member_id in group.member_candidate_references
-    ]
-    base_cluster = rejected.clusters[0]
-
-    partial_cluster = replace(
-        base_cluster,
-        candidate_ids=tuple(
-            item for item in base_cluster.candidate_ids
-            if item != members[1].candidate_id
-        ),
-    )
-    partial_candidates = tuple(
-        replace(item, cluster_id=None)
-        if item.candidate_id == members[1].candidate_id
-        else item
-        for item in rejected.candidates
-    )
-    partial = replace(
-        rejected, candidates=partial_candidates, clusters=(partial_cluster,)
-    )
-    partial.validate(sources, production_role_catalog(), assignments, contents)
     result = build_logic_fixture(
-        partial, sources, samples, assignments, contents
+        quarantined, sources, samples, assignments, contents
     )
     assert result.draft is None
-    assert BuildBlockerCode.REJECTED_LOGIC_GROUP_MEMBER_REQUIRES_RESOLUTION in {
+    assert BuildBlockerCode.QUARANTINED_LOGIC_GROUP in {
         item.code for item in result.blockers
     }
-
-    remaining_ids = tuple(
-        item for item in base_cluster.candidate_ids
-        if item not in group.member_candidate_references
-    )
-    remaining_candidate_map = {
-        item.candidate_id: item for item in rejected.candidates
-    }
-    remaining_assignments = tuple(
-        sorted(
-            {
-                remaining_candidate_map[item].role_assignment_reference
-                for item in remaining_ids
-            }
-        )
-    )
-    remaining_cluster_id = generate_cluster_v5_id(
-        normalized_name=base_cluster.normalized_name,
-        role_id=base_cluster.role_id,
-        specialization_id=base_cluster.specialization_id,
-        category=base_cluster.category,
-        role_assignment_references=remaining_assignments,
-    )
-    remaining_cluster = replace(
-        base_cluster,
-        cluster_id=remaining_cluster_id,
-        candidate_ids=remaining_ids,
-        role_assignment_references=remaining_assignments,
-    )
-    new_clusters = []
-    candidate_cluster_ids = {}
-    for index, member in enumerate(members, start=1):
-        name = f"Separated fixture capability {index}"
-        cluster_id = generate_cluster_v5_id(
-            normalized_name=name,
-            role_id=member.mapped_role_id,
-            specialization_id=member.mapped_specialization_id,
-            category=member.proposed_category,
-            role_assignment_references=(member.role_assignment_reference,),
-        )
-        candidate_cluster_ids[member.candidate_id] = cluster_id
-        new_clusters.append(
-            RequirementClusterV5.from_dict(
-                {
-                    "cluster_id": cluster_id,
-                    "normalized_name": name,
-                    "normalized_description": "Separated fixture capability.",
-                    "role_id": member.mapped_role_id,
-                    "specialization_id": member.mapped_specialization_id,
-                    "category": member.proposed_category.value,
-                    "importance": member.proposed_importance.value,
-                    "candidate_ids": [member.candidate_id],
-                    "status": "confirmed",
-                    "reviewer_decision": "approve",
-                    "decision_reason": "Fixture cluster confirmation.",
-                    "reviewed_at": NOW,
-                    "role_assignment_references": [
-                        member.role_assignment_reference
-                    ],
-                }
-            )
-        )
-    separate_candidates = tuple(
-        replace(item, cluster_id=candidate_cluster_ids[item.candidate_id])
-        if item.candidate_id in candidate_cluster_ids
-        else replace(item, cluster_id=remaining_cluster_id)
-        if item.candidate_id in remaining_ids
-        else item
-        for item in rejected.candidates
-    )
-    separate = replace(
-        rejected,
-        candidates=separate_candidates,
-        clusters=(remaining_cluster, *new_clusters),
-    )
-    separate.validate(sources, production_role_catalog(), assignments, contents)
-    result = build_logic_fixture(
-        separate, sources, samples, assignments, contents
-    )
-    assert result.draft is None
-    assert [
-        item.code for item in result.blockers
-    ].count(
-        BuildBlockerCode.REJECTED_LOGIC_GROUP_MEMBER_REQUIRES_RESOLUTION
-    ) == 1
 
 
 def test_logic_group_blockers_are_complete_stable_and_not_per_member() -> None:
     sources, samples, assignments, contents, proposed, first = (
         logic_group_builder_context(RequirementLogicOperator.ANY_OF)
     )
-    second = CandidateLogicGroup.create_proposed(
-        operator=RequirementLogicOperator.ALL_OF,
-        member_candidate_references=first.member_candidate_references,
-        source_reference=first.source_reference,
-        capture_reference=first.capture_reference,
-        source_content_hash=first.source_content_hash,
-        role_assignment_reference=first.role_assignment_reference,
-        mapped_role_id=first.mapped_role_id,
-        mapped_specialization_id=first.mapped_specialization_id,
-        evidence=first.evidence,
-        modality=first.modality,
-    )
-    curation = replace(proposed, logic_groups=(first, second))
-    curation.validate(sources, production_role_catalog(), assignments, contents)
     result = build_logic_fixture(
-        curation, sources, samples, assignments, contents
+        proposed, sources, samples, assignments, contents
     )
     logic_blockers = [
         item for item in result.blockers
@@ -1053,18 +1065,17 @@ def test_logic_group_blockers_are_complete_stable_and_not_per_member() -> None:
     ]
     assert result.draft is None
     assert [item.references for item in logic_blockers] == [
-        (item.logic_group_id,)
-        for item in sorted((first, second), key=lambda item: item.logic_group_id)
+        (first.logic_group_id,)
     ]
     repeated = build_logic_fixture(
-        curation, sources, samples, assignments, contents
+        proposed, sources, samples, assignments, contents
     )
     assert [item.to_dict() for item in result.blockers] == [
         item.to_dict() for item in repeated.blockers
     ]
 
-    confirmed = confirm_candidate_logic_group(
-        curation,
+    confirmed = confirm_candidate_logic_group_v7(
+        proposed,
         first.logic_group_id,
         reviewer_reference="fixture.logic_reviewer",
         reviewed_at=NOW,
@@ -1074,9 +1085,16 @@ def test_logic_group_blockers_are_complete_stable_and_not_per_member() -> None:
         assignments=assignments,
         capture_contents=contents,
     )
-    mixed = reject_candidate_logic_group(
-        confirmed,
-        second.logic_group_id,
+    confirmed_result = build_logic_fixture(
+        confirmed, sources, samples, assignments, contents
+    )
+    assert BuildBlockerCode.PRODUCTION_REQUIREMENT_LOGIC_CONTRACT_REQUIRED in {
+        item.code for item in confirmed_result.blockers
+    }
+
+    quarantined = quarantine_candidate_logic_group(
+        proposed,
+        first.logic_group_id,
         reviewer_reference="fixture.logic_reviewer",
         reviewed_at=NOW,
         decision_reason="Fixture reviewer rejected the second relationship.",
@@ -1085,16 +1103,13 @@ def test_logic_group_blockers_are_complete_stable_and_not_per_member() -> None:
         assignments=assignments,
         capture_contents=contents,
     )
-    mixed_result = build_logic_fixture(
-        mixed, sources, samples, assignments, contents
+    quarantined_result = build_logic_fixture(
+        quarantined, sources, samples, assignments, contents
     )
-    mixed_codes = {item.code for item in mixed_result.blockers}
-    assert mixed_result.draft is None
-    assert BuildBlockerCode.PRODUCTION_REQUIREMENT_LOGIC_CONTRACT_REQUIRED in mixed_codes
-    assert (
-        BuildBlockerCode.REJECTED_LOGIC_GROUP_MEMBER_REQUIRES_RESOLUTION
-        in mixed_codes
-    )
+    assert quarantined_result.draft is None
+    assert BuildBlockerCode.QUARANTINED_LOGIC_GROUP in {
+        item.code for item in quarantined_result.blockers
+    }
 
 
 def test_candidate_extracted_members_and_proposed_cluster_report_both_blockers() -> None:
@@ -1126,6 +1141,10 @@ def test_candidate_extracted_members_and_proposed_cluster_report_both_blockers()
         candidate_ids=tuple(
             sorted((*base.clusters[0].candidate_ids, second.candidate_id))
         ),
+        status=ClusterLifecycleStatus.PROPOSED,
+        reviewer_decision=ReviewerDecision.PENDING,
+        decision_reason=None,
+        reviewed_at=None,
     )
     group = CandidateLogicGroup.create_proposed(
         operator=RequirementLogicOperator.ANY_OF,
@@ -1154,6 +1173,13 @@ def test_candidate_extracted_members_and_proposed_cluster_report_both_blockers()
         logic_groups=(group,),
     )
     curation.validate(sources, production_role_catalog(), assignments, contents)
+    curation = migrate_curation_v6_to_v7(
+        curation,
+        sources=sources,
+        catalog=production_role_catalog(),
+        assignments=assignments,
+        capture_contents=contents,
+    )
     result = build_catalog_draft(
         draft_id="fixture_logic_draft",
         target_catalog_version="1.1.0",
@@ -1171,7 +1197,7 @@ def test_candidate_extracted_members_and_proposed_cluster_report_both_blockers()
     assert BuildBlockerCode.UNCONFIRMED_CLUSTER in codes
 
 
-def test_catalog_draft_storage_cannot_bypass_rejected_logic_group(
+def test_catalog_draft_storage_cannot_bypass_quarantined_logic_group(
     tmp_path,
 ) -> None:
     _, sources, curation, samples = contexts(6)
@@ -1186,24 +1212,14 @@ def test_catalog_draft_storage_cannot_bypass_rejected_logic_group(
     )
     assert valid.draft is not None
     assignments, contents = confirmed_assignments(sources)
-    valid_v6 = migrate_curation_v5_to_v6(
-        migrate_curation_v4_to_v5(
-            curation,
-            assignments=assignments,
-            sources=sources,
-            catalog=production_role_catalog(),
-            capture_contents=contents,
-        ),
-        assignments=assignments,
-        sources=sources,
-        catalog=production_role_catalog(),
-        capture_contents=contents,
+    valid_v7 = upgrade_curation_to_v7(
+        curation, sources, assignments, contents
     )
     path = save_catalog_draft(
         valid.draft,
         tmp_path / "draft.json",
         sources=sources,
-        curation=valid_v6,
+        curation=valid_v7,
         catalog=production_role_catalog(),
         assignments=assignments,
         capture_contents=contents,
@@ -1213,7 +1229,7 @@ def test_catalog_draft_storage_cannot_bypass_rejected_logic_group(
     group_sources, _, group_assignments, group_contents, proposed, group = (
         logic_group_builder_context()
     )
-    rejected = reject_candidate_logic_group(
+    quarantined = quarantine_candidate_logic_group(
         proposed,
         group.logic_group_id,
         reviewer_reference="fixture.logic_reviewer",
@@ -1224,31 +1240,178 @@ def test_catalog_draft_storage_cannot_bypass_rejected_logic_group(
         assignments=group_assignments,
         capture_contents=group_contents,
     )
-    with pytest.raises(Phase2ValidationError, match="independent reviewed resolution"):
+    with pytest.raises(Phase2ValidationError, match="explicit final resolution"):
         valid.draft.validate(
             group_sources,
-            rejected,
+            quarantined,
             production_role_catalog(),
             group_assignments,
             group_contents,
         )
-    with pytest.raises(Phase2ValidationError, match="independent reviewed resolution"):
+    with pytest.raises(Phase2ValidationError, match="explicit final resolution"):
         save_catalog_draft(
             valid.draft,
             path,
             sources=group_sources,
-            curation=rejected,
+            curation=quarantined,
             catalog=production_role_catalog(),
             assignments=group_assignments,
             capture_contents=group_contents,
         )
     assert path.read_bytes() == original
-    with pytest.raises(Phase2ValidationError, match="independent reviewed resolution"):
+    with pytest.raises(Phase2ValidationError, match="explicit final resolution"):
         load_catalog_draft(
             path,
             sources=group_sources,
-            curation=rejected,
+            curation=quarantined,
             catalog=production_role_catalog(),
             assignments=group_assignments,
             capture_contents=group_contents,
         )
+
+
+def test_released_logic_group_members_can_build_as_confirmed_cluster() -> None:
+    sources, samples, assignments, contents, proposed, group = (
+        logic_group_builder_context()
+    )
+    released = release_logic_group_members(
+        proposed,
+        group.logic_group_id,
+        reviewer_reference="fixture.logic_reviewer",
+        reviewed_at=NOW,
+        decision_reason="Fixture reviewer released the atomic members.",
+        sources=sources,
+        catalog=production_role_catalog(),
+        assignments=assignments,
+        capture_contents=contents,
+    )
+    result = build_logic_fixture(
+        released, sources, samples, assignments, contents
+    )
+    assert result.blockers == ()
+    assert result.draft is not None
+    result.draft.validate(
+        sources,
+        released,
+        production_role_catalog(),
+        assignments,
+        contents,
+    )
+
+
+def test_catalog_draft_validation_rejects_extra_unclustered_approval() -> None:
+    _, sources, curation, samples = contexts(6)
+    assignments, contents = confirmed_assignments(sources)
+    curation_v7 = upgrade_curation_to_v7(
+        curation, sources, assignments, contents
+    )
+    built = build_catalog_draft(
+        draft_id="fixture_draft",
+        target_catalog_version="1.1.0",
+        created_at=NOW,
+        samples=samples,
+        sources=sources,
+        curation=curation_v7,
+        catalog=production_role_catalog(),
+        assignments=assignments,
+        capture_contents=contents,
+    )
+    assert built.draft is not None
+    parent = curation_v7.candidates[0]
+    name = "Unclustered approved fixture capability"
+    candidate_id = generate_candidate_v4_id(
+        parent.source_id, parent.capture_id, parent.evidence, name
+    )
+    extra = replace(
+        parent,
+        candidate_id=candidate_id,
+        proposed_name=name,
+        proposed_description="Unclustered approved fixture capability.",
+        cluster_id=None,
+        reviewed_at=NOW,
+        decision_reason="Fixture reviewer approved the capability.",
+    )
+    review = CandidateReviewRecord.create(
+        parent_candidate_id=candidate_id,
+        action=CandidateReviewAction.APPROVE,
+        successor_candidate_ids=(),
+        reviewer_reference="fixture.candidate_reviewer",
+        reviewed_at=NOW,
+        decision_reason="Fixture reviewer approved the capability.",
+    )
+    bypass = replace(
+        curation_v7,
+        candidates=(*curation_v7.candidates, extra),
+        review_records=(*curation_v7.review_records, review),
+    )
+    bypass.validate(sources, production_role_catalog(), assignments, contents)
+    with pytest.raises(Phase2ValidationError, match="not in a confirmed Cluster"):
+        built.draft.validate(
+            sources,
+            bypass,
+            production_role_catalog(),
+            assignments,
+            contents,
+        )
+
+
+def test_rejected_cluster_history_does_not_block_confirmed_current_cluster() -> None:
+    _, sources, curation, samples = contexts(6)
+    assignments, contents = confirmed_assignments(sources)
+    curation_v7 = upgrade_curation_to_v7(
+        curation, sources, assignments, contents
+    )
+    current = curation_v7.clusters[0]
+    historical_name = "Rejected historical fixture capability"
+    historical = replace(
+        current,
+        cluster_id=generate_cluster_v5_id(
+            normalized_name=historical_name,
+            role_id=current.role_id,
+            specialization_id=current.specialization_id,
+            category=current.category,
+            role_assignment_references=current.role_assignment_references,
+        ),
+        normalized_name=historical_name,
+        status=ClusterLifecycleStatus.REJECTED,
+        reviewer_decision=ReviewerDecision.REJECT,
+        decision_reason="Fixture reviewer rejected the historical Cluster.",
+        reviewed_at=NOW,
+    )
+    historical_review = ClusterReviewRecord.create(
+        cluster=historical,
+        action=ClusterReviewAction.REJECT,
+        reviewer_reference="fixture.cluster_reviewer",
+        reviewed_at=NOW,
+        decision_reason=historical.decision_reason,
+    )
+    with_history = replace(
+        curation_v7,
+        clusters=(*curation_v7.clusters, historical),
+        cluster_review_records=(
+            *curation_v7.cluster_review_records,
+            historical_review,
+        ),
+    )
+    with_history.validate(
+        sources, production_role_catalog(), assignments, contents
+    )
+
+    result = build_catalog_draft(
+        draft_id="fixture_draft_with_rejected_history",
+        target_catalog_version="1.1.0",
+        created_at=NOW,
+        samples=samples,
+        sources=sources,
+        curation=with_history,
+        catalog=production_role_catalog(),
+        assignments=assignments,
+        capture_contents=contents,
+    )
+
+    assert result.blockers == ()
+    assert result.draft is not None
+    assert all(
+        item.cluster_id != historical.cluster_id
+        for item in result.draft.requirements
+    )

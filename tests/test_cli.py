@@ -148,7 +148,7 @@ def test_version_flag(capsys) -> None:
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert "aarvia 0.6.7" in capsys.readouterr().out
+    assert "aarvia 0.6.8" in capsys.readouterr().out
 
 
 def test_debug_mode_reports_raw_parsing_details(tmp_path) -> None:
@@ -165,7 +165,7 @@ def test_debug_mode_reports_raw_parsing_details(tmp_path) -> None:
     joined = "\n".join(output)
     assert exit_code == 1
     assert "may contain personal information" in joined
-    assert "Aarvia version: 0.6.7" in joined
+    assert "Aarvia version: 0.6.8" in joined
     assert "Provider model: qwen-test" in joined
     assert "Provider base URL host: workspace.example" in joined
     assert "Extraction protocol: responses" in joined

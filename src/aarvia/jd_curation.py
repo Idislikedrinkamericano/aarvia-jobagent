@@ -2371,6 +2371,23 @@ def _finish_review(
     assignments: "RoleAssignmentArtifact | None" = None,
     capture_contents: Mapping[str, str] | None = None,
 ) -> CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5:
+    from .curation_workflow import (
+        CurationArtifactV7,
+        detach_inactive_candidate_for_review,
+    )
+
+    if isinstance(artifact, CurationArtifactV7):
+        from .role_assignments import RoleAssignmentArtifact
+
+        if (
+            not isinstance(assignments, RoleAssignmentArtifact)
+            or capture_contents is None
+            or not isinstance(sources, JDSourceCollectionV3)
+        ):
+            raise Phase2ValidationError(
+                "Curation schema 7 review requires Role Assignments and capture content"
+            )
+        artifact.validate(sources, catalog, assignments, capture_contents)
     candidates = tuple(
         reviewed_parent if item.candidate_id == parent.candidate_id else item
         for item in artifact.candidates
@@ -2380,7 +2397,20 @@ def _finish_review(
         candidates=candidates,
         review_records=(*artifact.review_records, review),
     )
-    if isinstance(result, CurationArtifactV6):
+    if isinstance(result, CurationArtifactV7):
+        if reviewed_parent.status in {
+            CandidateLifecycleStatus.REJECTED,
+            CandidateLifecycleStatus.SUPERSEDED,
+        }:
+            result = detach_inactive_candidate_for_review(
+                result, reviewed_parent.candidate_id
+            )
+        from .role_assignments import RoleAssignmentArtifact
+        if not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None or not isinstance(sources, JDSourceCollectionV3):
+            raise Phase2ValidationError("Curation schema 7 review requires Role Assignments and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        result.validate(sources, catalog, assignments, capture_contents)
+    elif isinstance(result, CurationArtifactV6):
         from .role_assignments import RoleAssignmentArtifact
         if not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None or not isinstance(sources, JDSourceCollectionV3):
             raise Phase2ValidationError("Curation schema 6 review requires Role Assignments and capture content")
@@ -2410,8 +2440,6 @@ def approve_candidate(
     capture_contents: Mapping[str, str] | None = None,
 ) -> CurationArtifactV3 | CurationArtifactV4 | CurationArtifactV5:
     parent = _reviewable_candidate(artifact, candidate_id)
-    if parent.cluster_id is None:
-        raise Phase2ValidationError("approved candidate must belong to a proposed cluster")
     reviewed_parent = replace(
         parent,
         status=CandidateLifecycleStatus.APPROVED,
@@ -2673,9 +2701,17 @@ def save_curation_artifact(
 ) -> Path:
     from .role_assignments import RoleAssignmentArtifact
 
-    if not isinstance(value, (CurationArtifact, CurationArtifactV3, CurationArtifactV4, CurationArtifactV5, CurationArtifactV6)):
+    from .curation_workflow import CurationArtifactV7
+
+    if not isinstance(value, (CurationArtifact, CurationArtifactV3, CurationArtifactV4, CurationArtifactV5, CurationArtifactV6, CurationArtifactV7)):
         raise TypeError("value must be a CurationArtifact")
-    if isinstance(value, CurationArtifactV6):
+    if isinstance(value, CurationArtifactV7):
+        if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+            raise Phase2ValidationError("Curation schema 7 requires Source schema 3, Role Assignments, and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        value.validate(sources, catalog, assignments, capture_contents)
+        canonical = CurationArtifactV7.from_dict(value.to_dict())
+    elif isinstance(value, CurationArtifactV6):
         if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
             raise Phase2ValidationError("Curation schema 6 requires Source schema 3, Role Assignments, and capture content")
         assignments.validate(sources, catalog, capture_contents)
@@ -2692,7 +2728,7 @@ def save_curation_artifact(
     else:
         value.validate(sources, catalog)
     from .phase2_storage import save_phase2_json
-    if isinstance(value, (CurationArtifactV5, CurationArtifactV6)):
+    if isinstance(value, (CurationArtifactV5, CurationArtifactV6, CurationArtifactV7)):
         pass
     elif isinstance(value, CurationArtifactV4):
         canonical = CurationArtifactV4.from_dict(value.to_dict())
@@ -2713,6 +2749,7 @@ def load_curation_artifact(
 ) -> CurationArtifactType:
     from .phase2_storage import load_phase2_json
     from .role_assignments import RoleAssignmentArtifact
+    from .curation_workflow import CURATION_SCHEMA_V7_VERSION, CurationArtifactV7
     data = _mapping(load_phase2_json(path), "curation")
     schema_version = data.get("schema_version")
     if schema_version == CURATION_SCHEMA_VERSION:
@@ -2725,8 +2762,16 @@ def load_curation_artifact(
         value = CurationArtifactV5.from_dict(data)
     elif schema_version == CURATION_SCHEMA_V6_VERSION:
         value = CurationArtifactV6.from_dict(data)
+    elif schema_version == CURATION_SCHEMA_V7_VERSION:
+        value = CurationArtifactV7.from_dict(data)
     else:
         raise Phase2ValidationError("unsupported Curation schema version")
+    if isinstance(value, CurationArtifactV7):
+        if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
+            raise Phase2ValidationError("Curation schema 7 requires Source schema 3, Role Assignments, and capture content")
+        assignments.validate(sources, catalog, capture_contents)
+        value.validate(sources, catalog, assignments, capture_contents)
+        return value
     if isinstance(value, CurationArtifactV6):
         if not isinstance(sources, JDSourceCollectionV3) or not isinstance(assignments, RoleAssignmentArtifact) or capture_contents is None:
             raise Phase2ValidationError("Curation schema 6 requires Source schema 3, Role Assignments, and capture content")

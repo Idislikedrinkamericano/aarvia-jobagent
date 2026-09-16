@@ -8,7 +8,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.6.7 — Logic Group 发布安全修复已完成。**
+**版本 0.6.8 — Curation 工作流契约已补齐。**
 
 - ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
 - ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
@@ -19,6 +19,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 - ✅ Requirement Candidate 的 approve、reject、revise、split 可机读 lineage
 - ✅ 每个 canonical job 的 Role Family 以人工确认的 Role Assignment 为唯一权威来源
 - ✅ 非递归 `all_of` / `any_of` Candidate 逻辑与确定性人工审核 provenance
+- ✅ Candidate 独立审核、受控 Cluster 审核与明确的 Logic Group resolution
 - ⏳ 有来源的 Role Requirements、推荐、Gap 和真实岗位尚未实现
 
 当前 production Catalog 故意保持 **0 条 requirement、0 个 source**。它是一套带护栏的 taxonomy，不是一件塞满虚构就业市场知识的风衣。🕵️
@@ -146,14 +147,15 @@ Phase 2B 开始排名前，Aarvia 仍需建立一份经过审查、由真实官�
 - Live Job schema 4 与 Curation schema 5 仅将兼容 Role 字段作为 current Assignment 的受验证 projection；旧 schema 仍显式可读。
 - Reclassification 会整体更新 Assignment、Live Job 与 Curation。仅未审核 Candidate 和单岗位 proposed Cluster 可安全自动处理；已有审核、lineage、confirmed/rejected Cluster 或 mixed-job Cluster 会结构化阻断。
 - Curation schema 6 可以把同一来源 clause 保存为一组非递归 `all_of` 或 `any_of` 原子 Candidate。Python 负责稳定 ID、验证和真值聚合；Provider 只能提出逻辑；人工负责确认或拒绝。
-- Catalog draft 只消费与 confirmed Assignment 一致的 schema 6 approved leaf。Logic Group member 不会被静默展平成独立 requirement；confirmed group 会返回 `production_requirement_logic_contract_required`，直到未来 Production Catalog 能无损表达该逻辑。
-- 拒绝一个 proposed Logic Group 只表示拒绝这层逻辑关系，并不等于独立批准其中的成员发布。proposed、confirmed 和 rejected group 都会阻止 Catalog 构建，直到出现明确且安全的后续处理路径。
+- Curation schema 7 将 Candidate 事实审核与 Cluster 归并分开。Proposed Cluster 只能通过受控 API 创建、分配、移除、合并和拆分；确认或拒绝会生成绑定精确语义快照的确定性人工 Review。
+- Logic Group 现在支持六种明确结果：confirm、quarantine、reject members、release members、revise 和 split。当前有效绑定由已审核 lineage 确定，released 或 superseded 历史不会伪装成当前逻辑。
+- Catalog draft 只消费 schema 7 中位于 current confirmed Cluster、且与 confirmed Assignment 一致的 approved leaf。未聚类批准项和未解决 Logic Group 会被阻断；confirmed logic 仍返回 `production_requirement_logic_contract_required`，直到存在 Production Requirement Logic schema。
 - Builder 会独立聚合 Logic Group blocker；即使 Cluster 尚未确认，也不会遮蔽 group 层面的安全诊断。
 - 同一 canonical job 不能进入两个 Role Family，多个 capture、split successor 或 logic branch 也不能扩大公司样本数。
 - 完整 JD 与 Pilot artifact 只能保存在被忽略的 `local_data/`；本次契约修复不会修改它们。
 - 真实 Pilot 中待重新分类的岗位尚未迁移；Clause Coverage 与样本计数只能在另行批准的本地迁移后重新生成。
-- 真实 Candidate Completion Plan 尚未迁移，没有创建或确认真实 Logic Group，也没有计算正式 prevalence。
-- 经人工审核的 member-release 流程和 production requirement logic schema 均有意留待后续设计，本轮没有实现。
+- 真实 schema 6 Candidate Completion artifact 仍仅在本地且未被修改；它尚未迁移到 schema 7，没有改变任何审核状态，也没有计算正式 prevalence。
+- 真实 schema 6 Curation artifact 尚未迁移或审核。Production Requirement Logic、prevalence 发布、Gap Analysis 与 Role Recommendation 仍明确未实现。
 - Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。包含推荐用户能力的完整 Phase 2B 才会升级为项目版本 `0.7.0`。
 
 ## 设计原则
