@@ -8,7 +8,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.6.8 — Curation 工作流契约已补齐。**
+**版本 0.7.0 — 可解释的 Role Recommendation 已可使用。**
 
 - ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
 - ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
@@ -20,7 +20,10 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 - ✅ 每个 canonical job 的 Role Family 以人工确认的 Role Assignment 为唯一权威来源
 - ✅ 非递归 `all_of` / `any_of` Candidate 逻辑与确定性人工审核 provenance
 - ✅ Candidate 独立审核、受控 Cluster 审核与明确的 Logic Group resolution
-- ⏳ 有来源的 Role Requirements、推荐、Gap 和真实岗位尚未实现
+- ✅ 可打包的 Capability Rubric：三个 MVP Role Family、20 个能力维度
+- ✅ 确定性 Current Fit、Directional Fit、约束、置信度、并列与追问
+- ✅ Recommendation schema 2、严格 Profile fingerprint provenance 与原子 JSON 保存
+- ⏳ User Decision、Gap Analysis、真实岗位发现和简历链路尚未实现
 
 当前 production Catalog 故意保持 **0 条 requirement、0 个 source**。它是一套带护栏的 taxonomy，不是一件塞满虚构就业市场知识的风衣。🕵️
 
@@ -63,7 +66,14 @@ aarvia discover --follow-up \
 
 # 不需要 LLM
 aarvia discover --manual
+
+# 使用离线、已验证的 mapping 生成可解释推荐
+aarvia recommend --profile data/profiles/example.json \
+  --mapping-candidates mapping-candidates.json \
+  --output recommendation.json
 ```
+
+不提供 `--mapping-candidates` 时，`aarvia recommend` 会使用已配置的 OpenAI-compatible Provider，但 Provider 只能提出 Profile-to-Dimension mapping。所有分数、等级、置信度、并列和排名都由 Python 验证并计算。
 
 Follow-up 命令：
 
@@ -106,12 +116,9 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 ## Phase 2 地图
 
 - **2A — 数据契约：** 已完成。Role taxonomy、provenance、recommendation、decision、gap 和 live-job schema 均可严格验证与序列化。
-- **2B — Role Recommendation：** 2B-1 source/curation foundation 已完成；推荐排名尚未实现。
-- **2C — User Decision：** 未实现。推荐结果和用户确认决定始终是两个独立对象。
-- **2D — Role-level Gap Analysis：** 未实现。契约明确保留 `unknown != missing`。
-- **2E — Live Job Discovery：** 未实现。官方页面和职位状态将在这里验证。
-- **2F — Preliminary Job Matching：** 未实现。它描述 JD requirement coverage，不代表面试或 offer 概率。
-- **2G — 端到端加固：** 未实现。
+- **2B — 市场证据与 Curation：** source、capture、assignment、candidate、logic 和 review 基础已完成。
+- **2C — Role Recommendation：** 已支持 Applied AI Engineer、Machine Learning Engineer 和 Research Engineer；Current Fit 与 Directional Fit 始终分开。
+- **2D–2G：** User Decision、Role-level Gap Analysis、真实岗位流程、匹配与端到端加固仍是后续工作。
 
 **Role Fit 与 Job Fit 不是一回事。** 某个 Role Family 可以是合理方向，但某条具体职位仍可能存在资格冲突。详细 JD Matching 和简历工作依然位于 Evidence Bank 与 Base Resume 之后。
 
@@ -130,7 +137,7 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - application URL 的“已提供”和“已验证”是两种状态；验证另有状态、时间和来源引用。
 - Live Job 必须具备官方来源契约，但 Phase 2A 不搜索或验证任何真实岗位。
 
-Phase 2B 开始排名前，Aarvia 仍需建立一份经过审查、由真实官方职位来源支持的 Role Requirements 数据集。空 requirements 不等于市场证据。
+打包的 Capability Rubric 与 Production Role Catalog 是两个独立对象。Rubric 为推荐提供经过审查的聚合能力维度；Catalog 仍故意保持 0 条已发布 requirement 和 0 个 source。
 
 ### Phase 2B-1 Source Foundation
 
@@ -156,7 +163,7 @@ Phase 2B 开始排名前，Aarvia 仍需建立一份经过审查、由真实官�
 - 真实 Pilot 中待重新分类的岗位尚未迁移；Clause Coverage 与样本计数只能在另行批准的本地迁移后重新生成。
 - 真实 schema 6 Candidate Completion artifact 仍仅在本地且未被修改；它尚未迁移到 schema 7，没有改变任何审核状态，也没有计算正式 prevalence。
 - 真实 schema 6 Curation artifact 尚未迁移或审核。Production Requirement Logic、prevalence 发布、Gap Analysis 与 Role Recommendation 仍明确未实现。
-- Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。包含推荐用户能力的完整 Phase 2B 才会升级为项目版本 `0.7.0`。
+- Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。`0.7.0` 实现推荐，但不会把未发布要求伪装成 Catalog 数据。
 
 ## 设计原则
 

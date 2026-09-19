@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.6.8 — Curation workflow contracts complete.**
+**Version 0.7.0 — Explainable Role Recommendation is ready.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -20,7 +20,10 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 - ✅ Human-confirmed Role Assignment is the authority for each canonical job's Role Family
 - ✅ Non-recursive `all_of` / `any_of` Candidate logic with deterministic review provenance
 - ✅ Independent Candidate review, controlled Cluster review, and explicit Logic Group resolution
-- ⏳ Source-backed Role Requirements, recommendations, gaps, and live jobs are not implemented
+- ✅ Packaged Capability Rubric: 20 dimensions across three MVP Role Families
+- ✅ Deterministic Current Fit, Directional Fit, constraints, confidence, ties, and follow-ups
+- ✅ Recommendation schema 2 with strict Profile fingerprint provenance and atomic JSON storage
+- ⏳ User Decision, Gap Analysis, live-job discovery, and resume work are not implemented
 
 The production Catalog deliberately contains **zero requirements and zero sources** today. It is a taxonomy with guardrails, not a trench coat full of invented labor-market facts. 🕵️
 
@@ -63,7 +66,14 @@ aarvia discover --follow-up \
 
 # No LLM required
 aarvia discover --manual
+
+# Generate an explainable recommendation from offline validated mappings
+aarvia recommend --profile data/profiles/example.json \
+  --mapping-candidates mapping-candidates.json \
+  --output recommendation.json
 ```
+
+Without `--mapping-candidates`, `aarvia recommend` uses the configured OpenAI-compatible Provider only to propose Profile-to-Dimension mappings. Python validates references and calculates every score, band, confidence result, tie, and rank.
 
 Follow-up commands:
 
@@ -106,12 +116,9 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 ## Phase 2 Map
 
 - **2A — Contracts:** complete. Role taxonomy, provenance, recommendation, decision, gap, and live-job schemas are validated and serializable.
-- **2B — Role Recommendation:** 2B-1 source/curation foundation is complete; recommendation ranking is not implemented.
-- **2C — User Decision:** not implemented. Recommendation and confirmed user choice remain separate objects.
-- **2D — Role-level Gap Analysis:** not implemented. Its contract preserves `unknown != missing`.
-- **2E — Live Job Discovery:** not implemented. This is where official pages and listing status will be checked.
-- **2F — Preliminary Job Matching:** not implemented. It will describe JD requirement coverage, not interview or offer probability.
-- **2G — End-to-end hardening:** not implemented.
+- **2B — Market evidence and curation:** source, capture, assignment, candidate, logic, and review foundations are complete.
+- **2C — Role Recommendation:** implemented for Applied AI Engineer, Machine Learning Engineer, and Research Engineer. Current Fit and Directional Fit remain separate.
+- **2D–2G:** User Decision, role-level Gap Analysis, live-job workflows, matching, and end-to-end hardening remain future work.
 
 **Role Fit and Job Fit are different.** A Role Family can be a sensible direction while a particular job has an eligibility conflict. Detailed JD Matching and resume work still happen after the Evidence Bank and Base Resume stages.
 
@@ -130,7 +137,7 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - An application URL being present is separate from being verified. Verification has its own status, timestamp, and source reference.
 - A live job requires an official source contract, but no real job discovery or verification occurs in 2A.
 
-Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Role Requirements backed by traceable official job sources. Empty requirements are not market evidence.
+The packaged Capability Rubric is separate from the Production Role Catalog. It provides reviewed aggregate dimensions for recommendation, while the Catalog deliberately remains at zero published requirements and sources.
 
 ### Phase 2B-1 Source Foundation
 
@@ -156,7 +163,7 @@ Before Phase 2B can rank roles, Aarvia still needs a reviewed dataset of real Ro
 - The real Pilot job identified for reclassification has not been migrated. Clause Coverage and sample counts must be regenerated only after a separately approved local migration.
 - The real schema 6 Candidate Completion artifact remains local and unmodified. It has not been migrated to schema 7, no review state changed, and no formal prevalence has been calculated.
 - The real schema 6 Curation artifact has not been migrated or reviewed. Production requirement logic, prevalence publication, Gap Analysis, and Role Recommendation remain intentionally unimplemented.
-- The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Phase 2B completion, including recommendation behavior, will use project version `0.7.0`.
+- The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Version `0.7.0` adds recommendation behavior without pretending those unpublished requirements exist.
 
 ## Design Principles
 

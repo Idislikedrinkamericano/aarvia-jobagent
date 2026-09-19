@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Sequence
@@ -14,6 +15,15 @@ from .interview import InputFunction, OutputFunction, run_discovery
 from .llm_client import LLMConfigurationError, LLMRequestError
 from .narrative_extraction import ExtractionDebugError, NarrativeExtractor, OpenAINarrativeExtractor
 from .profile import ProfileValidationError
+from .role_catalog import Phase2ValidationError, production_role_catalog
+from .capability_rubric import production_capability_rubric
+from .profile_dimension_mapping import (
+    OpenAIProfileDimensionMapper,
+    ProfileDimensionMapper,
+    load_mapping_candidates,
+)
+from .role_recommendation import build_role_recommendation, save_role_recommendation
+from .storage import load_profile
 
 DEFAULT_PROFILE_PATH = Path("data/profiles/default.json")
 MAX_NARRATIVE_FILE_BYTES = 2 * 1024 * 1024
@@ -79,6 +89,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="include the complete merged Profile in follow-up debug output",
     )
+    recommend = subparsers.add_parser(
+        "recommend", help="create an explainable Role Recommendation from a confirmed Profile"
+    )
+    recommend.add_argument("--profile", type=Path, required=True, help="existing Career Profile JSON path")
+    recommend.add_argument(
+        "--mapping-candidates",
+        type=Path,
+        help="validated offline Profile-to-Dimension mapping candidate JSON",
+    )
+    recommend.add_argument(
+        "--output",
+        type=Path,
+        help="Recommendation JSON path (default: PROFILE with .recommendation.json suffix)",
+    )
+    recommend.add_argument(
+        "--overwrite", action="store_true", help="replace an existing output file atomically"
+    )
     return parser
 
 
@@ -88,12 +115,73 @@ def main(
     input_fn: InputFunction = input,
     output_fn: OutputFunction = print,
     extractor: NarrativeExtractor | None = None,
+    mapper: ProfileDimensionMapper | None = None,
 ) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
     if arguments.command is None:
         parser.print_help()
         return 0
+    if arguments.command == "recommend":
+        try:
+            profile = load_profile(arguments.profile)
+            catalog = production_role_catalog()
+            rubric = production_capability_rubric()
+            output_path = arguments.output or arguments.profile.with_suffix(".recommendation.json")
+            if output_path.exists() and not arguments.overwrite:
+                raise FileExistsError(
+                    f"Recommendation output already exists: {output_path}. Use --overwrite to replace it."
+                )
+            if arguments.mapping_candidates is not None:
+                candidates = load_mapping_candidates(
+                    arguments.mapping_candidates, profile=profile, rubric=rubric, catalog=catalog
+                )
+            else:
+                candidates = (mapper or OpenAIProfileDimensionMapper()).map(profile, rubric, catalog)
+            artifact = build_role_recommendation(
+                profile=profile,
+                mapping_candidates=candidates,
+                rubric=rubric,
+                catalog=catalog,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            save_role_recommendation(
+                artifact, output_path, profile=profile, rubric=rubric, catalog=catalog
+            )
+            output_fn("Role recommendations")
+            for result in artifact.role_results:
+                rank = "Unranked" if result.rank is None else f"Rank {result.rank}"
+                marker = " (provisional)" if result.provisional else ""
+                output_fn(f"{rank}: {result.role_id.replace('_', ' ').title()}{marker}")
+                output_fn(
+                    f"  Current Fit: {result.core_current_fit.band.value.replace('_', ' ').title()}"
+                )
+                output_fn(
+                    f"  Extended Fit: {result.extended_current_fit.band.value.replace('_', ' ').title()}"
+                )
+                output_fn(
+                    f"  Directional Fit: {result.directional_fit.band.value.replace('_', ' ').title()}"
+                )
+                output_fn(f"  Constraints: {result.constraint.status.value.replace('_', ' ').title()}")
+                output_fn(f"  Confidence: {result.recommendation_confidence.result.value.title()}")
+                output_fn(f"  Why: {result.rationale}")
+            if artifact.follow_up_questions:
+                output_fn("Follow-up questions")
+                for question in artifact.follow_up_questions:
+                    output_fn(f"- {question.question}")
+            output_fn(f"Saved to: {output_path}")
+            output_fn("No career direction was selected. User Decision remains separate.")
+            return 0
+        except (
+            OSError,
+            ProfileValidationError,
+            Phase2ValidationError,
+            LLMConfigurationError,
+            LLMRequestError,
+        ) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
     narrative_mode = arguments.narrative or arguments.narrative_file is not None
     if arguments.debug_extraction and not (narrative_mode or arguments.follow_up):
         parser.error("--debug-extraction requires --narrative, --narrative-file, or --follow-up")
