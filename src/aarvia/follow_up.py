@@ -26,6 +26,7 @@ from .discovery_state import (
     DiscoveryState,
     FollowUpStatus,
     load_discovery_state,
+    profile_with_resolved_open_questions,
     recover_follow_up_transaction,
     save_profile_and_state,
     state_path_for,
@@ -248,6 +249,9 @@ class AdaptiveFollowUpWorkflow(NarrativeConfirmationWorkflow):
         self.user_state_changed = False
         self.debug_full_profile = debug_full_profile
         _reconcile_answered_fields(self.session_profile, self.session_state)
+        self.session_profile = profile_with_resolved_open_questions(
+            self.session_profile, self.session_state
+        )
 
     def run(self) -> bool:
         if self.debug_extraction:
@@ -283,6 +287,9 @@ class AdaptiveFollowUpWorkflow(NarrativeConfirmationWorkflow):
                     ":decline": FollowUpStatus.DECLINED,
                 }[answer]
                 self.session_state.mark(discovery_path, status)
+                self.session_profile = profile_with_resolved_open_questions(
+                    self.session_profile, self.session_state
+                )
                 self.user_state_changed = True
                 self.asked_this_session.add(discovery_path)
                 continue
@@ -323,6 +330,9 @@ class AdaptiveFollowUpWorkflow(NarrativeConfirmationWorkflow):
             if accepted:
                 changed = _changed_discovery_paths(before_profile, self.session_profile)
                 _reconcile_answered_fields(self.session_profile, self.session_state)
+                self.session_profile = profile_with_resolved_open_questions(
+                    self.session_profile, self.session_state
+                )
                 for path in changed:
                     if path not in self.confirmed_fields:
                         self.confirmed_fields.append(path)

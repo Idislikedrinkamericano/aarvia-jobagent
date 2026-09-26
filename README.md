@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.7.0 — Explainable Role Recommendation is ready.**
+**Version 0.8.0 — Evidence-aware Capability Rubric contracts.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -20,9 +20,10 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 - ✅ Human-confirmed Role Assignment is the authority for each canonical job's Role Family
 - ✅ Non-recursive `all_of` / `any_of` Candidate logic with deterministic review provenance
 - ✅ Independent Candidate review, controlled Cluster review, and explicit Logic Group resolution
-- ✅ Packaged Capability Rubric: 20 dimensions across three MVP Role Families
+- ✅ Capability Rubric schema 2: 20 dimensions with stable criteria and typed Evidence Support Policies
 - ✅ Deterministic Current Fit, Directional Fit, constraints, confidence, ties, and follow-ups
-- ✅ Recommendation schema 2 with strict Profile fingerprint provenance and atomic JSON storage
+- ✅ Mapping schema 2 and Recommendation schema 3 with exact evidence spans, strict Profile fingerprints, and atomic JSON storage
+- ✅ Bailian/custom JSON mode, bounded repair retry, and opt-in metadata-only diagnostics
 - ⏳ User Decision, Gap Analysis, live-job discovery, and resume work are not implemented
 
 The production Catalog deliberately contains **zero requirements and zero sources** today. It is a taxonomy with guardrails, not a trench coat full of invented labor-market facts. 🕵️
@@ -75,6 +76,15 @@ aarvia recommend --profile data/profiles/example.json \
 
 Without `--mapping-candidates`, `aarvia recommend` uses the configured OpenAI-compatible Provider only to propose Profile-to-Dimension mappings. Python validates references and calculates every score, band, confidence result, tie, and rank.
 
+Provider diagnostics are opt-in and metadata-only:
+
+```bash
+aarvia recommend --profile data/profiles/example.json \
+  --provider-diagnostics-dir local_data/provider_diagnostics
+```
+
+These files may describe failures derived from private Profile data. Keep them under ignored `local_data/`. Aarvia records hashes, lengths, protocol, JSON mode, parser errors, and fallback reasons; it does not save the raw Provider response, API key, headers, or environment variables.
+
 Follow-up commands:
 
 - `.done` submits multiline input; `.cancel` restarts the current answer.
@@ -91,11 +101,27 @@ export AARVIA_LLM_BASE_URL="https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/c
 export AARVIA_LLM_MODEL="qwen-plus"
 ```
 
-Replace `{WorkspaceId}`. The key, endpoint, and model must share a region, and the model must support Chat Completions JSON Schema Structured Outputs. Not every Bailian model does.
+Replace `{WorkspaceId}`. The key, endpoint, and model must share a region. Recommendation mapping uses Chat Completions JSON object mode plus a strict schema prompt. If a compatible endpoint explicitly rejects JSON mode, Aarvia records the reason and retries that request in strict prompt-only mode. Malformed JSON is never repaired locally; it receives one bounded full-task retry and then fails safely.
+
+Profile references are selected from a deterministic list of canonical leaf paths. The `career_profile` request key is only a transport envelope; one accidental leading `career_profile.` prefix is removed and the resulting path, value snapshot, and Profile fingerprint are then validated again. No other path alias is accepted.
+
+User-entered target-role names are preferences, not Rubric identifiers. Every Provider `role_id` is constrained to the current Rubric's canonical enum; an unknown value gets one explicit full-response retry and is then isolated without fuzzy or automatic remapping.
+
+One bad candidate no longer poisons an otherwise usable response. Aarvia retries once with the exact rule, then isolates any still-invalid candidate with a structured reason code. The affected capability stays `unknown`; it is never rewritten as evidence or silently moved into Directional Fit. Any rejection caps recommendation confidence below High, a rejection ratio of at least 50% or rejection of a ready scoring dimension caps it at Low, and an entirely rejected response produces Insufficient confidence with a `provider_mapping_insufficient` blocker. These thresholds are deterministic Python constants.
+
+The retry is not automatically trusted. Aarvia validates both complete responses independently and uses attempt two only when it strictly lowers both rejection count and ratio without losing an accepted Candidate, canonical Role, or Current Fit Dimension, and without increasing Candidate volume. A tie or regression keeps attempt one; responses are never merged. Diagnostics record only the selected attempt and a safe reason code.
+
+Atomic-evidence validation emits structured source-level codes for invalid excerpts, token boundaries, duplicate or overlapping evidence, cross-dimension reuse, and invalid status/inference relationships. Classification never depends on human-readable exception wording. Diagnostics and persisted warnings contain only the category and safe identifiers, never the excerpt or Profile value.
+
+The same structured boundary covers Current Fit field types, evidence strength, Provider confidence, review flags, contribution relationships, deterministic provenance, duplicate mappings, and aggregate contribution caps. Only genuinely unknown legacy failures use the generic rejection category.
+
+Current Fit evidence is span-level, not just field-level. Python deterministically splits eligible Profile strings at sentence, semicolon, and conservative parallel-clause boundaries, then sends the same canonical span inventory to OpenAI and compatible Chat Completions providers. The Provider selects only a `span_id`; it cannot submit paths, copied values, excerpts, offsets, fingerprints, or custom spans. Python materializes the selection into the existing Mapping schema 2 locator, rejects duplicate or cross-dimension reuse, and derives user-visible reasoning from that verified excerpt. Recommendation schema 3 stores no transport IDs or inventory, and Provider prose cannot turn an unstated RAG or retrieval claim into a demonstrated fact.
 
 ## Safety First
 
 - Provider output is cleaned deterministically and validated against a strict schema.
+- Provider Profile references must use real canonical leaf paths and exact Profile values.
+- Structurally invalid responses fail as a whole; isolated semantic candidate errors remain auditable and cannot influence scores.
 - Extracted facts stay temporary until the user confirms them.
 - Corrections show a before/after diff and reject unsupported changes.
 - Existing records use deterministic identity matching; unmatched records need approval.
@@ -162,8 +188,10 @@ The packaged Capability Rubric is separate from the Production Role Catalog. It 
 - Full JD text and Pilot artifacts belong only under ignored `local_data/`; this contract fix does not modify them.
 - The real Pilot job identified for reclassification has not been migrated. Clause Coverage and sample counts must be regenerated only after a separately approved local migration.
 - The real schema 6 Candidate Completion artifact remains local and unmodified. It has not been migrated to schema 7, no review state changed, and no formal prevalence has been calculated.
-- The real schema 6 Curation artifact has not been migrated or reviewed. Production requirement logic, prevalence publication, Gap Analysis, and Role Recommendation remain intentionally unimplemented.
-- The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. Version `0.7.0` adds recommendation behavior without pretending those unpublished requirements exist.
+- Production requirement logic, prevalence publication, User Decision, and Gap Analysis remain intentionally unimplemented.
+- Capability Rubric schema 2 assigns stable IDs to every inclusion criterion and declares per-Dimension evidence classes, conservative status caps, confirmed-evidence thresholds, and behavior-evidence rules. Schema 1 stays explicitly readable and round-trippable.
+- Version `0.8.0` does **not** apply these policies to scoring yet: Mapping remains schema 2, Recommendation remains schema 3, and Provider transport, ranking, confidence, and User Decision behavior are unchanged.
+- The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. No unpublished market requirement is implied by the Rubric policy contract.
 
 ## Design Principles
 

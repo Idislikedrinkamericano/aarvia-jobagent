@@ -21,6 +21,7 @@ from .profile_dimension_mapping import (
     OpenAIProfileDimensionMapper,
     ProfileDimensionMapper,
     load_mapping_candidates,
+    mapping_validation_report_from_warnings,
 )
 from .role_recommendation import build_role_recommendation, save_role_recommendation
 from .storage import load_profile
@@ -106,6 +107,11 @@ def build_parser() -> argparse.ArgumentParser:
     recommend.add_argument(
         "--overwrite", action="store_true", help="replace an existing output file atomically"
     )
+    recommend.add_argument(
+        "--provider-diagnostics-dir",
+        type=Path,
+        help="opt in to redacted Provider attempt metadata; raw responses are never saved",
+    )
     return parser
 
 
@@ -137,7 +143,10 @@ def main(
                     arguments.mapping_candidates, profile=profile, rubric=rubric, catalog=catalog
                 )
             else:
-                candidates = (mapper or OpenAIProfileDimensionMapper()).map(profile, rubric, catalog)
+                active_mapper = mapper or OpenAIProfileDimensionMapper(
+                    diagnostics_dir=arguments.provider_diagnostics_dir
+                )
+                candidates = active_mapper.map(profile, rubric, catalog)
             artifact = build_role_recommendation(
                 profile=profile,
                 mapping_candidates=candidates,
@@ -149,6 +158,15 @@ def main(
                 artifact, output_path, profile=profile, rubric=rubric, catalog=catalog
             )
             output_fn("Role recommendations")
+            rejection_report = mapping_validation_report_from_warnings(
+                candidates.conflict_warnings
+            )
+            if rejection_report is not None:
+                output_fn(
+                    "Warning: "
+                    f"{rejection_report.rejected_count} Provider mapping candidate(s) "
+                    "were rejected; affected evidence remains unknown."
+                )
             for result in artifact.role_results:
                 rank = "Unranked" if result.rank is None else f"Rank {result.rank}"
                 marker = " (provisional)" if result.provisional else ""

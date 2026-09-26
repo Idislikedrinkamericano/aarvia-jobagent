@@ -8,7 +8,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.7.0 — 可解释的 Role Recommendation 已可使用。**
+**版本 0.8.0 — Capability Rubric 具备明确的证据支持契约。**
 
 - ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
 - ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
@@ -20,9 +20,10 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 - ✅ 每个 canonical job 的 Role Family 以人工确认的 Role Assignment 为唯一权威来源
 - ✅ 非递归 `all_of` / `any_of` Candidate 逻辑与确定性人工审核 provenance
 - ✅ Candidate 独立审核、受控 Cluster 审核与明确的 Logic Group resolution
-- ✅ 可打包的 Capability Rubric：三个 MVP Role Family、20 个能力维度
+- ✅ Capability Rubric schema 2：20 个 Dimension、稳定 criterion ID 与强类型 Evidence Support Policy
 - ✅ 确定性 Current Fit、Directional Fit、约束、置信度、并列与追问
-- ✅ Recommendation schema 2、严格 Profile fingerprint provenance 与原子 JSON 保存
+- ✅ Mapping schema 2、Recommendation schema 3、逐字证据片段、严格 Profile fingerprint 与原子 JSON 保存
+- ✅ 百炼/custom JSON mode、有限 repair retry 与显式启用的纯元数据诊断
 - ⏳ User Decision、Gap Analysis、真实岗位发现和简历链路尚未实现
 
 当前 production Catalog 故意保持 **0 条 requirement、0 个 source**。它是一套带护栏的 taxonomy，不是一件塞满虚构就业市场知识的风衣。🕵️
@@ -75,6 +76,15 @@ aarvia recommend --profile data/profiles/example.json \
 
 不提供 `--mapping-candidates` 时，`aarvia recommend` 会使用已配置的 OpenAI-compatible Provider，但 Provider 只能提出 Profile-to-Dimension mapping。所有分数、等级、置信度、并列和排名都由 Python 验证并计算。
 
+Provider 诊断必须显式开启，而且只保存元数据：
+
+```bash
+aarvia recommend --profile data/profiles/example.json \
+  --provider-diagnostics-dir local_data/provider_diagnostics
+```
+
+这些文件可能描述由私人 Profile 引发的错误，请保存在已忽略的 `local_data/` 下。Aarvia 只记录 hash、长度、协议、JSON mode、parser error 与 fallback reason；不会保存 Provider raw response、API Key、请求 header 或环境变量。
+
 Follow-up 命令：
 
 - `.done` 提交多行回答；`.cancel` 重答当前问题。
@@ -91,11 +101,27 @@ export AARVIA_LLM_BASE_URL="https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/c
 export AARVIA_LLM_MODEL="qwen-plus"
 ```
 
-请替换 `{WorkspaceId}`。API Key、endpoint 和模型必须属于同一地域，模型也必须支持 Chat Completions JSON Schema Structured Outputs。并非所有百炼模型都支持。
+请替换 `{WorkspaceId}`。API Key、endpoint 和模型必须属于同一地域。Recommendation mapping 使用 Chat Completions JSON object mode 与严格 schema prompt。若 compatible endpoint 明确拒绝 JSON mode，Aarvia 会记录原因，并仅对该请求降级到严格 prompt-only 模式。Malformed JSON 不会在本地被猜测修复；系统只会携带完整任务重试一次，然后安全失败。
+
+Profile reference 只能从确定性生成的 canonical leaf path 清单中选择。请求里的 `career_profile` 只是 transport envelope；Aarvia 最多移除一个误加的 `career_profile.` 前缀，之后仍会重新严格验证 path、value snapshot 和 Profile fingerprint。其他路径 alias 一律不接受。
+
+用户填写的目标职位名称只是偏好，不是 Rubric 标识。Provider 的每个 `role_id` 都被限制为当前 Rubric 的 canonical enum；未知值只会触发一次明确的完整响应重试，之后被隔离，不做模糊或自动映射。
+
+单条错误 Candidate 不再拖垮整份可用响应。Aarvia 会携带精确规则重试一次；第二次仍不合法时，只隔离该 Candidate 并记录结构化 reason code。受影响能力保持 `unknown`，不会被改写成证据，也不会被静默搬进 Directional Fit。只要发生 rejection，推荐置信度就不能是 High；rejection 比例达到 50%，或影响 ready scoring dimension 时，最高只能是 Low；全部 Candidate 被拒绝时，结果为 Insufficient，并带有 `provider_mapping_insufficient` blocker。这些阈值都集中在确定性 Python 常量中。
+
+第二次响应不会因为“来得更晚”就自动覆盖第一次。Aarvia 会独立验证两份完整响应；只有第二次同时严格降低 rejection 数量和比例、保留首次已接受 Candidate、canonical Role 与 Current Fit Dimension，并且不增加 Candidate 总量时，才会采用第二次。持平或退化时保留第一次，两次响应绝不合并；诊断只记录最终 attempt 与无敏感信息的选择原因。
+
+Atomic evidence 校验会在源头产生结构化代码，区分 excerpt 错误、token boundary、重复或重叠证据、跨维度复用，以及非法的 status/inference 关系；分类不依赖人类可读异常文案。诊断和持久化 warning 只保存类别与安全标识，不保存 excerpt 或 Profile 值。
+
+同一结构化边界也覆盖 Current Fit 字段类型、evidence strength、Provider confidence、review flag、contribution relationship、确定性 provenance、重复 mapping 与集合级 contribution cap。只有真正未知的旧异常才使用通用拒绝类别。
+
+Current Fit 现在使用字段内的原子证据，而不只依赖整个字段。Python 会在句号、分号和保守的并列子句边界上确定性生成 canonical span，并向 OpenAI 与 compatible Chat Completions Provider 发送同一份 inventory。Provider 只能选择 `span_id`，不能提交 path、复制的值、excerpt、offset、fingerprint 或自定义 span。Python 将选择物化为现有 Mapping schema 2 locator，并继续拒绝重复或跨 Dimension 复用。Recommendation schema 3 不保存 transport ID 或 inventory；用户可见解释仍由已验证 excerpt 确定性生成，因此没有证据的 RAG 或 retrieval 声明不能变成“已证明事实”。
 
 ## 安全第一
 
 - Provider 输出会经过确定性清理和严格 Schema 验证。
+- Provider 的 Profile reference 必须使用真实 canonical leaf path 和精确 Profile 值。
+- 结构错误会使整份响应失败；单条语义错误则被隔离、可审计且绝不参与评分。
 - 提取结果在用户确认前只是临时 Candidate。
 - Correction 会显示前后差异并拒绝没有证据的变化。
 - 已有记录使用确定性 identity matching；新记录必须确认。
@@ -162,8 +188,10 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - 完整 JD 与 Pilot artifact 只能保存在被忽略的 `local_data/`；本次契约修复不会修改它们。
 - 真实 Pilot 中待重新分类的岗位尚未迁移；Clause Coverage 与样本计数只能在另行批准的本地迁移后重新生成。
 - 真实 schema 6 Candidate Completion artifact 仍仅在本地且未被修改；它尚未迁移到 schema 7，没有改变任何审核状态，也没有计算正式 prevalence。
-- 真实 schema 6 Curation artifact 尚未迁移或审核。Production Requirement Logic、prevalence 发布、Gap Analysis 与 Role Recommendation 仍明确未实现。
-- Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。`0.7.0` 实现推荐，但不会把未发布要求伪装成 Catalog 数据。
+- Production Requirement Logic、prevalence 发布、User Decision 与 Gap Analysis 仍明确未实现。
+- Capability Rubric schema 2 为每条 inclusion criterion 分配稳定 ID，并按 Dimension 声明 evidence class、保守 status cap、confirmed evidence 阈值与行为证据规则。Schema 1 继续显式可读并保持原格式 round-trip。
+- `0.8.0` **尚未**把这些 policy 接入评分：Mapping 仍是 schema 2，Recommendation 仍是 schema 3；Provider transport、ranking、confidence 与 User Decision 行为均未改变。
+- Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。Rubric policy contract 不代表已经发布任何市场 requirement。
 
 ## 设计原则
 

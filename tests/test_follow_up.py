@@ -900,12 +900,16 @@ def test_preferred_industries_none_stops_reasking_and_is_summarized(tmp_path) ->
     result, output = run_follow_up(path, FollowUpExtractor(), [":none", "y"])
 
     assert result is True
-    assert load_profile(path).career_preferences.preferred_industries == []
+    saved_profile = load_profile(path)
+    assert saved_profile.career_preferences.preferred_industries == []
+    assert "Which industries interest you?" not in saved_profile.open_questions
     state = load_discovery_state(state_path_for(path))
     assert state.fields["career_preferences.preferred_industries"] == (
         FollowUpStatus.CONFIRMED_NONE
     )
     assert select_next_topic(load_profile(path), state) is None
+    reloaded = AdaptiveFollowUpWorkflow(path, FollowUpExtractor(), input_fn=lambda _: "q")
+    assert "Which industries interest you?" not in reloaded.session_profile.open_questions
     joined = "\n".join(output)
     assert "Confirmed as not provided:\n- Preferred industries" in joined
     assert "Still missing:\n- None" in joined
@@ -919,6 +923,7 @@ def test_preferred_industries_skip_is_reachable_next_session(tmp_path) -> None:
     assert result is True
     state = load_discovery_state(state_path_for(path))
     assert state.fields["career_preferences.preferred_industries"] == FollowUpStatus.SKIPPED
+    assert "Which industries interest you?" in load_profile(path).open_questions
     assert select_next_topic(load_profile(path), state) == (
         "career_preferences.preferred_industries"
     )
@@ -933,6 +938,7 @@ def test_preferred_industries_decline_does_not_create_false_fact(tmp_path) -> No
     assert load_profile(path).career_preferences.preferred_industries == []
     state = load_discovery_state(state_path_for(path))
     assert state.fields["career_preferences.preferred_industries"] == FollowUpStatus.DECLINED
+    assert "Which industries interest you?" in load_profile(path).open_questions
     assert "Declined:\n- Preferred industries" in "\n".join(output)
 
 

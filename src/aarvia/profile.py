@@ -267,9 +267,19 @@ class CareerProfile:
         from .discovery import generate_open_questions
 
         generated_questions = generate_open_questions(profile)
-        if "open_questions" in data and supplied_questions != generated_questions:
-            raise ProfileValidationError("profile.open_questions does not match the profile's missing information")
-        profile.open_questions = generated_questions
+        if "open_questions" in data:
+            generated_set = set(generated_questions)
+            if (
+                any(question not in generated_set for question in supplied_questions)
+                or supplied_questions
+                != [question for question in generated_questions if question in supplied_questions]
+            ):
+                raise ProfileValidationError(
+                    "profile.open_questions does not match the profile's missing information"
+                )
+            profile.open_questions = supplied_questions
+        else:
+            profile.open_questions = generated_questions
         return profile
 
     def to_dict(self) -> dict[str, Any]:

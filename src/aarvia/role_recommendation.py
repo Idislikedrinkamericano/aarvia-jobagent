@@ -15,6 +15,7 @@ from .career_direction import ProfileReference, RecommendationSet, profile_finge
 from .phase2_storage import load_phase2_json, save_phase2_json
 from .profile import CareerProfile
 from .profile_dimension_mapping import (
+    AtomicEvidenceLocator,
     ConstraintCompatibilityCandidate,
     CurrentMatchStatus,
     DirectionalSignalCandidate,
@@ -23,8 +24,13 @@ from .profile_dimension_mapping import (
     EvidenceStrength,
     InferenceType,
     MappingConstraintStatus,
+    MAPPING_REJECTION_SUMMARY_PREFIX,
+    MAPPING_REJECTION_WARNING_PREFIX,
     ProfileDimensionMappingCandidate,
     ProfileDimensionMappingCandidateSet,
+    MappingCandidateKind,
+    allowed_profile_reference_paths,
+    mapping_validation_report_from_warnings,
 )
 from .role_catalog import (
     Phase2ValidationError,
@@ -41,7 +47,7 @@ from .role_catalog import (
 
 
 RECOMMENDATION_SCHEMA = "aarvia.role_recommendations"
-RECOMMENDATION_SCHEMA_VERSION = 2
+RECOMMENDATION_SCHEMA_VERSION = 3
 RECOMMENDATION_ID_VERSION = "role-recommendation-v2"
 MVP_ROLE_IDS = ("applied_ai_engineer", "machine_learning_engineer", "research_engineer")
 
@@ -73,6 +79,13 @@ class RecommendationBlockerCode(str, Enum):
     NO_COMPARABLE_ROLE_EVIDENCE = "no_comparable_role_evidence"
     CONDITIONAL_MARKET_BASIS = "conditional_market_basis"
     CONSTRAINT_INCOMPATIBLE = "constraint_incompatible"
+    PROVIDER_MAPPING_INSUFFICIENT = "provider_mapping_insufficient"
+
+
+PROVIDER_REJECTION_LOW_CONFIDENCE_RATIO = 0.50
+PROVIDER_REJECTION_ANY_CAP = RecommendationConfidence.MEDIUM
+PROVIDER_REJECTION_CRITICAL_CAP = RecommendationConfidence.LOW
+PROVIDER_REJECTION_ALL_CAP = RecommendationConfidence.INSUFFICIENT
 
 
 CURRENT_VALUES = {
@@ -126,17 +139,33 @@ class DimensionAssessment:
     evidence_strength: EvidenceStrength | None
     inference_type: InferenceType | None
     review_required: bool
+    supporting_atomic_evidence: tuple[AtomicEvidenceLocator, ...] = ()
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any], path: str) -> DimensionAssessment:
+    def from_dict(
+        cls, value: Mapping[str, Any], path: str, *, schema_version: int = 2
+    ) -> DimensionAssessment:
         data = _mapping(value, path)
         allowed = {"dimension_id","display_code","name","status","conditional_market_basis","supporting_profile_references","reasoning","evidence_strength","inference_type","review_required"}
+        if schema_version == 3:
+            allowed.add("supporting_atomic_evidence")
         _reject_unknown(data, allowed, path)
         conditional = data.get("conditional_market_basis"); review = data.get("review_required")
         if not isinstance(conditional, bool) or not isinstance(review, bool):
             raise Phase2ValidationError(f"{path} boolean fields are invalid")
         references = _typed_profile_references(data.get("supporting_profile_references"), f"{path}.supporting_profile_references")
         raw_strength = data.get("evidence_strength"); raw_inference = data.get("inference_type")
+        atomic = () if schema_version == 2 else tuple(
+            AtomicEvidenceLocator.from_dict(
+                item, f"{path}.supporting_atomic_evidence[{index}]"
+            )
+            for index, item in enumerate(
+                _list(
+                    data.get("supporting_atomic_evidence"),
+                    f"{path}.supporting_atomic_evidence",
+                )
+            )
+        )
         return cls(
             dimension_id=_stable_id(data.get("dimension_id"),f"{path}.dimension_id"),
             display_code=_text(data.get("display_code"),f"{path}.display_code"),
@@ -148,10 +177,16 @@ class DimensionAssessment:
             evidence_strength=None if raw_strength is None else _enum(raw_strength,EvidenceStrength,f"{path}.evidence_strength"),
             inference_type=None if raw_inference is None else _enum(raw_inference,InferenceType,f"{path}.inference_type"),
             review_required=review,
+            supporting_atomic_evidence=atomic,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {"dimension_id":self.dimension_id,"display_code":self.display_code,"name":self.name,"status":self.status.value,"conditional_market_basis":self.conditional_market_basis,"supporting_profile_references":[x.to_dict() for x in self.supporting_profile_references],"reasoning":list(self.reasoning),"evidence_strength":None if self.evidence_strength is None else self.evidence_strength.value,"inference_type":None if self.inference_type is None else self.inference_type.value,"review_required":self.review_required}
+    def to_dict(self, *, schema_version: int = 2) -> dict[str, Any]:
+        result = {"dimension_id":self.dimension_id,"display_code":self.display_code,"name":self.name,"status":self.status.value,"conditional_market_basis":self.conditional_market_basis,"supporting_profile_references":[x.to_dict() for x in self.supporting_profile_references],"reasoning":list(self.reasoning),"evidence_strength":None if self.evidence_strength is None else self.evidence_strength.value,"inference_type":None if self.inference_type is None else self.inference_type.value,"review_required":self.review_required}
+        if schema_version == 3:
+            result["supporting_atomic_evidence"] = [
+                item.to_dict() for item in self.supporting_atomic_evidence
+            ]
+        return result
 
 
 @dataclass(frozen=True, eq=True)
@@ -166,13 +201,15 @@ class FitAxisResult:
     directional_signals: tuple[DirectionalSignalCandidate, ...] = ()
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any], path: str) -> FitAxisResult:
+    def from_dict(
+        cls, value: Mapping[str, Any], path: str, *, schema_version: int = 2
+    ) -> FitAxisResult:
         data=_mapping(value,path); _reject_unknown(data,{"score","coverage","band","assessed_count","applicable_count","band_cap_reason","dimension_assessments","directional_signals"},path)
         score=data.get("score"); coverage=data.get("coverage"); assessed=data.get("assessed_count"); applicable=data.get("applicable_count")
         if score is not None and (not isinstance(score,(int,float)) or isinstance(score,bool) or not 0<=score<=100): raise Phase2ValidationError(f"{path}.score is invalid")
         if not isinstance(coverage,(int,float)) or isinstance(coverage,bool) or not 0<=coverage<=1: raise Phase2ValidationError(f"{path}.coverage is invalid")
         if not isinstance(assessed,int) or isinstance(assessed,bool) or assessed<0 or not isinstance(applicable,int) or isinstance(applicable,bool) or applicable<0 or assessed>applicable: raise Phase2ValidationError(f"{path} counts are invalid")
-        dimensions=tuple(DimensionAssessment.from_dict(x,f"{path}.dimension_assessments[{i}]") for i,x in enumerate(_list(data.get("dimension_assessments"),f"{path}.dimension_assessments")))
+        dimensions=tuple(DimensionAssessment.from_dict(x,f"{path}.dimension_assessments[{i}]",schema_version=schema_version) for i,x in enumerate(_list(data.get("dimension_assessments"),f"{path}.dimension_assessments")))
         signals=tuple(_directional_from_typed(x,f"{path}.directional_signals[{i}]") for i,x in enumerate(_list(data.get("directional_signals"),f"{path}.directional_signals")))
         cap_reason=_text(data.get("band_cap_reason"),f"{path}.band_cap_reason",required=False)
         result=cls(None if score is None else float(score),float(coverage),_enum(data.get("band"),FitBand,f"{path}.band"),assessed,applicable,cap_reason,dimensions,signals)
@@ -181,8 +218,8 @@ class FitAxisResult:
             raise Phase2ValidationError(f"{path}.band does not match score and coverage")
         return result
 
-    def to_dict(self) -> dict[str, Any]:
-        return {"score":self.score,"coverage":self.coverage,"band":self.band.value,"assessed_count":self.assessed_count,"applicable_count":self.applicable_count,"band_cap_reason":self.band_cap_reason,"dimension_assessments":[x.to_dict() for x in self.dimension_assessments],"directional_signals":[x.to_dict() for x in self.directional_signals]}
+    def to_dict(self, *, schema_version: int = 2) -> dict[str, Any]:
+        return {"score":self.score,"coverage":self.coverage,"band":self.band.value,"assessed_count":self.assessed_count,"applicable_count":self.applicable_count,"band_cap_reason":self.band_cap_reason,"dimension_assessments":[x.to_dict(schema_version=schema_version) for x in self.dimension_assessments],"directional_signals":[x.to_dict() for x in self.directional_signals]}
 
     def validate_calculation(self, path: str, *, kind: str) -> None:
         if kind not in {"current", "directional"}:
@@ -265,15 +302,17 @@ class RoleRecommendationResult:
     anti_rationale: str
 
     @classmethod
-    def from_dict(cls,value:Mapping[str,Any],path:str)->RoleRecommendationResult:
+    def from_dict(
+        cls,value:Mapping[str,Any],path:str,*,schema_version:int=2
+    )->RoleRecommendationResult:
         data=_mapping(value,path);_reject_unknown(data,{"role_id","rank","tied_role_ids","core_current_fit","extended_current_fit","directional_fit","constraint","market_evidence_confidence","recommendation_confidence","provisional","ranking_unstable","blockers","rationale","anti_rationale"},path)
         rank=data.get("rank"); provisional=data.get("provisional"); unstable=data.get("ranking_unstable")
         if rank is not None and (not isinstance(rank,int) or isinstance(rank,bool) or rank<1): raise Phase2ValidationError(f"{path}.rank is invalid")
         if not isinstance(provisional,bool) or not isinstance(unstable,bool): raise Phase2ValidationError(f"{path} flags are invalid")
-        return cls(role_id=_stable_id(data.get("role_id"),f"{path}.role_id"),rank=rank,tied_role_ids=_string_tuple(data.get("tied_role_ids"),f"{path}.tied_role_ids",ids=True),core_current_fit=FitAxisResult.from_dict(data.get("core_current_fit"),f"{path}.core_current_fit"),extended_current_fit=FitAxisResult.from_dict(data.get("extended_current_fit"),f"{path}.extended_current_fit"),directional_fit=FitAxisResult.from_dict(data.get("directional_fit"),f"{path}.directional_fit"),constraint=_constraint_from_typed(data.get("constraint"),f"{path}.constraint"),market_evidence_confidence=_enum(data.get("market_evidence_confidence"),MarketEvidenceConfidence,f"{path}.market_evidence_confidence"),recommendation_confidence=ConfidenceAssessment.from_dict(data.get("recommendation_confidence"),f"{path}.recommendation_confidence"),provisional=provisional,ranking_unstable=unstable,blockers=_string_tuple(data.get("blockers"),f"{path}.blockers",ids=True),rationale=_text(data.get("rationale"),f"{path}.rationale"),anti_rationale=_text(data.get("anti_rationale"),f"{path}.anti_rationale"))
+        return cls(role_id=_stable_id(data.get("role_id"),f"{path}.role_id"),rank=rank,tied_role_ids=_string_tuple(data.get("tied_role_ids"),f"{path}.tied_role_ids",ids=True),core_current_fit=FitAxisResult.from_dict(data.get("core_current_fit"),f"{path}.core_current_fit",schema_version=schema_version),extended_current_fit=FitAxisResult.from_dict(data.get("extended_current_fit"),f"{path}.extended_current_fit",schema_version=schema_version),directional_fit=FitAxisResult.from_dict(data.get("directional_fit"),f"{path}.directional_fit",schema_version=schema_version),constraint=_constraint_from_typed(data.get("constraint"),f"{path}.constraint"),market_evidence_confidence=_enum(data.get("market_evidence_confidence"),MarketEvidenceConfidence,f"{path}.market_evidence_confidence"),recommendation_confidence=ConfidenceAssessment.from_dict(data.get("recommendation_confidence"),f"{path}.recommendation_confidence"),provisional=provisional,ranking_unstable=unstable,blockers=_string_tuple(data.get("blockers"),f"{path}.blockers",ids=True),rationale=_text(data.get("rationale"),f"{path}.rationale"),anti_rationale=_text(data.get("anti_rationale"),f"{path}.anti_rationale"))
 
-    def to_dict(self)->dict[str,Any]:
-        return {"role_id":self.role_id,"rank":self.rank,"tied_role_ids":list(self.tied_role_ids),"core_current_fit":self.core_current_fit.to_dict(),"extended_current_fit":self.extended_current_fit.to_dict(),"directional_fit":self.directional_fit.to_dict(),"constraint":self.constraint.to_dict(),"market_evidence_confidence":self.market_evidence_confidence.value,"recommendation_confidence":self.recommendation_confidence.to_dict(),"provisional":self.provisional,"ranking_unstable":self.ranking_unstable,"blockers":list(self.blockers),"rationale":self.rationale,"anti_rationale":self.anti_rationale}
+    def to_dict(self, *, schema_version:int=2)->dict[str,Any]:
+        return {"role_id":self.role_id,"rank":self.rank,"tied_role_ids":list(self.tied_role_ids),"core_current_fit":self.core_current_fit.to_dict(schema_version=schema_version),"extended_current_fit":self.extended_current_fit.to_dict(schema_version=schema_version),"directional_fit":self.directional_fit.to_dict(schema_version=schema_version),"constraint":self.constraint.to_dict(),"market_evidence_confidence":self.market_evidence_confidence.value,"recommendation_confidence":self.recommendation_confidence.to_dict(),"provisional":self.provisional,"ranking_unstable":self.ranking_unstable,"blockers":list(self.blockers),"rationale":self.rationale,"anti_rationale":self.anti_rationale}
 
 
 @dataclass(frozen=True, eq=True)
@@ -297,16 +336,23 @@ class RoleRecommendationArtifact:
     @classmethod
     def from_dict(cls,value:Mapping[str,Any])->RoleRecommendationArtifact:
         data=_mapping(value,"recommendations");_reject_unknown(data,{"schema","schema_version","recommendation_set_id","created_at","profile_fingerprint","rubric_version","catalog_version","provider_name","provider_model","mapping_schema_version","profile_conflict_warnings","role_results","follow_up_questions","tie_groups","blockers"},"recommendations")
-        if data.get("schema")!=RECOMMENDATION_SCHEMA or data.get("schema_version")!=2: raise Phase2ValidationError("unsupported Recommendation schema version")
+        schema_version=data.get("schema_version")
+        if data.get("schema")!=RECOMMENDATION_SCHEMA or schema_version not in {2,3}: raise Phase2ValidationError("unsupported Recommendation schema version")
         mapping_version=data.get("mapping_schema_version")
-        if mapping_version!=1: raise Phase2ValidationError("unsupported mapping schema version in Recommendation")
+        expected_mapping_version={2:1,3:2}[schema_version]
+        if mapping_version!=expected_mapping_version: raise Phase2ValidationError("unsupported mapping schema version in Recommendation")
         groups=[]
         for i,item in enumerate(_list(data.get("tie_groups"),"recommendations.tie_groups")):
             groups.append(_string_tuple(item,f"recommendations.tie_groups[{i}]",ids=True))
-        return cls(recommendation_set_id=_stable_id(data.get("recommendation_set_id"),"recommendations.recommendation_set_id"),created_at=_iso_datetime(data.get("created_at"),"recommendations.created_at"),profile_fingerprint=_text(data.get("profile_fingerprint"),"recommendations.profile_fingerprint"),rubric_version=_version(data.get("rubric_version"),"recommendations.rubric_version"),catalog_version=_version(data.get("catalog_version"),"recommendations.catalog_version"),provider_name=_text(data.get("provider_name"),"recommendations.provider_name"),provider_model=_text(data.get("provider_model"),"recommendations.provider_model"),mapping_schema_version=mapping_version,profile_conflict_warnings=_string_tuple(data.get("profile_conflict_warnings"),"recommendations.profile_conflict_warnings"),role_results=tuple(RoleRecommendationResult.from_dict(x,f"recommendations.role_results[{i}]") for i,x in enumerate(_list(data.get("role_results"),"recommendations.role_results"))),follow_up_questions=tuple(FollowUpQuestion.from_dict(x,f"recommendations.follow_up_questions[{i}]") for i,x in enumerate(_list(data.get("follow_up_questions"),"recommendations.follow_up_questions"))),tie_groups=tuple(groups),blockers=_string_tuple(data.get("blockers"),"recommendations.blockers",ids=True))
+        return cls(recommendation_set_id=_stable_id(data.get("recommendation_set_id"),"recommendations.recommendation_set_id"),created_at=_iso_datetime(data.get("created_at"),"recommendations.created_at"),profile_fingerprint=_text(data.get("profile_fingerprint"),"recommendations.profile_fingerprint"),rubric_version=_version(data.get("rubric_version"),"recommendations.rubric_version"),catalog_version=_version(data.get("catalog_version"),"recommendations.catalog_version"),provider_name=_text(data.get("provider_name"),"recommendations.provider_name"),provider_model=_text(data.get("provider_model"),"recommendations.provider_model"),mapping_schema_version=mapping_version,profile_conflict_warnings=_string_tuple(data.get("profile_conflict_warnings"),"recommendations.profile_conflict_warnings"),role_results=tuple(RoleRecommendationResult.from_dict(x,f"recommendations.role_results[{i}]",schema_version=schema_version) for i,x in enumerate(_list(data.get("role_results"),"recommendations.role_results"))),follow_up_questions=tuple(FollowUpQuestion.from_dict(x,f"recommendations.follow_up_questions[{i}]") for i,x in enumerate(_list(data.get("follow_up_questions"),"recommendations.follow_up_questions"))),tie_groups=tuple(groups),blockers=_string_tuple(data.get("blockers"),"recommendations.blockers",ids=True),schema_version=schema_version)
 
     def validate(self, *, profile: CareerProfile, rubric: CapabilityRubric, catalog: RoleCatalog) -> None:
         rubric.validate(catalog)
+        if (self.schema, self.schema_version, self.mapping_schema_version) not in {
+            (RECOMMENDATION_SCHEMA, 2, 1),
+            (RECOMMENDATION_SCHEMA, 3, 2),
+        }:
+            raise Phase2ValidationError("Recommendation and mapping schema versions are incompatible")
         if self.profile_fingerprint != profile_fingerprint(profile): raise Phase2ValidationError("Recommendation Profile fingerprint mismatch")
         if self.rubric_version != rubric.rubric_version: raise Phase2ValidationError("Recommendation Rubric version mismatch")
         if self.catalog_version != catalog.catalog_version: raise Phase2ValidationError("Recommendation Catalog version mismatch")
@@ -331,6 +377,38 @@ class RoleRecommendationArtifact:
         core_ranks, _ = _rank(list(baseline_results))
         extended_ranks, _ = _rank(list(baseline_results), extended=True)
         baseline_by_role = {item.role_id: item for item in baseline_results}
+        provider_rejection_cap, profile_conflicts, all_provider_candidates_rejected = (
+            _provider_rejection_context(self.profile_conflict_warnings, rubric)
+        )
+        rejection_report = mapping_validation_report_from_warnings(
+            self.profile_conflict_warnings
+        )
+        if rejection_report is not None:
+            allowed_paths = set(allowed_profile_reference_paths(profile))
+            if any(
+                item.canonical_profile_path is not None
+                and item.canonical_profile_path not in allowed_paths
+                for item in rejection_report.rejections
+            ):
+                raise Phase2ValidationError(
+                    "Recommendation rejection metadata contains an invalid Profile path"
+                )
+        if all_provider_candidates_rejected and any(
+            any(
+                assessment.status in CURRENT_VALUES
+                for assessment in result.extended_current_fit.dimension_assessments
+            )
+            or any(
+                signal.status in DIRECTIONAL_VALUES
+                for signal in result.directional_fit.directional_signals
+            )
+            or result.constraint.status
+            in {MappingConstraintStatus.COMPATIBLE, MappingConstraintStatus.INCOMPATIBLE}
+            for result in self.role_results
+        ):
+            raise Phase2ValidationError(
+                "all-rejected Provider metadata conflicts with assessed recommendation evidence"
+            )
         for result in self.role_results:
             catalog.role(result.role_id)
             result.constraint.validate(profile=profile,rubric=rubric)
@@ -343,7 +421,47 @@ class RoleRecommendationArtifact:
                     if dimension.role_id!=result.role_id or assessment.display_code!=dimension.display_code or assessment.name!=dimension.name: raise Phase2ValidationError("Recommendation dimension identity mismatch")
                     if assessment.conditional_market_basis != (dimension.readiness==DimensionReadiness.CONDITIONAL): raise Phase2ValidationError("Recommendation conditional market basis mismatch")
                     for reference in assessment.supporting_profile_references: reference.validate(profile)
+                    if self.schema_version == 3:
+                        if _profile_references(
+                            item.profile_reference
+                            for item in assessment.supporting_atomic_evidence
+                        ) != assessment.supporting_profile_references:
+                            raise Phase2ValidationError(
+                                "Recommendation Profile references do not match atomic evidence"
+                            )
+                        for locator in assessment.supporting_atomic_evidence:
+                            locator.validate(profile)
+                        expected_reasoning = _deterministic_dimension_reasoning(
+                            dimension,
+                            assessment.status,
+                            assessment.inference_type,
+                            assessment.supporting_atomic_evidence,
+                        )
+                        if assessment.reasoning != expected_reasoning:
+                            raise Phase2ValidationError(
+                                "Recommendation dimension reasoning is not evidence-derived"
+                            )
+                    elif assessment.supporting_atomic_evidence:
+                        raise Phase2ValidationError(
+                            "Recommendation schema 2 cannot contain atomic evidence"
+                        )
             for signal in result.directional_fit.directional_signals: signal.validate(profile=profile,rubric=rubric)
+            if self.schema_version == 3:
+                spans = [
+                    locator
+                    for assessment in result.extended_current_fit.dimension_assessments
+                    for locator in assessment.supporting_atomic_evidence
+                ]
+                for index, left in enumerate(spans):
+                    for right in spans[index + 1:]:
+                        if left.profile_reference.path != right.profile_reference.path:
+                            continue
+                        if max(left.start_offset, right.start_offset) < min(
+                            left.end_offset, right.end_offset
+                        ):
+                            raise Phase2ValidationError(
+                                "Recommendation reuses overlapping atomic evidence"
+                            )
             result.directional_fit.validate_calculation(
                 f"recommendations.{result.role_id}.directional_fit", kind="directional"
             )
@@ -377,13 +495,14 @@ class RoleRecommendationArtifact:
                 raise Phase2ValidationError("Recommendation provisional flag is invalid")
             expected_blockers=[]
             if max(result.core_current_fit.coverage,result.extended_current_fit.coverage)<.4: expected_blockers.append(RecommendationBlockerCode.INSUFFICIENT_PROFILE_COVERAGE.value)
-            if self.profile_conflict_warnings: expected_blockers.append(RecommendationBlockerCode.UNRESOLVED_PROFILE_CONFLICT.value)
+            if profile_conflicts: expected_blockers.append(RecommendationBlockerCode.UNRESOLVED_PROFILE_CONFLICT.value)
             if not expected_core: expected_blockers.append(RecommendationBlockerCode.NO_COMPARABLE_ROLE_EVIDENCE.value)
             if result.core_current_fit.band==FitBand.INSUFFICIENT and result.extended_current_fit.band!=FitBand.INSUFFICIENT: expected_blockers.append(RecommendationBlockerCode.CONDITIONAL_MARKET_BASIS.value)
             if result.constraint.status==MappingConstraintStatus.INCOMPATIBLE: expected_blockers.append(RecommendationBlockerCode.CONSTRAINT_INCOMPATIBLE.value)
+            if all_provider_candidates_rejected: expected_blockers.append(RecommendationBlockerCode.PROVIDER_MAPPING_INSUFFICIENT.value)
             if result.blockers != tuple(expected_blockers):
                 raise Phase2ValidationError("Recommendation blockers are invalid")
-            expected_confidence=_confidence(core=result.core_current_fit,extended=result.extended_current_fit,directional=result.directional_fit,constraint=result.constraint,market=result.market_evidence_confidence,conflicts=self.profile_conflict_warnings,ranking_unstable=expected_unstable,separation=_separation_confidence(baseline_by_role[result.role_id],baseline_results))
+            expected_confidence=_confidence(core=result.core_current_fit,extended=result.extended_current_fit,directional=result.directional_fit,constraint=result.constraint,market=result.market_evidence_confidence,conflicts=profile_conflicts,ranking_unstable=expected_unstable,separation=_separation_confidence(baseline_by_role[result.role_id],baseline_results),provider_rejection_cap=provider_rejection_cap)
             if result.recommendation_confidence != expected_confidence:
                 raise Phase2ValidationError("Recommendation confidence does not match deterministic inputs")
             expected_rationale=f"Current evidence supports {result.extended_current_fit.band.value.replace('_',' ')} fit in the extended rubric."
@@ -414,11 +533,11 @@ class RoleRecommendationArtifact:
         expected_blockers=tuple(sorted(set(code for result in self.role_results for code in result.blockers)))
         if self.blockers!=expected_blockers:
             raise Phase2ValidationError("Recommendation aggregate blockers are invalid")
-        expected=generate_recommendation_id(profile_fingerprint=self.profile_fingerprint,rubric_version=self.rubric_version,catalog_version=self.catalog_version,provider_name=self.provider_name,provider_model=self.provider_model,role_results=self.role_results)
+        expected=generate_recommendation_id(profile_fingerprint=self.profile_fingerprint,rubric_version=self.rubric_version,catalog_version=self.catalog_version,provider_name=self.provider_name,provider_model=self.provider_model,role_results=self.role_results,schema_version=self.schema_version)
         if self.recommendation_set_id!=expected: raise Phase2ValidationError("Recommendation ID is not deterministic")
 
     def to_dict(self)->dict[str,Any]:
-        return {"schema":self.schema,"schema_version":self.schema_version,"recommendation_set_id":self.recommendation_set_id,"created_at":self.created_at,"profile_fingerprint":self.profile_fingerprint,"rubric_version":self.rubric_version,"catalog_version":self.catalog_version,"provider_name":self.provider_name,"provider_model":self.provider_model,"mapping_schema_version":self.mapping_schema_version,"profile_conflict_warnings":list(self.profile_conflict_warnings),"role_results":[x.to_dict() for x in self.role_results],"follow_up_questions":[x.to_dict() for x in self.follow_up_questions],"tie_groups":[list(x) for x in self.tie_groups],"blockers":list(self.blockers)}
+        return {"schema":self.schema,"schema_version":self.schema_version,"recommendation_set_id":self.recommendation_set_id,"created_at":self.created_at,"profile_fingerprint":self.profile_fingerprint,"rubric_version":self.rubric_version,"catalog_version":self.catalog_version,"provider_name":self.provider_name,"provider_model":self.provider_model,"mapping_schema_version":self.mapping_schema_version,"profile_conflict_warnings":list(self.profile_conflict_warnings),"role_results":[x.to_dict(schema_version=self.schema_version) for x in self.role_results],"follow_up_questions":[x.to_dict() for x in self.follow_up_questions],"tie_groups":[list(x) for x in self.tie_groups],"blockers":list(self.blockers)}
 
 
 def _list(value:Any,path:str)->list[Any]:
@@ -451,16 +570,33 @@ def _strongest_mapping(items:tuple[ProfileDimensionMappingCandidate,...])->Profi
     return max(items,key=lambda x:(values[x.match_status],x.mapping_id)) if items else None
 
 
-def _current_axis(role_id:str,dimensions:tuple[CapabilityDimension,...],mappings:tuple[ProfileDimensionMappingCandidate,...],*,conditional:bool)->FitAxisResult:
+def _deterministic_dimension_reasoning(
+    dimension: CapabilityDimension,
+    status: CurrentMatchStatus,
+    inference_type: InferenceType | None,
+    evidence: tuple[AtomicEvidenceLocator, ...],
+) -> tuple[str, ...]:
+    if not evidence:
+        return ("No validated atomic Profile evidence was provided.",)
+    inference = "direct" if inference_type is None else inference_type.value.replace("_", " ")
+    return tuple(
+        f'{dimension.name}: {status.value.replace("_", " ")} from {inference} evidence "{item.exact_excerpt}".'
+        for item in sorted(evidence, key=lambda value: value.evidence_fingerprint)
+    )
+
+
+def _current_axis(role_id:str,dimensions:tuple[CapabilityDimension,...],mappings:tuple[ProfileDimensionMappingCandidate,...],*,conditional:bool,schema_version:int)->FitAxisResult:
     assessments=[]
     for dimension in dimensions:
         candidates=tuple(x for x in mappings if x.role_id==role_id and x.dimension_id==dimension.dimension_id)
         strongest=_strongest_mapping(candidates)
         if strongest is None:
-            status=CurrentMatchStatus.UNKNOWN; refs=(); reasons=("No validated Profile mapping was provided.",); strength=None; inference=None; review=False
+            status=CurrentMatchStatus.UNKNOWN; refs=(); evidence=(); strength=None; inference=None; review=False
+            reasons=("No validated Profile mapping was provided.",) if schema_version == 2 else _deterministic_dimension_reasoning(dimension,status,inference,evidence)
         else:
-            status=strongest.match_status;refs=_profile_references(r for x in candidates for r in x.profile_fact_references);reasons=tuple(sorted({x.reasoning for x in candidates}));strength=strongest.evidence_strength;inference=strongest.inference_type;review=any(x.review_required for x in candidates)
-        assessments.append(DimensionAssessment(dimension.dimension_id,dimension.display_code,dimension.name,status,dimension.readiness==DimensionReadiness.CONDITIONAL,refs,reasons,strength,inference,review))
+            status=strongest.match_status;refs=_profile_references(r for x in candidates for r in x.profile_fact_references);evidence=tuple(sorted((locator for x in candidates for locator in x.atomic_evidence),key=lambda value:value.evidence_fingerprint));strength=strongest.evidence_strength;inference=strongest.inference_type;review=any(x.review_required for x in candidates)
+            reasons=tuple(sorted({x.reasoning for x in candidates})) if schema_version == 2 else _deterministic_dimension_reasoning(dimension,status,inference,evidence)
+        assessments.append(DimensionAssessment(dimension.dimension_id,dimension.display_code,dimension.name,status,dimension.readiness==DimensionReadiness.CONDITIONAL,refs,reasons,strength,inference,review,evidence))
     applicable=[x for x in assessments if x.status!=CurrentMatchStatus.NOT_APPLICABLE]
     assessed=[x for x in applicable if x.status in CURRENT_VALUES]
     score=None if not assessed else _round_score(sum(CURRENT_VALUES[x.status] for x in assessed)/len(assessed)*100)
@@ -526,6 +662,7 @@ def _confidence(
     conflicts: tuple[str, ...],
     ranking_unstable: bool,
     separation: RecommendationConfidence,
+    provider_rejection_cap: RecommendationConfidence | None = None,
 ) -> ConfidenceAssessment:
     components=[];reasons=[]
     coverage=RecommendationConfidence.INSUFFICIENT if max(core.coverage,extended.coverage)<.4 else RecommendationConfidence.MEDIUM if max(core.coverage,extended.coverage)<.8 else RecommendationConfidence.HIGH
@@ -558,10 +695,48 @@ def _confidence(
     components.append(("adjacent_role_separation",separation))
     conditional_decisive=core.band!=extended.band
     components.append(("rubric_readiness",RecommendationConfidence.LOW if conditional_decisive else RecommendationConfidence.MEDIUM if any(x.conditional_market_basis for x in extended.dimension_assessments) else RecommendationConfidence.HIGH))
+    if provider_rejection_cap is not None:
+        components.append(("provider_candidate_rejection", provider_rejection_cap))
     for name,value in components:
         if value!=RecommendationConfidence.HIGH: reasons.append(f"{name}_{value.value}")
     result=min((x[1] for x in components),key=lambda c:_CONFIDENCE_ORDER[c])
     return ConfidenceAssessment(result,tuple(components),tuple(reasons))
+
+
+def _provider_rejection_context(
+    warnings: tuple[str, ...],
+    rubric: CapabilityRubric,
+) -> tuple[RecommendationConfidence | None, tuple[str, ...], bool]:
+    report = mapping_validation_report_from_warnings(warnings)
+    profile_conflicts = tuple(
+        warning
+        for warning in warnings
+        if not warning.startswith((MAPPING_REJECTION_WARNING_PREFIX, MAPPING_REJECTION_SUMMARY_PREFIX))
+    )
+    if report is None:
+        return None, profile_conflicts, False
+    if report.all_candidates_rejected:
+        return PROVIDER_REJECTION_ALL_CAP, profile_conflicts, True
+    rejection_ratio = report.rejected_count / report.total_candidate_count
+    affects_ready_dimension = False
+    for rejection in report.rejections:
+        if (
+            rejection.candidate_kind == MappingCandidateKind.CURRENT_FIT
+            and rejection.dimension_id is not None
+        ):
+            try:
+                dimension = rubric.dimension(rejection.dimension_id)
+            except (KeyError, Phase2ValidationError):
+                continue
+            if dimension.readiness == DimensionReadiness.READY:
+                affects_ready_dimension = True
+                break
+    cap = (
+        PROVIDER_REJECTION_CRITICAL_CAP
+        if rejection_ratio >= PROVIDER_REJECTION_LOW_CONFIDENCE_RATIO or affects_ready_dimension
+        else PROVIDER_REJECTION_ANY_CAP
+    )
+    return cap, profile_conflicts, False
 
 
 def _sort_key(result:RoleRecommendationResult,*,extended:bool=False)->tuple[Any,...]:
@@ -651,34 +826,39 @@ def _follow_ups(results:tuple[RoleRecommendationResult,...])->tuple[FollowUpQues
     return tuple(selected)
 
 
-def generate_recommendation_id(*,profile_fingerprint:str,rubric_version:str,catalog_version:str,provider_name:str,provider_model:str,role_results:tuple[RoleRecommendationResult,...])->str:
-    payload=json.dumps([x.to_dict() for x in sorted(role_results,key=lambda x:x.role_id)],sort_keys=True,ensure_ascii=False,separators=(",",":"))
+def generate_recommendation_id(*,profile_fingerprint:str,rubric_version:str,catalog_version:str,provider_name:str,provider_model:str,role_results:tuple[RoleRecommendationResult,...],schema_version:int=RECOMMENDATION_SCHEMA_VERSION)->str:
+    payload=json.dumps([x.to_dict(schema_version=schema_version) for x in sorted(role_results,key=lambda x:x.role_id)],sort_keys=True,ensure_ascii=False,separators=(",",":"))
     values=(RECOMMENDATION_ID_VERSION,profile_fingerprint,rubric_version,catalog_version,provider_name,provider_model,hashlib.sha256(payload.encode()).hexdigest())
     return f"recommendations_{hashlib.sha256('|'.join(values).encode()).hexdigest()[:24]}"
 
 
 def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:ProfileDimensionMappingCandidateSet,rubric:CapabilityRubric,catalog:RoleCatalog,created_at:str)->RoleRecommendationArtifact:
     mapping_candidates.validate(profile=profile,rubric=rubric,catalog=catalog);_iso_datetime(created_at,"created_at")
+    recommendation_schema_version = 3 if mapping_candidates.schema_version == 2 else 2
+    provider_rejection_cap, profile_conflicts, all_provider_candidates_rejected = (
+        _provider_rejection_context(mapping_candidates.conflict_warnings, rubric)
+    )
     constraints={x.role_id:x for x in mapping_candidates.constraints}; preliminary=[]
     for role_id in MVP_ROLE_IDS:
         all_dims=rubric.role_dimensions(role_id);ready=tuple(x for x in all_dims if x.readiness==DimensionReadiness.READY)
         role_maps=tuple(x for x in mapping_candidates.mappings if x.role_id==role_id)
-        core=_current_axis(role_id,ready,role_maps,conditional=False);extended=_current_axis(role_id,all_dims,role_maps,conditional=True);directional=_directional_axis(role_id,mapping_candidates.directional_signals)
+        core=_current_axis(role_id,ready,role_maps,conditional=False,schema_version=recommendation_schema_version);extended=_current_axis(role_id,all_dims,role_maps,conditional=True,schema_version=recommendation_schema_version);directional=_directional_axis(role_id,mapping_candidates.directional_signals)
         constraint=constraints.get(role_id) or ConstraintCompatibilityCandidate(role_id,MappingConstraintStatus.UNKNOWN,(),"No constraint assessment was provided.",__import__("aarvia.profile_dimension_mapping",fromlist=["ProviderConfidence"]).ProviderConfidence.LOW,False,("constraint_compatibility",),None)
         market=_market_confidence(ready if ready else all_dims);provisional=core.band==FitBand.INSUFFICIENT and extended.band!=FitBand.INSUFFICIENT
         blockers=[]
         if max(core.coverage,extended.coverage)<.4:blockers.append(RecommendationBlockerCode.INSUFFICIENT_PROFILE_COVERAGE.value)
-        if mapping_candidates.conflict_warnings:blockers.append(RecommendationBlockerCode.UNRESOLVED_PROFILE_CONFLICT.value)
+        if profile_conflicts:blockers.append(RecommendationBlockerCode.UNRESOLVED_PROFILE_CONFLICT.value)
         if not ready:blockers.append(RecommendationBlockerCode.NO_COMPARABLE_ROLE_EVIDENCE.value)
         if provisional:blockers.append(RecommendationBlockerCode.CONDITIONAL_MARKET_BASIS.value)
         if constraint.status==MappingConstraintStatus.INCOMPATIBLE:blockers.append(RecommendationBlockerCode.CONSTRAINT_INCOMPATIBLE.value)
+        if all_provider_candidates_rejected:blockers.append(RecommendationBlockerCode.PROVIDER_MAPPING_INSUFFICIENT.value)
         preliminary.append(RoleRecommendationResult(role_id,None,(),core,extended,directional,constraint,market,ConfidenceAssessment(RecommendationConfidence.HIGH,(),()),provisional,False,tuple(blockers),f"Current evidence supports {extended.band.value.replace('_',' ')} fit in the extended rubric.",f"The role is limited by {', '.join(blockers) if blockers else 'remaining unknown or weaker dimensions'}."))
     # Establish preliminary core/extended orders before confidence, then recompute with stability caps.
     core_ranks,_=_rank(preliminary);ext_ranks,_=_rank(preliminary,extended=True)
     stabilized=[]
     for item in preliminary:
         unstable=core_ranks[item.role_id]!=ext_ranks[item.role_id] and core_ranks[item.role_id] is not None and ext_ranks[item.role_id] is not None
-        conf=_confidence(core=item.core_current_fit,extended=item.extended_current_fit,directional=item.directional_fit,constraint=item.constraint,market=item.market_evidence_confidence,conflicts=mapping_candidates.conflict_warnings,ranking_unstable=unstable,separation=_separation_confidence(item,tuple(preliminary)))
+        conf=_confidence(core=item.core_current_fit,extended=item.extended_current_fit,directional=item.directional_fit,constraint=item.constraint,market=item.market_evidence_confidence,conflicts=profile_conflicts,ranking_unstable=unstable,separation=_separation_confidence(item,tuple(preliminary)),provider_rejection_cap=provider_rejection_cap)
         stabilized.append(RoleRecommendationResult(**{**item.__dict__,"recommendation_confidence":conf,"ranking_unstable":unstable,"provisional":item.provisional or unstable}))
     effective=[]
     final_ranks, tie_groups = _final_ranking(tuple(stabilized))
@@ -688,8 +868,8 @@ def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:Profile
         effective.append(RoleRecommendationResult(**{**item.__dict__,"rank":rank,"tied_role_ids":related}))
     role_results=tuple(sorted(effective,key=lambda x:((x.rank or 999),x.role_id)))
     followups=_follow_ups(role_results)
-    recommendation_id=generate_recommendation_id(profile_fingerprint=profile_fingerprint(profile),rubric_version=rubric.rubric_version,catalog_version=catalog.catalog_version,provider_name=mapping_candidates.provider_name,provider_model=mapping_candidates.provider_model,role_results=role_results)
-    artifact=RoleRecommendationArtifact(recommendation_id,created_at,profile_fingerprint(profile),rubric.rubric_version,catalog.catalog_version,mapping_candidates.provider_name,mapping_candidates.provider_model,mapping_candidates.schema_version,mapping_candidates.conflict_warnings,role_results,followups,tie_groups,tuple(sorted(set(code for x in role_results for code in x.blockers))))
+    recommendation_id=generate_recommendation_id(profile_fingerprint=profile_fingerprint(profile),rubric_version=rubric.rubric_version,catalog_version=catalog.catalog_version,provider_name=mapping_candidates.provider_name,provider_model=mapping_candidates.provider_model,role_results=role_results,schema_version=recommendation_schema_version)
+    artifact=RoleRecommendationArtifact(recommendation_id,created_at,profile_fingerprint(profile),rubric.rubric_version,catalog.catalog_version,mapping_candidates.provider_name,mapping_candidates.provider_model,mapping_candidates.schema_version,mapping_candidates.conflict_warnings,role_results,followups,tie_groups,tuple(sorted(set(code for x in role_results for code in x.blockers))),schema_version=recommendation_schema_version)
     artifact.validate(profile=profile,rubric=rubric,catalog=catalog);return artifact
 
 
@@ -710,7 +890,7 @@ def load_any_recommendation(path:str|Path,*,profile:CareerProfile,rubric:Capabil
     if not isinstance(raw,Mapping) or raw.get("schema")!=RECOMMENDATION_SCHEMA:raise Phase2ValidationError("unsupported Recommendation artifact")
     if raw.get("schema_version")==1:
         value=RecommendationSet.from_dict(raw);value.validate(catalog,profile);return value
-    if raw.get("schema_version")==2:
+    if raw.get("schema_version") in {2,3}:
         value=RoleRecommendationArtifact.from_dict(raw);value.validate(profile=profile,rubric=rubric,catalog=catalog);return value
     raise Phase2ValidationError("unsupported Recommendation schema version")
 

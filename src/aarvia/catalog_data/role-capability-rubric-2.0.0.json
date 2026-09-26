@@ -1,0 +1,1852 @@
+{
+  "as_of_date": "2026-09-18",
+  "dimensions": [
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 4,
+      "description": "Builds useful applications and workflows around language models, agents, retrieval, prompts, and tool use.",
+      "dimension_id": "dimension_8d9149eb2e5c0ba1dcaa6c9f",
+      "display_code": "AI-D01",
+      "exclusion_criteria": [
+        "general ML theory without application context",
+        "generic developer tooling",
+        "model-training research"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_980f9bd4a08086d92a910b58",
+          "text": "LLM or agent application construction"
+        },
+        {
+          "criterion_id": "criterion_0d8c1a8de499b7c2a22c09cb",
+          "text": "retrieval-grounded applications"
+        },
+        {
+          "criterion_id": "criterion_46b02f1ddb17a13430b3f94c",
+          "text": "prompt, tool, and orchestration work"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "LLM and agent application engineering",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 6,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "applied_ai_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "llm_application_engineering",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_980f9bd4a08086d92a910b58"
+            ],
+            [
+              "criterion_0d8c1a8de499b7c2a22c09cb"
+            ],
+            [
+              "criterion_46b02f1ddb17a13430b3f94c"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_980f9bd4a08086d92a910b58",
+              "criterion_0d8c1a8de499b7c2a22c09cb"
+            ],
+            [
+              "criterion_980f9bd4a08086d92a910b58",
+              "criterion_46b02f1ddb17a13430b3f94c"
+            ],
+            [
+              "criterion_0d8c1a8de499b7c2a22c09cb",
+              "criterion_46b02f1ddb17a13430b3f94c"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "differentiating",
+      "confirmed_company_count": 0,
+      "description": "Evaluates AI behavior and builds safeguards, quality checks, and responsible data-handling practices.",
+      "dimension_id": "dimension_69038385ea16f319fab257e3",
+      "display_code": "AI-D02",
+      "exclusion_criteria": [
+        "generic software testing",
+        "model evaluation without an application reliability context"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_f06a5feda067fb331312ccbf",
+          "text": "AI or agent evaluation"
+        },
+        {
+          "criterion_id": "criterion_4861e5c998bdeb33ca51aa85",
+          "text": "output quality and grounding checks"
+        },
+        {
+          "criterion_id": "criterion_ac7023d52d0eb538b9409cb0",
+          "text": "guardrails, privacy, and reliability"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "AI evaluation, safety, and reliability",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 2,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "applied_ai_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "model_evaluation_reliability",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "adjacent_transferable",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_f06a5feda067fb331312ccbf"
+            ],
+            [
+              "criterion_4861e5c998bdeb33ca51aa85"
+            ],
+            [
+              "criterion_ac7023d52d0eb538b9409cb0"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_f06a5feda067fb331312ccbf",
+              "criterion_4861e5c998bdeb33ca51aa85"
+            ],
+            [
+              "criterion_f06a5feda067fb331312ccbf",
+              "criterion_ac7023d52d0eb538b9409cb0"
+            ],
+            [
+              "criterion_4861e5c998bdeb33ca51aa85",
+              "criterion_ac7023d52d0eb538b9409cb0"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "foundational",
+      "confirmed_company_count": 2,
+      "description": "Understands machine-learning, deep-learning, and NLP concepts deeply enough to select and adapt models in applications.",
+      "dimension_id": "dimension_6d452164e61bc336e4e08c41",
+      "display_code": "AI-D03",
+      "exclusion_criteria": [
+        "product integration without model knowledge",
+        "publication record by itself"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_5e6355ebe92b1b62d7bfe5ab",
+          "text": "ML and mathematical foundations"
+        },
+        {
+          "criterion_id": "criterion_68d6ad40033f8557858fbf9d",
+          "text": "deep-learning and NLP architectures"
+        },
+        {
+          "criterion_id": "criterion_faaab96c4c03148162ded5db",
+          "text": "fine-tuning and distributed training"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Applied ML and NLP foundations",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 2,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "applied_ai_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "ml_foundations_and_modeling",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "education_field",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "adjacent_transferable",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_5e6355ebe92b1b62d7bfe5ab"
+            ],
+            [
+              "criterion_68d6ad40033f8557858fbf9d"
+            ],
+            [
+              "criterion_faaab96c4c03148162ded5db"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_5e6355ebe92b1b62d7bfe5ab",
+              "criterion_68d6ad40033f8557858fbf9d"
+            ],
+            [
+              "criterion_5e6355ebe92b1b62d7bfe5ab",
+              "criterion_faaab96c4c03148162ded5db"
+            ],
+            [
+              "criterion_68d6ad40033f8557858fbf9d",
+              "criterion_faaab96c4c03148162ded5db"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "demonstrated_only",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 1,
+      "description": "Works with structured or messy data and data platforms to ground, analyze, and support applied AI systems.",
+      "dimension_id": "dimension_febeddd299fd6f0594dd61c6",
+      "display_code": "AI-D04",
+      "exclusion_criteria": [
+        "generic data-handling policy",
+        "retrieval orchestration itself"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_9df84ad9dad64a78dcafc60d",
+          "text": "data exploration and engineering"
+        },
+        {
+          "criterion_id": "criterion_f772b86c105c00e1dfa6b76d",
+          "text": "SQL and analytical platforms"
+        },
+        {
+          "criterion_id": "criterion_3e30d7d09990072e958c76b0",
+          "text": "predictive analytics supporting AI applications"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Data grounding and applied analytics",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 2,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "applied_ai_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "data_and_feature_work",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "education_field",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "adjacent_transferable",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_9df84ad9dad64a78dcafc60d"
+            ],
+            [
+              "criterion_f772b86c105c00e1dfa6b76d"
+            ],
+            [
+              "criterion_3e30d7d09990072e958c76b0"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_9df84ad9dad64a78dcafc60d",
+              "criterion_f772b86c105c00e1dfa6b76d"
+            ],
+            [
+              "criterion_9df84ad9dad64a78dcafc60d",
+              "criterion_3e30d7d09990072e958c76b0"
+            ],
+            [
+              "criterion_f772b86c105c00e1dfa6b76d",
+              "criterion_3e30d7d09990072e958c76b0"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "differentiating",
+      "confirmed_company_count": 2,
+      "description": "Connects AI capabilities to developer tools, APIs, configuration, and operational workflows.",
+      "dimension_id": "dimension_6206a8085f6ad2ada8b3365d",
+      "display_code": "AI-D05",
+      "exclusion_criteria": [
+        "core model development",
+        "general office-suite use"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_74a7f4f380fbcded6b39fee3",
+          "text": "workflow automation"
+        },
+        {
+          "criterion_id": "criterion_6e1ad84f59bcb3d128508496",
+          "text": "developer and collaboration tooling"
+        },
+        {
+          "criterion_id": "criterion_d8c0b5d37a069e50d4781fa1",
+          "text": "API and interchange integration"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "AI workflow and tool integration",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 4,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "applied_ai_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "engineering_workflow_integration",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_74a7f4f380fbcded6b39fee3"
+            ],
+            [
+              "criterion_6e1ad84f59bcb3d128508496"
+            ],
+            [
+              "criterion_d8c0b5d37a069e50d4781fa1"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_74a7f4f380fbcded6b39fee3",
+              "criterion_6e1ad84f59bcb3d128508496"
+            ],
+            [
+              "criterion_74a7f4f380fbcded6b39fee3",
+              "criterion_d8c0b5d37a069e50d4781fa1"
+            ],
+            [
+              "criterion_6e1ad84f59bcb3d128508496",
+              "criterion_d8c0b5d37a069e50d4781fa1"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 3,
+      "description": "Deploys and operates AI capabilities using cloud, containers, CI/CD, MLOps, and systems infrastructure.",
+      "dimension_id": "dimension_59e1ca3a73f96349ab41f171",
+      "display_code": "AI-D06",
+      "exclusion_criteria": [
+        "model theory",
+        "generic source control without deployment context"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_8c74743e5fa9dd16589cb6ce",
+          "text": "cloud and Kubernetes"
+        },
+        {
+          "criterion_id": "criterion_e58fa2195a5498a1b1a85a4a",
+          "text": "model deployment and MLOps"
+        },
+        {
+          "criterion_id": "criterion_df7c4d36d2c6919a702b17c2",
+          "text": "CI/CD, Linux, and network foundations"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Production infrastructure and deployment for AI",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 5,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "applied_ai_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "production_ml_systems",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "adjacent_transferable",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_8c74743e5fa9dd16589cb6ce"
+            ],
+            [
+              "criterion_e58fa2195a5498a1b1a85a4a"
+            ],
+            [
+              "criterion_df7c4d36d2c6919a702b17c2"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_8c74743e5fa9dd16589cb6ce",
+              "criterion_e58fa2195a5498a1b1a85a4a"
+            ],
+            [
+              "criterion_8c74743e5fa9dd16589cb6ce",
+              "criterion_df7c4d36d2c6919a702b17c2"
+            ],
+            [
+              "criterion_e58fa2195a5498a1b1a85a4a",
+              "criterion_df7c4d36d2c6919a702b17c2"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 5,
+      "description": "Writes maintainable software and ships working AI-enabled product or project outcomes.",
+      "dimension_id": "dimension_a0142a57a67e8547c120af27",
+      "display_code": "AI-D07",
+      "exclusion_criteria": [
+        "research publication record",
+        "generic interpersonal traits"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_c9821ee68cd11bdc924a7e22",
+          "text": "programming and codebase work"
+        },
+        {
+          "criterion_id": "criterion_79ba9a88cf6e7275f7a57953",
+          "text": "testing and quality practices"
+        },
+        {
+          "criterion_id": "criterion_2162344f5ed72342dd2a617f",
+          "text": "shipped software or ML projects"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Software engineering and product delivery for AI",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 7,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "applied_ai_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "software_engineering_delivery",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_c9821ee68cd11bdc924a7e22"
+            ],
+            [
+              "criterion_79ba9a88cf6e7275f7a57953"
+            ],
+            [
+              "criterion_2162344f5ed72342dd2a617f"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_c9821ee68cd11bdc924a7e22",
+              "criterion_79ba9a88cf6e7275f7a57953"
+            ],
+            [
+              "criterion_c9821ee68cd11bdc924a7e22",
+              "criterion_2162344f5ed72342dd2a617f"
+            ],
+            [
+              "criterion_79ba9a88cf6e7275f7a57953",
+              "criterion_2162344f5ed72342dd2a617f"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 3,
+      "description": "Understands ML methods and develops models for real applications.",
+      "dimension_id": "dimension_285e108e91740234e016106a",
+      "display_code": "MLE-D01",
+      "exclusion_criteria": [
+        "deployment-only infrastructure",
+        "generic software work"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_77bc9a7a886efd033547932a",
+          "text": "ML foundations and algorithms"
+        },
+        {
+          "criterion_id": "criterion_50c4c474ffb85911ea34677b",
+          "text": "model design and training"
+        },
+        {
+          "criterion_id": "criterion_0dbe5182311e2ed7bc16a6fe",
+          "text": "NLP, vision, or LLM model knowledge"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Model foundations and development",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 5,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "machine_learning_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "ml_foundations_and_modeling",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "education_field",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "adjacent_transferable",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_77bc9a7a886efd033547932a"
+            ],
+            [
+              "criterion_50c4c474ffb85911ea34677b"
+            ],
+            [
+              "criterion_0dbe5182311e2ed7bc16a6fe"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_77bc9a7a886efd033547932a",
+              "criterion_50c4c474ffb85911ea34677b"
+            ],
+            [
+              "criterion_77bc9a7a886efd033547932a",
+              "criterion_0dbe5182311e2ed7bc16a6fe"
+            ],
+            [
+              "criterion_50c4c474ffb85911ea34677b",
+              "criterion_0dbe5182311e2ed7bc16a6fe"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "demonstrated_only",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 2,
+      "description": "Prepares, analyzes, and represents data for model development and operation.",
+      "dimension_id": "dimension_42149492c7971a7b704c86e2",
+      "display_code": "MLE-D02",
+      "exclusion_criteria": [
+        "model deployment",
+        "domain eligibility"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_d59448e62b87e753f2402578",
+          "text": "structured and unstructured data"
+        },
+        {
+          "criterion_id": "criterion_618b12781b67e8aec6683939",
+          "text": "feature or context management"
+        },
+        {
+          "criterion_id": "criterion_fd220587f2eefbf589055658",
+          "text": "data mining and analytical tooling"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Data and feature engineering",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 2,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "machine_learning_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "data_and_feature_work",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "education_field",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "adjacent_transferable",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_d59448e62b87e753f2402578"
+            ],
+            [
+              "criterion_618b12781b67e8aec6683939"
+            ],
+            [
+              "criterion_fd220587f2eefbf589055658"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_d59448e62b87e753f2402578",
+              "criterion_618b12781b67e8aec6683939"
+            ],
+            [
+              "criterion_d59448e62b87e753f2402578",
+              "criterion_fd220587f2eefbf589055658"
+            ],
+            [
+              "criterion_618b12781b67e8aec6683939",
+              "criterion_fd220587f2eefbf589055658"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 1,
+      "description": "Measures model behavior and runs disciplined model experiments.",
+      "dimension_id": "dimension_e347ce33050628ffa9ab2b28",
+      "display_code": "MLE-D03",
+      "exclusion_criteria": [
+        "production monitoring without model evaluation",
+        "generic QA"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_d097222ea89ac516c07ca3d4",
+          "text": "evaluation workflows"
+        },
+        {
+          "criterion_id": "criterion_93533d72644e7044293975d0",
+          "text": "experimental comparison"
+        },
+        {
+          "criterion_id": "criterion_54edd42b7616486540f941b5",
+          "text": "performance measurement"
+        }
+      ],
+      "market_basis_status": "confirmed_market_basis",
+      "name": "Model evaluation and experimentation",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 1,
+      "readiness": "ready_for_profile_matching",
+      "role_id": "machine_learning_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "model_evaluation_reliability",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_d097222ea89ac516c07ca3d4"
+            ],
+            [
+              "criterion_93533d72644e7044293975d0"
+            ],
+            [
+              "criterion_54edd42b7616486540f941b5"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_d097222ea89ac516c07ca3d4",
+              "criterion_93533d72644e7044293975d0"
+            ],
+            [
+              "criterion_d097222ea89ac516c07ca3d4",
+              "criterion_54edd42b7616486540f941b5"
+            ],
+            [
+              "criterion_93533d72644e7044293975d0",
+              "criterion_54edd42b7616486540f941b5"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 3,
+      "description": "Turns models into deployable, efficient inference services and production workflows.",
+      "dimension_id": "dimension_f3588d05dc787a5927498b17",
+      "display_code": "MLE-D04",
+      "exclusion_criteria": [
+        "model theory without systems work",
+        "generic programming"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_48a46834a79b31d45a11f464",
+          "text": "model deployment"
+        },
+        {
+          "criterion_id": "criterion_f3fbfccd2bcfee128115f688",
+          "text": "inference optimization"
+        },
+        {
+          "criterion_id": "criterion_3ffce83e452f6a42be9eea27",
+          "text": "training and serving infrastructure"
+        }
+      ],
+      "market_basis_status": "confirmed_market_basis",
+      "name": "Production inference and deployment",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 4,
+      "readiness": "ready_for_profile_matching",
+      "role_id": "machine_learning_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "production_ml_systems",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "adjacent_transferable",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_48a46834a79b31d45a11f464"
+            ],
+            [
+              "criterion_f3fbfccd2bcfee128115f688"
+            ],
+            [
+              "criterion_3ffce83e452f6a42be9eea27"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_48a46834a79b31d45a11f464",
+              "criterion_f3fbfccd2bcfee128115f688"
+            ],
+            [
+              "criterion_48a46834a79b31d45a11f464",
+              "criterion_3ffce83e452f6a42be9eea27"
+            ],
+            [
+              "criterion_f3fbfccd2bcfee128115f688",
+              "criterion_3ffce83e452f6a42be9eea27"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "differentiating",
+      "confirmed_company_count": 2,
+      "description": "Uses systems, GPU, optimization, and troubleshooting knowledge to make ML workloads reliable and performant.",
+      "dimension_id": "dimension_852463b2b5d925a41e423b74",
+      "display_code": "MLE-D05",
+      "exclusion_criteria": [
+        "model evaluation",
+        "generic product communication"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_bdfd849d5ce76b1ad248a4df",
+          "text": "GPU/CUDA"
+        },
+        {
+          "criterion_id": "criterion_c20a8a31fbdbe9ee4b3dc001",
+          "text": "systems troubleshooting"
+        },
+        {
+          "criterion_id": "criterion_60cc5d246f1c25329c65bd28",
+          "text": "mathematical or runtime optimization"
+        }
+      ],
+      "market_basis_status": "confirmed_market_basis",
+      "name": "ML systems and performance engineering",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 2,
+      "readiness": "ready_for_profile_matching",
+      "role_id": "machine_learning_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "systems_performance_engineering",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "adjacent_transferable",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_bdfd849d5ce76b1ad248a4df"
+            ],
+            [
+              "criterion_c20a8a31fbdbe9ee4b3dc001"
+            ],
+            [
+              "criterion_60cc5d246f1c25329c65bd28"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_bdfd849d5ce76b1ad248a4df",
+              "criterion_c20a8a31fbdbe9ee4b3dc001"
+            ],
+            [
+              "criterion_bdfd849d5ce76b1ad248a4df",
+              "criterion_60cc5d246f1c25329c65bd28"
+            ],
+            [
+              "criterion_c20a8a31fbdbe9ee4b3dc001",
+              "criterion_60cc5d246f1c25329c65bd28"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "foundational",
+      "confirmed_company_count": 4,
+      "description": "Builds production-quality ML software using sound programming, algorithms, and version-control practices.",
+      "dimension_id": "dimension_a89c27e342d19e363bfb8d9d",
+      "display_code": "MLE-D06",
+      "exclusion_criteria": [
+        "model-specific theory",
+        "domain background"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_79deed2ab2d1940c2c843e00",
+          "text": "Python or C/C++ development"
+        },
+        {
+          "criterion_id": "criterion_fd5880c64b9358493882a0e5",
+          "text": "algorithms and data structures"
+        },
+        {
+          "criterion_id": "criterion_5096134714ec981f87ae8cdb",
+          "text": "production-quality code and Git"
+        }
+      ],
+      "market_basis_status": "confirmed_market_basis",
+      "name": "Software engineering for ML systems",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 6,
+      "readiness": "ready_for_profile_matching",
+      "role_id": "machine_learning_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "software_engineering_delivery",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_79deed2ab2d1940c2c843e00"
+            ],
+            [
+              "criterion_fd5880c64b9358493882a0e5"
+            ],
+            [
+              "criterion_5096134714ec981f87ae8cdb"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_79deed2ab2d1940c2c843e00",
+              "criterion_fd5880c64b9358493882a0e5"
+            ],
+            [
+              "criterion_79deed2ab2d1940c2c843e00",
+              "criterion_5096134714ec981f87ae8cdb"
+            ],
+            [
+              "criterion_fd5880c64b9358493882a0e5",
+              "criterion_5096134714ec981f87ae8cdb"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "supporting",
+      "confirmed_company_count": 3,
+      "description": "Applies ML to substantive engineering or scientific problems and communicates project outcomes.",
+      "dimension_id": "dimension_a285738e6668047a71b8e1a6",
+      "display_code": "MLE-D07",
+      "exclusion_criteria": [
+        "customer identity requirements",
+        "domain-specific eligibility alone"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_f9d3752b07699d015e09c9d3",
+          "text": "applied ML project record"
+        },
+        {
+          "criterion_id": "criterion_80ac1633d70f92c9f5c8804c",
+          "text": "engineering or scientific application"
+        },
+        {
+          "criterion_id": "criterion_7b596c5ac4174289286585e4",
+          "text": "technical communication supporting delivery"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Applied ML project delivery",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 4,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "machine_learning_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "applied_project_delivery",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_f9d3752b07699d015e09c9d3"
+            ],
+            [
+              "criterion_80ac1633d70f92c9f5c8804c"
+            ],
+            [
+              "criterion_7b596c5ac4174289286585e4"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_f9d3752b07699d015e09c9d3",
+              "criterion_80ac1633d70f92c9f5c8804c"
+            ],
+            [
+              "criterion_f9d3752b07699d015e09c9d3",
+              "criterion_7b596c5ac4174289286585e4"
+            ],
+            [
+              "criterion_80ac1633d70f92c9f5c8804c",
+              "criterion_7b596c5ac4174289286585e4"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 0,
+      "description": "Translates research ideas and papers into working experiments and reproducible implementations.",
+      "dimension_id": "dimension_3f351cdda4cb3b0164eca8b4",
+      "display_code": "RE-D01",
+      "exclusion_criteria": [
+        "publication record without implementation",
+        "generic production coding"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_c223646c89657b515c667c96",
+          "text": "paper reimplementation"
+        },
+        {
+          "criterion_id": "criterion_872ed5d04a6a2d62633e750d",
+          "text": "independent experiment execution"
+        },
+        {
+          "criterion_id": "criterion_56bb64aba9f430f49ca1a5a0",
+          "text": "research implementation"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Research implementation and reproduction",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 2,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "research_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "research_implementation",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_c223646c89657b515c667c96"
+            ],
+            [
+              "criterion_872ed5d04a6a2d62633e750d"
+            ],
+            [
+              "criterion_56bb64aba9f430f49ca1a5a0"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_c223646c89657b515c667c96",
+              "criterion_872ed5d04a6a2d62633e750d"
+            ],
+            [
+              "criterion_c223646c89657b515c667c96",
+              "criterion_56bb64aba9f430f49ca1a5a0"
+            ],
+            [
+              "criterion_872ed5d04a6a2d62633e750d",
+              "criterion_56bb64aba9f430f49ca1a5a0"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 2,
+      "description": "Designs experiments, evaluates systems quantitatively, and reports positive and negative results rigorously.",
+      "dimension_id": "dimension_66c5812b44a70804fe7cfb1f",
+      "display_code": "RE-D02",
+      "exclusion_criteria": [
+        "generic analytical aptitude",
+        "model construction without evaluation"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_92ebbd44732c9c7a7a187971",
+          "text": "experiment design"
+        },
+        {
+          "criterion_id": "criterion_6db7aa4addd48715f856b887",
+          "text": "quantitative evaluation"
+        },
+        {
+          "criterion_id": "criterion_c0f8b0192f2d4280f81cb1ba",
+          "text": "negative-result rigor"
+        }
+      ],
+      "market_basis_status": "confirmed_market_basis",
+      "name": "Experiment design, evaluation, and research rigor",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 3,
+      "readiness": "ready_for_profile_matching",
+      "role_id": "research_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "model_evaluation_reliability",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "adjacent_transferable",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_92ebbd44732c9c7a7a187971"
+            ],
+            [
+              "criterion_6db7aa4addd48715f856b887"
+            ],
+            [
+              "criterion_c0f8b0192f2d4280f81cb1ba"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_92ebbd44732c9c7a7a187971",
+              "criterion_6db7aa4addd48715f856b887"
+            ],
+            [
+              "criterion_92ebbd44732c9c7a7a187971",
+              "criterion_c0f8b0192f2d4280f81cb1ba"
+            ],
+            [
+              "criterion_6db7aa4addd48715f856b887",
+              "criterion_c0f8b0192f2d4280f81cb1ba"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "core",
+      "confirmed_company_count": 3,
+      "description": "Develops or investigates models, algorithms, and learning methods across research domains.",
+      "dimension_id": "dimension_5182f3d7ee1053c8f5ccd339",
+      "display_code": "RE-D03",
+      "exclusion_criteria": [
+        "software implementation alone",
+        "track record alone"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_436a6b96e217370b200fce8a",
+          "text": "generative, language, speech, audio, multimodal, and RL methods"
+        },
+        {
+          "criterion_id": "criterion_9751941820d90ecb6abfb755",
+          "text": "ML/AI system research"
+        },
+        {
+          "criterion_id": "criterion_5cff66ff84b5388d8bc04daf",
+          "text": "formal model or optimization formulation"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Algorithm and model research",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 5,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "research_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "ml_foundations_and_modeling",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "education_field",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "adjacent_transferable",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_436a6b96e217370b200fce8a"
+            ],
+            [
+              "criterion_9751941820d90ecb6abfb755"
+            ],
+            [
+              "criterion_5cff66ff84b5388d8bc04daf"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_436a6b96e217370b200fce8a",
+              "criterion_9751941820d90ecb6abfb755"
+            ],
+            [
+              "criterion_436a6b96e217370b200fce8a",
+              "criterion_5cff66ff84b5388d8bc04daf"
+            ],
+            [
+              "criterion_9751941820d90ecb6abfb755",
+              "criterion_5cff66ff84b5388d8bc04daf"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "demonstrated_only",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "foundational",
+      "confirmed_company_count": 4,
+      "description": "Builds reliable research software and uses systems and framework knowledge to execute technical research.",
+      "dimension_id": "dimension_1436136d2c8c211df9663a81",
+      "display_code": "RE-D04",
+      "exclusion_criteria": [
+        "publication record",
+        "model theory without implementation"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_b8664f29ef39ce55cbc41182",
+          "text": "research programming"
+        },
+        {
+          "criterion_id": "criterion_a42443d8ad42bd8406d476f5",
+          "text": "ML frameworks"
+        },
+        {
+          "criterion_id": "criterion_5d604ef804b63ea1de8a5589",
+          "text": "systems and performance programming"
+        }
+      ],
+      "market_basis_status": "confirmed_market_basis",
+      "name": "Research software and systems engineering",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 6,
+      "readiness": "ready_for_profile_matching",
+      "role_id": "research_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "software_engineering_delivery",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "adjacent_transferable",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_b8664f29ef39ce55cbc41182"
+            ],
+            [
+              "criterion_a42443d8ad42bd8406d476f5"
+            ],
+            [
+              "criterion_5d604ef804b63ea1de8a5589"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_b8664f29ef39ce55cbc41182",
+              "criterion_a42443d8ad42bd8406d476f5"
+            ],
+            [
+              "criterion_b8664f29ef39ce55cbc41182",
+              "criterion_5d604ef804b63ea1de8a5589"
+            ],
+            [
+              "criterion_a42443d8ad42bd8406d476f5",
+              "criterion_5d604ef804b63ea1de8a5589"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "differentiating",
+      "confirmed_company_count": 1,
+      "description": "Reads, understands, and applies current research topics, methods, and technical literature.",
+      "dimension_id": "dimension_c7f514127f33b6f2734697e8",
+      "display_code": "RE-D05",
+      "exclusion_criteria": [
+        "paper implementation already covered by reproduction",
+        "general ML foundations"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_fe6ad5e8f88f5b822e604409",
+          "text": "frontier-method familiarity"
+        },
+        {
+          "criterion_id": "criterion_1b4acef13edcc7da13d2abb6",
+          "text": "modern research-stack literacy"
+        },
+        {
+          "criterion_id": "criterion_6c5cfe71e3aa3e521904508e",
+          "text": "method selection and interpretation"
+        }
+      ],
+      "market_basis_status": "conditional_market_basis",
+      "name": "Research methods and frontier literacy",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 1,
+      "readiness": "conditional_pending_evidence_review",
+      "role_id": "research_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "research_methods",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": true,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "education_field",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "adjacent_transferable",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "partially_demonstrated",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_fe6ad5e8f88f5b822e604409"
+            ],
+            [
+              "criterion_1b4acef13edcc7da13d2abb6"
+            ],
+            [
+              "criterion_6c5cfe71e3aa3e521904508e"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 2,
+          "required_criterion_sets": [
+            [
+              "criterion_fe6ad5e8f88f5b822e604409",
+              "criterion_1b4acef13edcc7da13d2abb6"
+            ],
+            [
+              "criterion_fe6ad5e8f88f5b822e604409",
+              "criterion_6c5cfe71e3aa3e521904508e"
+            ],
+            [
+              "criterion_1b4acef13edcc7da13d2abb6",
+              "criterion_6c5cfe71e3aa3e521904508e"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "demonstrated_only",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    },
+    {
+      "analytical_category": "differentiating",
+      "confirmed_company_count": 4,
+      "description": "Demonstrates research contribution through publications, open source, research projects, or research internships.",
+      "dimension_id": "dimension_f797becf597491bfd41894df",
+      "display_code": "RE-D06",
+      "exclusion_criteria": [
+        "education eligibility",
+        "technical skill without contribution evidence"
+      ],
+      "inclusion_criteria": [
+        {
+          "criterion_id": "criterion_82aed99605b35eae0c0288a5",
+          "text": "publication or preprint"
+        },
+        {
+          "criterion_id": "criterion_f0d9c98c899b2d8ddfc0276b",
+          "text": "open-source contribution"
+        },
+        {
+          "criterion_id": "criterion_bd39843835c4a6b17408474b",
+          "text": "substantial research project or internship"
+        }
+      ],
+      "market_basis_status": "confirmed_market_basis",
+      "name": "Scientific contribution and research track record",
+      "profile_evidence_types": [
+        "education",
+        "experience_overview",
+        "skills",
+        "future_evidence_bank"
+      ],
+      "projected_company_count": 6,
+      "readiness": "ready_for_profile_matching",
+      "role_id": "research_engineer",
+      "sample_denominator": 8,
+      "shared_dimension_key": "research_track_record",
+      "evidence_support_policy": {
+        "policy_version": "1.0.0",
+        "composite_capability": false,
+        "allowed_evidence_classes": [
+          "skill_name",
+          "skill_proficiency",
+          "experience_summary",
+          "project_summary"
+        ],
+        "forbidden_evidence_classes": [
+          "education_field"
+        ],
+        "structural_status_caps": {
+          "skill_name": "adjacent_transferable",
+          "skill_proficiency": "adjacent_transferable",
+          "education_field": "unknown",
+          "experience_summary": "unknown",
+          "project_summary": "unknown"
+        },
+        "provisional_status_cap": "adjacent_transferable",
+        "confirmed_partial_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_82aed99605b35eae0c0288a5"
+            ],
+            [
+              "criterion_f0d9c98c899b2d8ddfc0276b"
+            ],
+            [
+              "criterion_bd39843835c4a6b17408474b"
+            ]
+          ]
+        },
+        "confirmed_demonstrated_rule": {
+          "minimum_independent_evidence_count": 1,
+          "required_criterion_sets": [
+            [
+              "criterion_82aed99605b35eae0c0288a5"
+            ],
+            [
+              "criterion_f0d9c98c899b2d8ddfc0276b"
+            ],
+            [
+              "criterion_bd39843835c4a6b17408474b"
+            ]
+          ]
+        },
+        "behavior_evidence_requirement": "partial_and_demonstrated",
+        "strong_recommendation_requires_confirmed_evidence": true
+      }
+    }
+  ],
+  "provenance_summary": "Human-approved MVP capability definitions derived from aggregated United States early-career job analysis; no job-description text or personal Profile data is included.",
+  "role_catalog_version": "1.0.0",
+  "rubric_version": "2.0.0",
+  "schema": "aarvia.role_capability_rubric",
+  "schema_version": 2,
+  "source_analysis_hashes": [
+    "0bc717d0e785b674c1cd72d045de63f90b8b9ce85d9ca1aaa08e67e20729f475",
+    "b4316f15533f5597fd8a3e498b99f18da10b903022a4c386eb8c871e60381aad",
+    "f0d721d1fde4602626b3e36f2f3935d08f26d137f01ae89c7b9eb3dedb09bef1"
+  ],
+  "supported_role_ids": [
+    "applied_ai_engineer",
+    "machine_learning_engineer",
+    "research_engineer"
+  ]
+}

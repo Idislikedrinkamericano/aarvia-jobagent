@@ -181,7 +181,7 @@ def save_profile_and_state(
     """Commit both files with a rollback journal recoverable on the next run."""
     if not isinstance(profile, CareerProfile):
         raise TypeError("profile must be a CareerProfile")
-    profile = CareerProfile.from_dict(profile.to_dict())
+    profile = profile_with_resolved_open_questions(profile, state)
     state = DiscoveryState.from_dict(state.to_dict())
     profile_target = Path(profile_path)
     state_target = Path(state_path)
@@ -207,6 +207,25 @@ def save_profile_and_state(
         profile_temp.unlink(missing_ok=True)
         state_temp.unlink(missing_ok=True)
     journal.unlink(missing_ok=True)
+
+
+def profile_with_resolved_open_questions(
+    profile: CareerProfile, state: DiscoveryState
+) -> CareerProfile:
+    """Return a validated Profile whose questions reflect explicit confirmed-none state."""
+    from .discovery import generate_open_questions
+    from .follow_up import OPEN_QUESTION_PATHS
+
+    validated_state = DiscoveryState.from_dict(state.to_dict())
+    questions = [
+        question
+        for question in generate_open_questions(profile)
+        if validated_state.fields.get(OPEN_QUESTION_PATHS.get(question))
+        != FollowUpStatus.CONFIRMED_NONE
+    ]
+    data = profile.to_dict()
+    data["open_questions"] = questions
+    return CareerProfile.from_dict(data)
 
 
 def recover_follow_up_transaction(journal_path: str | Path) -> None:

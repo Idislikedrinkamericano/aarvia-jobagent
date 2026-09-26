@@ -4,7 +4,10 @@ from copy import deepcopy
 
 from aarvia.capability_rubric import production_capability_rubric
 from aarvia.profile import CareerProfile
-from aarvia.profile_dimension_mapping import ProfileDimensionMappingCandidateSet
+from aarvia.profile_dimension_mapping import (
+    ProfileDimensionMappingCandidateSet,
+    canonical_evidence_span_inventory,
+)
 from aarvia.role_catalog import production_role_catalog
 
 
@@ -29,7 +32,7 @@ def mapping_payload(*, all_demonstrated: bool = False, unknown_constraints: bool
                 "role_id": dimension.role_id,
                 "dimension_id": dimension.dimension_id,
                 "match_status": "demonstrated" if all_demonstrated else "partially_demonstrated",
-                "profile_fact_references": [{"path": f"skills[{skill_index}].skill_name", "value_snapshot": f"Synthetic Skill {skill_index + 1}"}],
+                "profile_fact_references": [{"path": f"skills[{skill_index}].skill_name", "value_snapshot": f"Synthetic Skill {skill_index + 1}", "exact_excerpt": f"Synthetic Skill {skill_index + 1}"}],
                 "reasoning": "The synthetic skill directly supports this test dimension.",
                 "inference_type": "direct",
                 "evidence_strength": "strong",
@@ -42,15 +45,15 @@ def mapping_payload(*, all_demonstrated: bool = False, unknown_constraints: bool
     signals = []
     for role in rubric.supported_role_ids:
         for signal_type, path, value in (
-            ("career_goal_alignment", "career_preferences.currently_considered_roles", ["AI Engineer"]),
-            ("work_content_preference_alignment", "career_preferences.preferred_work_activities", ["Building systems"]),
-            ("growth_direction_alignment", "career_preferences.interested_fields", ["Applied AI"]),
+            ("career_goal_alignment", "career_preferences.currently_considered_roles[0]", "AI Engineer"),
+            ("work_content_preference_alignment", "career_preferences.preferred_work_activities[0]", "Building systems"),
+            ("growth_direction_alignment", "career_preferences.interested_fields[0]", "Applied AI"),
             ("transferable_foundation", "experience_overview[0].short_factual_summary", "Built and evaluated a small software system."),
         ):
             signals.append({"role_id": role, "signal_type": signal_type, "status": "aligned", "profile_fact_references": [{"path": path, "value_snapshot": value}], "reasoning": "Synthetic directional evidence.", "provider_confidence": "high", "review_required": False, "suggested_follow_up": None})
     constraints = []
     for role in rubric.supported_role_ids:
-        constraints.append({"role_id": role, "status": "unknown" if unknown_constraints else "compatible", "profile_fact_references": [] if unknown_constraints else [{"path": "constraints.target_locations", "value_snapshot": ["United States"]}], "reasoning": "Synthetic constraint assessment.", "provider_confidence": "low" if unknown_constraints else "high", "review_required": unknown_constraints, "unknown_constraint_ids": ["work_authorization"] if unknown_constraints else [], "suggested_follow_up": "What work authorization constraints apply?" if unknown_constraints else None})
+        constraints.append({"role_id": role, "status": "unknown" if unknown_constraints else "compatible", "profile_fact_references": [] if unknown_constraints else [{"path": "constraints.target_locations[0]", "value_snapshot": "United States"}], "reasoning": "Synthetic constraint assessment.", "provider_confidence": "low" if unknown_constraints else "high", "review_required": unknown_constraints, "unknown_constraint_ids": ["work_authorization"] if unknown_constraints else [], "suggested_follow_up": "What work authorization constraints apply?" if unknown_constraints else None})
     return {"mappings": mappings, "directional_signals": signals, "constraints": constraints, "conflict_warnings": []}
 
 
@@ -60,3 +63,48 @@ def mapping_set(**kwargs) -> ProfileDimensionMappingCandidateSet:
 
 def clone_payload(**kwargs) -> dict:
     return deepcopy(mapping_payload(**kwargs))
+
+
+def mapping_transport_payload(
+    payload: dict | None = None,
+    *,
+    profile: CareerProfile | None = None,
+    strict: bool = True,
+) -> dict:
+    """Convert valid persisted-style fixture evidence into live Provider span selections."""
+    active_profile = profile or synthetic_profile()
+    result = deepcopy(payload if payload is not None else mapping_payload())
+    spans = {
+        (span.path, span.text): span.span_id
+        for span in canonical_evidence_span_inventory(active_profile)
+    }
+    for mapping in result["mappings"]:
+        selections = []
+        for index, reference in enumerate(mapping["profile_fact_references"]):
+            key = (
+                reference["path"].removeprefix("career_profile."),
+                reference.get("exact_excerpt", reference.get("value_snapshot")),
+            )
+            if key not in spans:
+                if strict:
+                    raise KeyError(f"no canonical evidence span for {key!r}")
+                selections.append({"span_id": f"invalid_fixture_span_{index}"})
+            else:
+                selections.append({"span_id": spans[key]})
+        mapping["profile_fact_references"] = selections
+    for collection in ("directional_signals", "constraints"):
+        for candidate in result[collection]:
+            selections = []
+            for index, reference in enumerate(candidate["profile_fact_references"]):
+                key = (
+                    reference["path"].removeprefix("career_profile."),
+                    reference.get("value_snapshot"),
+                )
+                if key not in spans:
+                    if strict:
+                        raise KeyError(f"no canonical evidence span for {key!r}")
+                    selections.append({"span_id": f"invalid_fixture_span_{index}"})
+                else:
+                    selections.append({"span_id": spans[key]})
+            candidate["profile_fact_references"] = selections
+    return result

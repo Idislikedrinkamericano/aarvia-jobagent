@@ -274,7 +274,7 @@ def test_typed_load_recomputes_confidence_blockers_and_followups(tmp_path) -> No
 
 def test_recommendation_rejects_rubric_version_mismatch() -> None:
     from dataclasses import replace
-    artifact=build();rubric=replace(production_capability_rubric(),rubric_version="2.0.0")
+    artifact=build();rubric=replace(production_capability_rubric(),rubric_version="3.0.0")
     with pytest.raises(Phase2ValidationError,match="Rubric version"):
         artifact.validate(profile=synthetic_profile(),rubric=rubric,catalog=production_role_catalog())
 
