@@ -12,7 +12,11 @@ import re
 from typing import Any, Mapping, Protocol
 from urllib.parse import urlparse
 
-from .capability_rubric import CapabilityRubric
+from .capability_rubric import (
+    CapabilityRubric,
+    EvidenceClass,
+    EvidenceStatusCap,
+)
 from .career_direction import ProfileReference, profile_fingerprint
 from .llm_client import LLMRequestError, LLMSettings, create_openai_client, is_bailian_endpoint, safe_llm_error
 from .phase2_storage import load_phase2_json, save_phase2_json
@@ -31,11 +35,13 @@ from .role_catalog import (
 
 
 MAPPING_SCHEMA = "aarvia.profile_dimension_mapping_candidates"
-MAPPING_SCHEMA_VERSION = 2
+MAPPING_SCHEMA_VERSION = 3
+SUPPORTED_MAPPING_SCHEMA_VERSIONS = frozenset({1, 2, 3})
 MAPPING_ID_VERSION = "profile-dimension-mapping-v1"
 ATOMIC_MAPPING_ID_VERSION = "profile-dimension-mapping-v2"
 ATOMIC_EVIDENCE_VERSION = "atomic-profile-evidence-v1"
 CANONICAL_EVIDENCE_SPAN_VERSION = "canonical-profile-evidence-span-v1"
+EVIDENCE_BINDING_ID_VERSION = "profile-criterion-evidence-binding-v1"
 MAPPING_REJECTION_WARNING_PREFIX = "provider_mapping_rejection:"
 MAPPING_REJECTION_SUMMARY_PREFIX = "provider_mapping_rejection_summary:"
 
@@ -130,6 +136,26 @@ class ProviderConfidence(str, Enum):
     LOW = "low"
 
 
+class ProposedBindingType(str, Enum):
+    DIRECT = "direct"
+    BOUNDED_SEMANTIC = "bounded_semantic"
+    ADJACENT_TRANSFER = "adjacent_transfer"
+
+
+class EvidenceTrustLevel(str, Enum):
+    STRUCTURAL_ONLY = "structural_only"
+    PROVISIONAL_SEMANTIC = "provisional_semantic_binding"
+
+
+class BindingDerivationReason(str, Enum):
+    STRUCTURAL_POLICY_CAP = "structural_policy_cap_applied"
+    PROVISIONAL_POLICY_CAP = "provisional_policy_cap_applied"
+    PROVIDER_ADJACENT_LIMIT = "provider_adjacent_limit_applied"
+    SKILL_PROFICIENCY_PAIRED = "skill_proficiency_paired_with_skill_name"
+    CONFIRMED_BINDING_UNAVAILABLE = "confirmed_semantic_binding_unavailable"
+    HUMAN_REVIEW_REQUIRED = "provisional_semantic_binding_requires_review"
+
+
 class _MappingValidationCode(str, Enum):
     INVALID_CURRENT_FIT_STRUCTURE = "invalid_current_fit_structure"
     INVALID_PROFILE_REFERENCE = "invalid_profile_reference"
@@ -152,6 +178,14 @@ class _MappingValidationCode(str, Enum):
     ROLE_DIMENSION_MISMATCH = "role_dimension_mismatch"
     DUPLICATE_MAPPING = "duplicate_mapping"
     PROVIDER_FIELD_INJECTION = "provider_field_injection"
+    UNKNOWN_DIMENSION = "unknown_dimension"
+    UNKNOWN_CRITERION = "unknown_criterion"
+    CRITERION_DIMENSION_MISMATCH = "criterion_dimension_mismatch"
+    UNSUPPORTED_EVIDENCE_CLASS = "unsupported_evidence_class"
+    FORBIDDEN_EVIDENCE_CLASS = "forbidden_evidence_class"
+    SKILL_PROFICIENCY_WITHOUT_SKILL_NAME = "skill_proficiency_without_skill_name"
+    INVALID_BINDING_TYPE = "invalid_binding_type"
+    INVALID_BINDING_PROVENANCE = "invalid_binding_provenance"
 
 
 class _CodedMappingValidationError(Phase2ValidationError):
@@ -397,6 +431,13 @@ class MappingRejectionReason(str, Enum):
     INVALID_REVIEW_FLAG = "invalid_review_flag"
     INVALID_MAPPING_PROVENANCE = "invalid_mapping_provenance"
     INVALID_CURRENT_FIT = "invalid_current_fit_mapping"
+    UNKNOWN_CRITERION = "unknown_criterion"
+    CRITERION_DIMENSION_MISMATCH = "criterion_dimension_mismatch"
+    UNSUPPORTED_EVIDENCE_CLASS = "unsupported_evidence_class"
+    FORBIDDEN_EVIDENCE_CLASS = "forbidden_evidence_class"
+    SKILL_PROFICIENCY_WITHOUT_SKILL_NAME = "skill_proficiency_without_skill_name"
+    INVALID_BINDING_TYPE = "invalid_binding_type"
+    INVALID_BINDING_PROVENANCE = "invalid_binding_provenance"
 
 
 _CODED_REJECTION_REASONS = {
@@ -421,6 +462,14 @@ _CODED_REJECTION_REASONS = {
     _MappingValidationCode.ROLE_DIMENSION_MISMATCH: MappingRejectionReason.ROLE_DIMENSION_MISMATCH,
     _MappingValidationCode.DUPLICATE_MAPPING: MappingRejectionReason.DUPLICATE_MAPPING,
     _MappingValidationCode.PROVIDER_FIELD_INJECTION: MappingRejectionReason.PROVIDER_FIELD_INJECTION,
+    _MappingValidationCode.UNKNOWN_DIMENSION: MappingRejectionReason.UNKNOWN_DIMENSION,
+    _MappingValidationCode.UNKNOWN_CRITERION: MappingRejectionReason.UNKNOWN_CRITERION,
+    _MappingValidationCode.CRITERION_DIMENSION_MISMATCH: MappingRejectionReason.CRITERION_DIMENSION_MISMATCH,
+    _MappingValidationCode.UNSUPPORTED_EVIDENCE_CLASS: MappingRejectionReason.UNSUPPORTED_EVIDENCE_CLASS,
+    _MappingValidationCode.FORBIDDEN_EVIDENCE_CLASS: MappingRejectionReason.FORBIDDEN_EVIDENCE_CLASS,
+    _MappingValidationCode.SKILL_PROFICIENCY_WITHOUT_SKILL_NAME: MappingRejectionReason.SKILL_PROFICIENCY_WITHOUT_SKILL_NAME,
+    _MappingValidationCode.INVALID_BINDING_TYPE: MappingRejectionReason.INVALID_BINDING_TYPE,
+    _MappingValidationCode.INVALID_BINDING_PROVENANCE: MappingRejectionReason.INVALID_BINDING_PROVENANCE,
 }
 
 
@@ -1078,6 +1127,274 @@ class ProfileDimensionMappingCandidate:
         return result
 
 
+_SKILL_NAME_PATH = re.compile(r"^skills\[(\d+)\]\.skill_name$")
+_SKILL_PROFICIENCY_PATH = re.compile(r"^skills\[(\d+)\]\.self_reported_proficiency$")
+_EDUCATION_FIELD_PATH = re.compile(r"^education\[(\d+)\]\.field_of_study$")
+_EXPERIENCE_SUMMARY_PATH = re.compile(
+    r"^experience_overview\[(\d+)\]\.short_factual_summary$"
+)
+
+
+def evidence_class_for_locator(
+    profile: CareerProfile, locator: AtomicEvidenceLocator
+) -> EvidenceClass:
+    """Classify evidence from its validated Profile object and leaf path only."""
+    locator.validate(profile)
+    path = locator.profile_reference.path
+    if _SKILL_NAME_PATH.fullmatch(path):
+        return EvidenceClass.SKILL_NAME
+    if _SKILL_PROFICIENCY_PATH.fullmatch(path):
+        return EvidenceClass.SKILL_PROFICIENCY
+    if _EDUCATION_FIELD_PATH.fullmatch(path):
+        return EvidenceClass.EDUCATION_FIELD
+    match = _EXPERIENCE_SUMMARY_PATH.fullmatch(path)
+    if match:
+        index = int(match.group(1))
+        experience = profile.experience_overview[index]
+        if experience.experience_type.strip().casefold() == "project":
+            return EvidenceClass.PROJECT_SUMMARY
+        return EvidenceClass.EXPERIENCE_SUMMARY
+    raise _CodedMappingValidationError(
+        _MappingValidationCode.UNSUPPORTED_EVIDENCE_CLASS,
+        "the selected Profile leaf is not a supported capability evidence class",
+    )
+
+
+def generate_evidence_binding_id(
+    *,
+    role_id: str,
+    dimension_id: str,
+    criterion_id: str,
+    locator: AtomicEvidenceLocator,
+    proposed_binding_type: ProposedBindingType,
+) -> str:
+    values = (
+        EVIDENCE_BINDING_ID_VERSION,
+        _stable_id(role_id, "role_id"),
+        _stable_id(dimension_id, "dimension_id"),
+        _stable_id(criterion_id, "criterion_id"),
+        locator.evidence_fingerprint,
+        proposed_binding_type.value,
+    )
+    return f"binding_{hashlib.sha256('|'.join(values).encode('utf-8')).hexdigest()[:24]}"
+
+
+def _status_from_cap(cap: EvidenceStatusCap) -> CurrentMatchStatus:
+    return {
+        EvidenceStatusCap.UNKNOWN: CurrentMatchStatus.UNKNOWN,
+        EvidenceStatusCap.ADJACENT_TRANSFERABLE: CurrentMatchStatus.ADJACENT,
+        EvidenceStatusCap.PARTIALLY_DEMONSTRATED: CurrentMatchStatus.PARTIAL,
+        EvidenceStatusCap.DEMONSTRATED: CurrentMatchStatus.DEMONSTRATED,
+    }[cap]
+
+
+def _derive_binding_outcome(
+    *,
+    evidence_class: EvidenceClass,
+    proposed_binding_type: ProposedBindingType,
+    structural_cap: EvidenceStatusCap,
+    provisional_cap: EvidenceStatusCap,
+) -> tuple[
+    EvidenceTrustLevel,
+    CurrentMatchStatus,
+    EvidenceStrength,
+    InferenceType,
+    bool,
+    tuple[BindingDerivationReason, ...],
+]:
+    structural = evidence_class in {
+        EvidenceClass.SKILL_NAME,
+        EvidenceClass.SKILL_PROFICIENCY,
+        EvidenceClass.EDUCATION_FIELD,
+    }
+    if structural:
+        status = _status_from_cap(structural_cap)
+        reasons = [BindingDerivationReason.STRUCTURAL_POLICY_CAP]
+        if evidence_class == EvidenceClass.SKILL_PROFICIENCY:
+            reasons.append(BindingDerivationReason.SKILL_PROFICIENCY_PAIRED)
+        return (
+            EvidenceTrustLevel.STRUCTURAL_ONLY,
+            status,
+            EvidenceStrength.WEAK,
+            InferenceType.ADJACENT_TRANSFER,
+            False,
+            tuple(reasons),
+        )
+
+    status_cap = provisional_cap
+    reasons = [BindingDerivationReason.PROVISIONAL_POLICY_CAP]
+    if proposed_binding_type == ProposedBindingType.ADJACENT_TRANSFER:
+        status_cap = EvidenceStatusCap.ADJACENT_TRANSFERABLE
+        reasons.append(BindingDerivationReason.PROVIDER_ADJACENT_LIMIT)
+    status = _status_from_cap(status_cap)
+    inference = (
+        InferenceType.ADJACENT_TRANSFER
+        if status == CurrentMatchStatus.ADJACENT
+        else InferenceType.BOUNDED_SEMANTIC
+    )
+    reasons.extend((
+        BindingDerivationReason.CONFIRMED_BINDING_UNAVAILABLE,
+        BindingDerivationReason.HUMAN_REVIEW_REQUIRED,
+    ))
+    return (
+        EvidenceTrustLevel.PROVISIONAL_SEMANTIC,
+        status,
+        EvidenceStrength.SUPPORTING
+        if status == CurrentMatchStatus.PARTIAL
+        else EvidenceStrength.WEAK,
+        inference,
+        True,
+        tuple(reasons),
+    )
+
+
+@dataclass(frozen=True, eq=True)
+class ProfileCriterionEvidenceBinding:
+    binding_id: str
+    role_id: str
+    dimension_id: str
+    criterion_id: str
+    atomic_evidence: AtomicEvidenceLocator
+    evidence_class: EvidenceClass
+    trust_level: EvidenceTrustLevel
+    proposed_binding_type: ProposedBindingType
+    provider_confidence: ProviderConfidence
+    derived_match_status: CurrentMatchStatus
+    derived_evidence_strength: EvidenceStrength
+    derived_inference_type: InferenceType
+    derived_review_required: bool
+    derivation_reason_codes: tuple[BindingDerivationReason, ...]
+
+    def validate(
+        self,
+        *,
+        profile: CareerProfile,
+        rubric: CapabilityRubric,
+    ) -> None:
+        enum_fields = (
+            (self.evidence_class, EvidenceClass, "evidence_class"),
+            (self.trust_level, EvidenceTrustLevel, "trust_level"),
+            (self.proposed_binding_type, ProposedBindingType, "proposed_binding_type"),
+            (self.provider_confidence, ProviderConfidence, "provider_confidence"),
+            (self.derived_match_status, CurrentMatchStatus, "derived_match_status"),
+            (
+                self.derived_evidence_strength,
+                EvidenceStrength,
+                "derived_evidence_strength",
+            ),
+            (self.derived_inference_type, InferenceType, "derived_inference_type"),
+        )
+        for value, enum_type, field_name in enum_fields:
+            if not isinstance(value, enum_type):
+                raise _CodedMappingValidationError(
+                    _MappingValidationCode.INVALID_BINDING_PROVENANCE,
+                    f"binding {field_name} must use {enum_type.__name__}",
+                )
+        if not isinstance(self.derived_review_required, bool):
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.INVALID_BINDING_PROVENANCE,
+                "binding derived_review_required must be boolean",
+            )
+        if (
+            not isinstance(self.derivation_reason_codes, tuple)
+            or any(
+                not isinstance(item, BindingDerivationReason)
+                for item in self.derivation_reason_codes
+            )
+        ):
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.INVALID_BINDING_PROVENANCE,
+                "binding derivation reasons must use BindingDerivationReason",
+            )
+        if rubric.schema_version != 2:
+            raise Phase2ValidationError("Mapping schema 3 requires Capability Rubric schema 2")
+        dimension = rubric.dimension(self.dimension_id)
+        if dimension.role_id != self.role_id:
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.ROLE_DIMENSION_MISMATCH,
+                "binding Dimension belongs to another Role Family",
+            )
+        criterion_ids = set(dimension.criterion_ids)
+        if self.criterion_id not in criterion_ids:
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.CRITERION_DIMENSION_MISMATCH,
+                "binding criterion does not belong to its Dimension",
+            )
+        policy = dimension.evidence_support_policy
+        if policy is None:
+            raise Phase2ValidationError("Mapping schema 3 requires an Evidence Support Policy")
+        actual_class = evidence_class_for_locator(profile, self.atomic_evidence)
+        if self.evidence_class != actual_class:
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.INVALID_BINDING_PROVENANCE,
+                "binding evidence class does not match its Profile path",
+            )
+        if actual_class in policy.forbidden_evidence_classes:
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.FORBIDDEN_EVIDENCE_CLASS,
+                "the Dimension policy forbids this evidence class",
+            )
+        if actual_class not in policy.allowed_evidence_classes:
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.UNSUPPORTED_EVIDENCE_CLASS,
+                "the Dimension policy does not allow this evidence class",
+            )
+        expected_id = generate_evidence_binding_id(
+            role_id=self.role_id,
+            dimension_id=self.dimension_id,
+            criterion_id=self.criterion_id,
+            locator=self.atomic_evidence,
+            proposed_binding_type=self.proposed_binding_type,
+        )
+        if self.binding_id != expected_id:
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.INVALID_BINDING_PROVENANCE,
+                "binding ID is not deterministic",
+            )
+        expected = _derive_binding_outcome(
+            evidence_class=actual_class,
+            proposed_binding_type=self.proposed_binding_type,
+            structural_cap=policy.structural_caps[actual_class],
+            provisional_cap=policy.provisional_status_cap,
+        )
+        actual = (
+            self.trust_level,
+            self.derived_match_status,
+            self.derived_evidence_strength,
+            self.derived_inference_type,
+            self.derived_review_required,
+            self.derivation_reason_codes,
+        )
+        if actual != expected:
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.INVALID_BINDING_PROVENANCE,
+                "binding derivation does not match the active Dimension policy",
+            )
+        if self.derived_match_status == CurrentMatchStatus.DEMONSTRATED:
+            raise _CodedMappingValidationError(
+                _MappingValidationCode.INVALID_BINDING_PROVENANCE,
+                "Mapping schema 3 cannot establish demonstrated without confirmed review",
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "binding_id": self.binding_id,
+            "role_id": self.role_id,
+            "dimension_id": self.dimension_id,
+            "criterion_id": self.criterion_id,
+            "atomic_evidence": self.atomic_evidence.to_dict(),
+            "evidence_class": self.evidence_class.value,
+            "trust_level": self.trust_level.value,
+            "proposed_binding_type": self.proposed_binding_type.value,
+            "provider_confidence": self.provider_confidence.value,
+            "derived_match_status": self.derived_match_status.value,
+            "derived_evidence_strength": self.derived_evidence_strength.value,
+            "derived_inference_type": self.derived_inference_type.value,
+            "derived_review_required": self.derived_review_required,
+            "derivation_reason_codes": [item.value for item in self.derivation_reason_codes],
+        }
+
+
 @dataclass(frozen=True, eq=True)
 class DirectionalSignalCandidate:
     role_id: str
@@ -1137,12 +1454,130 @@ class ConstraintCompatibilityCandidate:
         }
 
 
+def _binding_from_provider(
+    value: Any,
+    *,
+    index: int,
+    profile: CareerProfile,
+    rubric: CapabilityRubric,
+    spans_by_id: Mapping[str, CanonicalEvidenceSpan],
+) -> ProfileCriterionEvidenceBinding:
+    path = f"mapping_candidates.mappings[{index}]"
+    data = _mapping(value, path)
+    _reject_unknown(
+        data,
+        {
+            "role_id", "dimension_id", "criterion_id", "span_id",
+            "proposed_binding_type", "provider_confidence",
+        },
+        path,
+    )
+    role_id = _stable_id(data.get("role_id"), f"{path}.role_id")
+    dimension_id = _stable_id(data.get("dimension_id"), f"{path}.dimension_id")
+    criterion_id = _stable_id(data.get("criterion_id"), f"{path}.criterion_id")
+    try:
+        dimension = rubric.dimension(dimension_id)
+    except Phase2ValidationError as error:
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.UNKNOWN_DIMENSION, str(error)
+        ) from error
+    if dimension.role_id != role_id:
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.ROLE_DIMENSION_MISMATCH,
+            "binding Dimension belongs to another Role Family",
+        )
+    all_criteria = {
+        item for rubric_dimension in rubric.dimensions for item in rubric_dimension.criterion_ids
+    }
+    if criterion_id not in all_criteria:
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.UNKNOWN_CRITERION,
+            "binding criterion is not present in the Capability Rubric",
+        )
+    if criterion_id not in set(dimension.criterion_ids):
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.CRITERION_DIMENSION_MISMATCH,
+            "binding criterion belongs to another Dimension",
+        )
+    span_id = data.get("span_id")
+    if not isinstance(span_id, str) or span_id not in spans_by_id:
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.INVALID_PROFILE_REFERENCE,
+            "binding span_id is not in allowed_evidence_spans",
+        )
+    locator = spans_by_id[span_id].materialize(profile)
+    evidence_class = evidence_class_for_locator(profile, locator)
+    policy = dimension.evidence_support_policy
+    if policy is None:
+        raise Phase2ValidationError("Mapping schema 3 requires an Evidence Support Policy")
+    if evidence_class in policy.forbidden_evidence_classes:
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.FORBIDDEN_EVIDENCE_CLASS,
+            "the Dimension policy forbids this evidence class",
+        )
+    if evidence_class not in policy.allowed_evidence_classes:
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.UNSUPPORTED_EVIDENCE_CLASS,
+            "the Dimension policy does not allow this evidence class",
+        )
+    try:
+        proposed_type = _enum(
+            data.get("proposed_binding_type"),
+            ProposedBindingType,
+            f"{path}.proposed_binding_type",
+        )
+    except Phase2ValidationError as error:
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.INVALID_BINDING_TYPE, str(error)
+        ) from error
+    try:
+        provider_confidence = _enum(
+            data.get("provider_confidence"),
+            ProviderConfidence,
+            f"{path}.provider_confidence",
+        )
+    except Phase2ValidationError as error:
+        raise _CodedMappingValidationError(
+            _MappingValidationCode.INVALID_PROVIDER_CONFIDENCE, str(error)
+        ) from error
+    derived = _derive_binding_outcome(
+        evidence_class=evidence_class,
+        proposed_binding_type=proposed_type,
+        structural_cap=policy.structural_caps[evidence_class],
+        provisional_cap=policy.provisional_status_cap,
+    )
+    binding = ProfileCriterionEvidenceBinding(
+        binding_id=generate_evidence_binding_id(
+            role_id=role_id,
+            dimension_id=dimension_id,
+            criterion_id=criterion_id,
+            locator=locator,
+            proposed_binding_type=proposed_type,
+        ),
+        role_id=role_id,
+        dimension_id=dimension_id,
+        criterion_id=criterion_id,
+        atomic_evidence=locator,
+        evidence_class=evidence_class,
+        trust_level=derived[0],
+        proposed_binding_type=proposed_type,
+        provider_confidence=provider_confidence,
+        derived_match_status=derived[1],
+        derived_evidence_strength=derived[2],
+        derived_inference_type=derived[3],
+        derived_review_required=derived[4],
+        derivation_reason_codes=derived[5],
+    )
+    binding.validate(profile=profile, rubric=rubric)
+    return binding
+
+
 @dataclass(frozen=True, eq=True)
 class ProfileDimensionMappingCandidateSet:
     rubric_version: str
     role_catalog_version: str
     profile_fingerprint: str
-    mappings: tuple[ProfileDimensionMappingCandidate, ...]
+    mappings: tuple[ProfileDimensionMappingCandidate | ProfileCriterionEvidenceBinding, ...]
     directional_signals: tuple[DirectionalSignalCandidate, ...]
     constraints: tuple[ConstraintCompatibilityCandidate, ...]
     conflict_warnings: tuple[str, ...] = ()
@@ -1288,6 +1723,82 @@ class ProfileDimensionMappingCandidateSet:
             conflict_warnings=_string_tuple(data.get("conflict_warnings"), "mapping_candidates.conflict_warnings"),
             provider_name=_text(provider_name, "provider_name"),
             provider_model=_text(provider_model, "provider_model"),
+            schema_version=2,
+        )
+        result.validate(profile=profile, rubric=rubric, catalog=catalog)
+        return result
+
+    @classmethod
+    def from_provider_payload_v3(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        profile: CareerProfile,
+        rubric: CapabilityRubric,
+        catalog: RoleCatalog,
+        provider_name: str,
+        provider_model: str,
+        evidence_spans: tuple[CanonicalEvidenceSpan, ...],
+    ) -> ProfileDimensionMappingCandidateSet:
+        if rubric.schema_version != 2:
+            raise Phase2ValidationError("Mapping schema 3 requires Capability Rubric schema 2")
+        data = _mapping(payload, "mapping_candidates")
+        _reject_unknown(
+            data,
+            {"mappings", "directional_signals", "constraints", "conflict_warnings"},
+            "mapping_candidates",
+        )
+        raw_mappings = _list(data.get("mappings"), "mapping_candidates.mappings")
+        raw_directional = _list(
+            data.get("directional_signals"), "mapping_candidates.directional_signals"
+        )
+        raw_constraints = _list(data.get("constraints"), "mapping_candidates.constraints")
+        spans_by_id = {span.span_id: span for span in evidence_spans}
+        if len(spans_by_id) != len(evidence_spans):
+            raise Phase2ValidationError("allowed_evidence_spans contains duplicate span IDs")
+        mappings = tuple(
+            _binding_from_provider(
+                item,
+                index=index,
+                profile=profile,
+                rubric=rubric,
+                spans_by_id=spans_by_id,
+            )
+            for index, item in enumerate(raw_mappings)
+        )
+        directional = tuple(
+            _directional_from_provider(
+                _materialize_profile_reference_transport_candidate(
+                    item, profile=profile, spans_by_id=spans_by_id
+                ),
+                index=index,
+                profile=profile,
+            )
+            for index, item in enumerate(raw_directional)
+        )
+        constraints = tuple(
+            _constraint_from_provider(
+                _materialize_profile_reference_transport_candidate(
+                    item, profile=profile, spans_by_id=spans_by_id
+                ),
+                index=index,
+                profile=profile,
+            )
+            for index, item in enumerate(raw_constraints)
+        )
+        result = cls(
+            rubric_version=rubric.rubric_version,
+            role_catalog_version=catalog.catalog_version,
+            profile_fingerprint=profile_fingerprint(profile),
+            mappings=mappings,
+            directional_signals=directional,
+            constraints=constraints,
+            conflict_warnings=_string_tuple(
+                data.get("conflict_warnings"), "mapping_candidates.conflict_warnings"
+            ),
+            provider_name=_text(provider_name, "provider_name"),
+            provider_model=_text(provider_model, "provider_model"),
+            schema_version=3,
         )
         result.validate(profile=profile, rubric=rubric, catalog=catalog)
         return result
@@ -1305,6 +1816,7 @@ class ProfileDimensionMappingCandidateSet:
         attempt_number: int,
         response_hash_reference: str,
         evidence_spans: tuple[CanonicalEvidenceSpan, ...] | None = None,
+        mapping_schema_version: int = 2,
     ) -> ProfileDimensionMappingCandidateSet:
         return _isolate_provider_candidates(
             payload,
@@ -1316,6 +1828,7 @@ class ProfileDimensionMappingCandidateSet:
             attempt_number=attempt_number,
             response_hash_reference=response_hash_reference,
             evidence_spans=evidence_spans,
+            mapping_schema_version=mapping_schema_version,
         )
 
     @classmethod
@@ -1328,11 +1841,13 @@ class ProfileDimensionMappingCandidateSet:
         }
         _reject_unknown(data, allowed, "mapping_candidates")
         schema_version = data.get("schema_version")
-        if data.get("schema") != MAPPING_SCHEMA or schema_version not in {1, 2}:
+        if data.get("schema") != MAPPING_SCHEMA or schema_version not in SUPPORTED_MAPPING_SCHEMA_VERSIONS:
             raise Phase2ValidationError("unsupported Profile mapping schema version")
         # Typed JSON contains local IDs/fingerprints, unlike provider payloads.
         mappings = tuple(
             _mapping_from_dict(item, index, schema_version=schema_version)
+            if schema_version in {1, 2}
+            else _binding_from_dict(item, index)
             for index, item in enumerate(
                 _list(data.get("mappings"), "mapping_candidates.mappings")
             )
@@ -1352,21 +1867,36 @@ class ProfileDimensionMappingCandidateSet:
 
     def validate(self, *, profile: CareerProfile, rubric: CapabilityRubric, catalog: RoleCatalog) -> None:
         rubric.validate(catalog)
-        if self.schema != MAPPING_SCHEMA or self.schema_version not in {1, 2}:
+        if (
+            self.schema != MAPPING_SCHEMA
+            or not isinstance(self.schema_version, int)
+            or isinstance(self.schema_version, bool)
+            or self.schema_version not in SUPPORTED_MAPPING_SCHEMA_VERSIONS
+        ):
             raise Phase2ValidationError("unsupported Profile mapping schema version")
+        if self.schema_version == 3 and rubric.schema_version != 2:
+            raise Phase2ValidationError("Mapping schema 3 requires Capability Rubric schema 2")
         if self.rubric_version != rubric.rubric_version or self.role_catalog_version != catalog.catalog_version:
             raise Phase2ValidationError("mapping candidate version context mismatch")
         if self.profile_fingerprint != profile_fingerprint(profile):
             raise Phase2ValidationError("mapping candidate Profile fingerprint mismatch")
-        ids = [item.mapping_id for item in self.mappings]
+        ids = [
+            item.binding_id if isinstance(item, ProfileCriterionEvidenceBinding) else item.mapping_id
+            for item in self.mappings
+        ]
         if len(ids) != len(set(ids)):
             raise _CodedMappingValidationError(
                 _MappingValidationCode.DUPLICATE_MAPPING,
                 "mapping candidates contain duplicate mapping IDs",
             )
+        if self.schema_version == 3:
+            self._validate_schema_three_bindings(profile=profile, rubric=rubric)
         contribution_keys: set[tuple[str, str]] = set()
         primary_by_fact: dict[tuple[str, str], str] = {}
         for item in self.mappings:
+            if self.schema_version == 3:
+                continue
+            assert isinstance(item, ProfileDimensionMappingCandidate)
             item.validate(
                 profile=profile, rubric=rubric,
                 require_atomic=self.schema_version == 2,
@@ -1440,13 +1970,89 @@ class ProfileDimensionMappingCandidateSet:
                 ):
                     raise Phase2ValidationError("mapping rejection contains an invalid canonical path")
 
+    def _validate_schema_three_bindings(
+        self, *, profile: CareerProfile, rubric: CapabilityRubric
+    ) -> None:
+        bindings: list[ProfileCriterionEvidenceBinding] = []
+        for item in self.mappings:
+            if not isinstance(item, ProfileCriterionEvidenceBinding):
+                raise Phase2ValidationError(
+                    "Mapping schema 3 may contain only criterion evidence bindings"
+                )
+            item.validate(profile=profile, rubric=rubric)
+            bindings.append(item)
+        evidence_dimension_keys: set[tuple[str, str, str]] = set()
+        evidence_role_dimension: dict[tuple[str, str], str] = {}
+        for binding in bindings:
+            fingerprint = binding.atomic_evidence.evidence_fingerprint
+            key = (binding.role_id, fingerprint, binding.dimension_id)
+            if key in evidence_dimension_keys:
+                raise _CodedMappingValidationError(
+                    _MappingValidationCode.DUPLICATE_ATOMIC_EVIDENCE,
+                    "one evidence span cannot be bound twice to the same Dimension",
+                )
+            evidence_dimension_keys.add(key)
+            role_fact = (binding.role_id, fingerprint)
+            previous = evidence_role_dimension.get(role_fact)
+            if previous is not None and previous != binding.dimension_id:
+                raise _CodedMappingValidationError(
+                    _MappingValidationCode.CROSS_DIMENSION_EVIDENCE_REUSE,
+                    "one evidence span cannot contribute across Dimensions for one Role",
+                )
+            evidence_role_dimension[role_fact] = binding.dimension_id
+        for index, left in enumerate(bindings):
+            left_locator = left.atomic_evidence
+            for right in bindings[index + 1:]:
+                right_locator = right.atomic_evidence
+                if (
+                    left.role_id == right.role_id
+                    and left_locator.profile_reference.path
+                    == right_locator.profile_reference.path
+                    and max(left_locator.start_offset, right_locator.start_offset)
+                    < min(left_locator.end_offset, right_locator.end_offset)
+                ):
+                    raise _CodedMappingValidationError(
+                        _MappingValidationCode.OVERLAPPING_ATOMIC_EVIDENCE,
+                        "overlapping evidence spans cannot contribute to multiple bindings",
+                    )
+        skill_names = {
+            (
+                binding.role_id,
+                binding.dimension_id,
+                binding.criterion_id,
+                _SKILL_NAME_PATH.fullmatch(binding.atomic_evidence.profile_reference.path).group(1),
+            )
+            for binding in bindings
+            if binding.evidence_class == EvidenceClass.SKILL_NAME
+        }
+        for binding in bindings:
+            if binding.evidence_class != EvidenceClass.SKILL_PROFICIENCY:
+                continue
+            match = _SKILL_PROFICIENCY_PATH.fullmatch(
+                binding.atomic_evidence.profile_reference.path
+            )
+            assert match is not None
+            companion = (
+                binding.role_id,
+                binding.dimension_id,
+                binding.criterion_id,
+                match.group(1),
+            )
+            if companion not in skill_names:
+                raise _CodedMappingValidationError(
+                    _MappingValidationCode.SKILL_PROFICIENCY_WITHOUT_SKILL_NAME,
+                    "skill proficiency requires the same skill-name binding",
+                )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema": self.schema, "schema_version": self.schema_version,
             "rubric_version": self.rubric_version, "role_catalog_version": self.role_catalog_version,
             "profile_fingerprint": self.profile_fingerprint,
             "mappings": [
-                item.to_dict(include_atomic=self.schema_version == 2)
+                item.to_dict()
+                if isinstance(item, ProfileCriterionEvidenceBinding)
+                else item.to_dict(include_atomic=self.schema_version == 2)
                 for item in self.mappings
             ],
             "directional_signals": [item.to_dict() for item in self.directional_signals],
@@ -1460,6 +2066,10 @@ _PROVIDER_MAPPING_FIELDS = {
     "role_id", "dimension_id", "match_status", "profile_fact_references",
     "reasoning", "inference_type", "evidence_strength", "provider_confidence",
     "review_required", "relationship", "suggested_follow_up",
+}
+_PROVIDER_BINDING_FIELDS = {
+    "role_id", "dimension_id", "criterion_id", "span_id",
+    "proposed_binding_type", "provider_confidence",
 }
 _PROVIDER_DIRECTIONAL_FIELDS = {
     "role_id", "signal_type", "status", "profile_fact_references", "reasoning",
@@ -1506,6 +2116,7 @@ def _precheck_rejection_reason(
     *,
     kind: MappingCandidateKind,
     rubric: CapabilityRubric,
+    mapping_schema_version: int = 2,
 ) -> MappingRejectionReason | None:
     if not isinstance(raw, Mapping):
         return {
@@ -1514,7 +2125,11 @@ def _precheck_rejection_reason(
             MappingCandidateKind.CONSTRAINT: MappingRejectionReason.INVALID_CONSTRAINT,
         }[kind]
     allowed = {
-        MappingCandidateKind.CURRENT_FIT: _PROVIDER_MAPPING_FIELDS,
+        MappingCandidateKind.CURRENT_FIT: (
+            _PROVIDER_BINDING_FIELDS
+            if mapping_schema_version == 3
+            else _PROVIDER_MAPPING_FIELDS
+        ),
         MappingCandidateKind.DIRECTIONAL: _PROVIDER_DIRECTIONAL_FIELDS,
         MappingCandidateKind.CONSTRAINT: _PROVIDER_CONSTRAINT_FIELDS,
     }[kind]
@@ -1533,6 +2148,8 @@ def _precheck_rejection_reason(
             return MappingRejectionReason.UNKNOWN_DIMENSION
         if dimension.role_id != role_id:
             return MappingRejectionReason.ROLE_DIMENSION_MISMATCH
+        if mapping_schema_version == 3:
+            return None
         references = raw.get("profile_fact_references")
         reference_paths = (
             tuple(
@@ -1596,7 +2213,10 @@ def _isolate_provider_candidates(
     attempt_number: int,
     response_hash_reference: str,
     evidence_spans: tuple[CanonicalEvidenceSpan, ...] | None = None,
+    mapping_schema_version: int = 2,
 ) -> ProfileDimensionMappingCandidateSet:
+    if mapping_schema_version not in {2, 3}:
+        raise Phase2ValidationError("Provider isolation supports Mapping schema 2 or 3")
     data = _mapping(payload, "mapping_candidates")
     _reject_unknown(
         data,
@@ -1630,10 +2250,29 @@ def _isolate_provider_candidates(
     if spans_by_id is not None and len(spans_by_id) != len(evidence_spans):
         raise Phase2ValidationError("allowed_evidence_spans contains duplicate span IDs")
     for kind in MappingCandidateKind:
-        for index, raw in enumerate(raw_collections[kind]):
+        indexed_values = list(enumerate(raw_collections[kind]))
+        if (
+            mapping_schema_version == 3
+            and kind == MappingCandidateKind.CURRENT_FIT
+            and spans_by_id is not None
+        ):
+            def binding_priority(value: tuple[int, Any]) -> tuple[int, int]:
+                index, raw = value
+                span = spans_by_id.get(raw.get("span_id")) if isinstance(raw, Mapping) else None
+                is_skill_name = bool(
+                    span is not None and _SKILL_NAME_PATH.fullmatch(span.path)
+                )
+                return (0 if is_skill_name else 1, index)
+
+            indexed_values.sort(key=binding_priority)
+        for index, raw in indexed_values:
             candidate = raw
             reason = None
-            if kind == MappingCandidateKind.CURRENT_FIT and spans_by_id is not None:
+            if (
+                mapping_schema_version == 2
+                and kind == MappingCandidateKind.CURRENT_FIT
+                and spans_by_id is not None
+            ):
                 try:
                     candidate = _materialize_current_fit_transport_candidate(
                         raw, profile=profile, spans_by_id=spans_by_id
@@ -1642,7 +2281,11 @@ def _isolate_provider_candidates(
                     reason = _reason_from_validation_error(
                         error, raw=raw, kind=kind
                     )
-            elif spans_by_id is not None:
+            elif (
+                mapping_schema_version == 2
+                and spans_by_id is not None
+                and kind != MappingCandidateKind.CURRENT_FIT
+            ):
                 try:
                     candidate = _materialize_profile_reference_transport_candidate(
                         raw, profile=profile, spans_by_id=spans_by_id
@@ -1653,7 +2296,10 @@ def _isolate_provider_candidates(
                     )
             if reason is None:
                 reason = _precheck_rejection_reason(
-                    candidate, kind=kind, rubric=rubric
+                    candidate,
+                    kind=kind,
+                    rubric=rubric,
+                    mapping_schema_version=mapping_schema_version,
                 )
             if reason is None:
                 trial = {
@@ -1669,14 +2315,29 @@ def _isolate_provider_candidates(
                 }[kind]
                 trial[key].append(candidate)
                 try:
-                    ProfileDimensionMappingCandidateSet.from_provider_payload(
-                        trial,
-                        profile=profile,
-                        rubric=rubric,
-                        catalog=catalog,
-                        provider_name=provider_name,
-                        provider_model=provider_model,
-                    )
+                    if mapping_schema_version == 3:
+                        if evidence_spans is None:
+                            raise Phase2ValidationError(
+                                "Mapping schema 3 requires canonical evidence spans"
+                            )
+                        ProfileDimensionMappingCandidateSet.from_provider_payload_v3(
+                            trial,
+                            profile=profile,
+                            rubric=rubric,
+                            catalog=catalog,
+                            provider_name=provider_name,
+                            provider_model=provider_model,
+                            evidence_spans=evidence_spans,
+                        )
+                    else:
+                        ProfileDimensionMappingCandidateSet.from_provider_payload(
+                            trial,
+                            profile=profile,
+                            rubric=rubric,
+                            catalog=catalog,
+                            provider_name=provider_name,
+                            provider_model=provider_model,
+                        )
                 except (TypeError, Phase2ValidationError) as error:
                     reason = _reason_from_validation_error(
                         error, raw=candidate, kind=kind
@@ -1715,14 +2376,27 @@ def _isolate_provider_candidates(
         "constraints": accepted[MappingCandidateKind.CONSTRAINT],
         "conflict_warnings": [*warnings, *report.warning_tokens()],
     }
-    result = ProfileDimensionMappingCandidateSet.from_provider_payload(
-        accepted_payload,
-        profile=profile,
-        rubric=rubric,
-        catalog=catalog,
-        provider_name=provider_name,
-        provider_model=provider_model,
-    )
+    if mapping_schema_version == 3:
+        if evidence_spans is None:
+            raise Phase2ValidationError("Mapping schema 3 requires canonical evidence spans")
+        result = ProfileDimensionMappingCandidateSet.from_provider_payload_v3(
+            accepted_payload,
+            profile=profile,
+            rubric=rubric,
+            catalog=catalog,
+            provider_name=provider_name,
+            provider_model=provider_model,
+            evidence_spans=evidence_spans,
+        )
+    else:
+        result = ProfileDimensionMappingCandidateSet.from_provider_payload(
+            accepted_payload,
+            profile=profile,
+            rubric=rubric,
+            catalog=catalog,
+            provider_name=provider_name,
+            provider_model=provider_model,
+        )
     result = replace(result, validation_report=report if report.rejections else None)
     result.validate(profile=profile, rubric=rubric, catalog=catalog)
     return result
@@ -1767,6 +2441,75 @@ def _mapping_from_dict(
     )
 
 
+def _binding_from_dict(value: Any, index: int) -> ProfileCriterionEvidenceBinding:
+    path = f"mapping_candidates.mappings[{index}]"
+    data = _mapping(value, path)
+    _reject_unknown(
+        data,
+        {
+            "binding_id", "role_id", "dimension_id", "criterion_id",
+            "atomic_evidence", "evidence_class", "trust_level",
+            "proposed_binding_type", "provider_confidence", "derived_match_status",
+            "derived_evidence_strength", "derived_inference_type",
+            "derived_review_required", "derivation_reason_codes",
+        },
+        path,
+    )
+    return ProfileCriterionEvidenceBinding(
+        binding_id=_stable_id(data.get("binding_id"), f"{path}.binding_id"),
+        role_id=_stable_id(data.get("role_id"), f"{path}.role_id"),
+        dimension_id=_stable_id(data.get("dimension_id"), f"{path}.dimension_id"),
+        criterion_id=_stable_id(data.get("criterion_id"), f"{path}.criterion_id"),
+        atomic_evidence=AtomicEvidenceLocator.from_dict(
+            data.get("atomic_evidence"), f"{path}.atomic_evidence"
+        ),
+        evidence_class=_enum(
+            data.get("evidence_class"), EvidenceClass, f"{path}.evidence_class"
+        ),
+        trust_level=_enum(
+            data.get("trust_level"), EvidenceTrustLevel, f"{path}.trust_level"
+        ),
+        proposed_binding_type=_enum(
+            data.get("proposed_binding_type"),
+            ProposedBindingType,
+            f"{path}.proposed_binding_type",
+        ),
+        provider_confidence=_enum(
+            data.get("provider_confidence"),
+            ProviderConfidence,
+            f"{path}.provider_confidence",
+        ),
+        derived_match_status=_enum(
+            data.get("derived_match_status"),
+            CurrentMatchStatus,
+            f"{path}.derived_match_status",
+        ),
+        derived_evidence_strength=_enum(
+            data.get("derived_evidence_strength"),
+            EvidenceStrength,
+            f"{path}.derived_evidence_strength",
+        ),
+        derived_inference_type=_enum(
+            data.get("derived_inference_type"),
+            InferenceType,
+            f"{path}.derived_inference_type",
+        ),
+        derived_review_required=_boolean(
+            data.get("derived_review_required"), f"{path}.derived_review_required"
+        ),
+        derivation_reason_codes=tuple(
+            _enum(item, BindingDerivationReason, f"{path}.derivation_reason_codes[{item_index}]")
+            for item_index, item in enumerate(
+                _string_tuple(
+                    data.get("derivation_reason_codes"),
+                    f"{path}.derivation_reason_codes",
+                    ids=True,
+                )
+            )
+        ),
+    )
+
+
 def _directional_from_provider(value: Any, *, index: int, profile: CareerProfile) -> DirectionalSignalCandidate:
     path=f"mapping_candidates.directional_signals[{index}]"; data=_mapping(value,path)
     _reject_unknown(data,{"role_id","signal_type","status","profile_fact_references","reasoning","provider_confidence","review_required","suggested_follow_up"},path)
@@ -1806,27 +2549,87 @@ PROVIDER_MAPPING_SCHEMA: dict[str, Any] = {
     "required":["mappings","directional_signals","constraints","conflict_warnings"],
 }
 
+PROVIDER_BINDING_SCHEMA: dict[str, Any] = deepcopy(PROVIDER_MAPPING_SCHEMA)
+PROVIDER_BINDING_SCHEMA["properties"]["mappings"] = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "role_id": {"type": "string"},
+            "dimension_id": {"type": "string"},
+            "criterion_id": {"type": "string"},
+            "span_id": {"type": "string"},
+            "proposed_binding_type": {
+                "type": "string",
+                "enum": [item.value for item in ProposedBindingType],
+            },
+            "provider_confidence": {
+                "type": "string",
+                "enum": [item.value for item in ProviderConfidence],
+            },
+        },
+        "required": [
+            "role_id", "dimension_id", "criterion_id", "span_id",
+            "proposed_binding_type", "provider_confidence",
+        ],
+    },
+}
+
 
 def provider_mapping_schema(
-    rubric: CapabilityRubric, profile: CareerProfile
+    rubric: CapabilityRubric,
+    profile: CareerProfile,
+    *,
+    mapping_schema_version: int = 2,
 ) -> dict[str, Any]:
     """Return the Provider schema with role IDs constrained to this Rubric."""
+    if mapping_schema_version not in {2, 3}:
+        raise Phase2ValidationError("Provider schema supports Mapping schema 2 or 3")
+    if mapping_schema_version == 3 and rubric.schema_version != 2:
+        raise Phase2ValidationError("Mapping schema 3 requires Capability Rubric schema 2")
     role_ids = list(rubric.supported_role_ids)
     if not role_ids:
         raise Phase2ValidationError("Capability Rubric must support at least one role")
-    schema = deepcopy(PROVIDER_MAPPING_SCHEMA)
+    schema = deepcopy(
+        PROVIDER_BINDING_SCHEMA if mapping_schema_version == 3 else PROVIDER_MAPPING_SCHEMA
+    )
     for collection in ("mappings", "directional_signals", "constraints"):
         schema["properties"][collection]["items"]["properties"]["role_id"] = {
             "type": "string",
             "enum": role_ids,
         }
     span_ids = [span.span_id for span in canonical_evidence_span_inventory(profile)]
-    for collection in ("mappings", "directional_signals", "constraints"):
+    for collection in ("directional_signals", "constraints"):
         schema["properties"][collection]["items"]["properties"][
             "profile_fact_references"
         ]["items"]["properties"]["span_id"] = {
             "type": "string",
             "enum": span_ids,
+        }
+    if mapping_schema_version == 2:
+        schema["properties"]["mappings"]["items"]["properties"][
+            "profile_fact_references"
+        ]["items"]["properties"]["span_id"] = {
+            "type": "string",
+            "enum": span_ids,
+        }
+    else:
+        schema["properties"]["mappings"]["items"]["properties"]["span_id"] = {
+            "type": "string",
+            "enum": span_ids,
+        }
+        schema["properties"]["mappings"]["items"]["properties"]["dimension_id"] = {
+            "type": "string",
+            "enum": [dimension.dimension_id for dimension in rubric.dimensions],
+        }
+        schema["properties"]["mappings"]["items"]["properties"]["criterion_id"] = {
+            "type": "string",
+            "enum": [
+                criterion_id
+                for dimension in rubric.dimensions
+                for criterion_id in dimension.criterion_ids
+            ],
         }
     return schema
 
@@ -1845,6 +2648,17 @@ Do not calculate scores, bands, ranks, weights, confidence results, decisions, g
 Allowed top-level fields are mappings, directional_signals, constraints, and conflict_warnings.
 Do not add fields outside the supplied JSON Schema. Return exactly one complete JSON object.
 Use double-quoted JSON property names and strings. Do not emit trailing commas, comments, Markdown fences, or explanatory text."""
+
+MAPPING_V3_INSTRUCTIONS = """Propose atomic Profile evidence bindings to the supplied Capability Rubric criteria.
+For every Current Fit binding, output only role_id, dimension_id, criterion_id, span_id, proposed_binding_type, and provider_confidence. Select role, Dimension, criterion, and span IDs exactly from the supplied inventories.
+The Provider proposes only whether the evidence appears direct, bounded_semantic, or adjacent_transfer. Python determines evidence_class, trust_level, final inference, match status, evidence strength, review requirement, stable IDs, fingerprints, and derivation reasons from the validated Profile and Rubric policy.
+Never output binding_id, path, value_snapshot, excerpt, offset, fingerprint, evidence_class, trust_level, match_status, evidence_strength, inference_type, review_required, relationship, score, rank, recommendation, Decision, or review provenance in a Current Fit binding.
+Career interests, target roles, desired growth, preferred work content, and statements about wanting to learn may support Directional Fit only. They must never be submitted as Current Fit evidence bindings.
+Education does not prove implementation, systems, production, evaluation, or delivery capability. Select only criterion bindings directly supported by the chosen atomic span.
+Directional signals and constraints retain the exact supplied schema and safety semantics. Their Profile references contain only one selected span_id.
+Preserve unknowns. Do not calculate scores, bands, ranks, weights, recommendation confidence, decisions, gaps, stable IDs, artifact status, or review provenance.
+Allowed top-level fields are mappings, directional_signals, constraints, and conflict_warnings.
+Do not add fields outside the supplied JSON Schema. Return exactly one complete JSON object with double-quoted property names and no Markdown or explanatory text."""
 
 
 class MappingProviderOutputError(TypeError):
@@ -1963,12 +2777,23 @@ def _accepted_candidate_keys(
 ) -> frozenset[tuple[Any, ...]]:
     keys: set[tuple[Any, ...]] = set()
     for item in value.mappings:
-        keys.add((
-            "current_fit", item.role_id, item.dimension_id, item.match_status.value,
-            item.relationship.value, item.inference_type.value,
-            item.evidence_strength.value, item.review_required,
-            tuple(sorted(locator.evidence_fingerprint for locator in item.atomic_evidence)),
-        ))
+        if isinstance(item, ProfileCriterionEvidenceBinding):
+            keys.add((
+                "criterion_binding",
+                item.role_id,
+                item.dimension_id,
+                item.criterion_id,
+                item.atomic_evidence.evidence_fingerprint,
+                item.proposed_binding_type.value,
+                item.provider_confidence.value,
+            ))
+        else:
+            keys.add((
+                "current_fit", item.role_id, item.dimension_id, item.match_status.value,
+                item.relationship.value, item.inference_type.value,
+                item.evidence_strength.value, item.review_required,
+                tuple(sorted(locator.evidence_fingerprint for locator in item.atomic_evidence)),
+            ))
     for item in value.directional_signals:
         keys.add((
             "directional", item.role_id, item.signal_type.value, item.status.value,
@@ -2088,6 +2913,7 @@ class OpenAIProfileDimensionMapper:
         max_attempts: int = 2,
         capabilities: ProviderCapabilities | None = None,
         diagnostics_dir: str | Path | None = None,
+        mapping_schema_version: int = 2,
     ) -> None:
         self.settings = settings or LLMSettings.from_environment()
         self.client = client or create_openai_client(self.settings)
@@ -2095,6 +2921,9 @@ class OpenAIProfileDimensionMapper:
             raise ValueError("max_attempts must be 1 or 2")
         self.max_attempts = max_attempts
         self.capabilities = capabilities or provider_capabilities(self.settings)
+        if mapping_schema_version not in {2, 3}:
+            raise ValueError("mapping_schema_version must be 2 or 3")
+        self.mapping_schema_version = mapping_schema_version
         self.attempt_diagnostics: list[dict[str, Any]] = []
         self._active_response_format_mode = self.capabilities.response_format_mode
         self._active_fallback_reason: str | None = None
@@ -2110,8 +2939,41 @@ class OpenAIProfileDimensionMapper:
         self._json_object_rejected = False
         allowed_role_ids = tuple(rubric.supported_role_ids)
         evidence_spans = canonical_evidence_span_inventory(profile)
-        response_schema = provider_mapping_schema(rubric, profile)
-        payload = json.dumps({"career_profile":profile.to_dict(),"allowed_evidence_spans":[span.to_transport_dict() for span in evidence_spans],"allowed_canonical_role_ids":list(allowed_role_ids),"rubric":{"rubric_version":rubric.rubric_version,"roles":[{"role_id":role,"dimensions":[{"dimension_id":d.dimension_id,"name":d.name,"description":d.description,"inclusion_criteria":list(d.inclusion_criteria),"exclusion_criteria":list(d.exclusion_criteria)} for d in rubric.role_dimensions(role)]} for role in allowed_role_ids]}},ensure_ascii=False)
+        response_schema = provider_mapping_schema(
+            rubric, profile, mapping_schema_version=self.mapping_schema_version
+        )
+        if self.mapping_schema_version == 3 and rubric.schema_version != 2:
+            raise Phase2ValidationError("Mapping schema 3 requires Capability Rubric schema 2")
+        rubric_roles = []
+        for role in allowed_role_ids:
+            dimensions = []
+            for dimension in rubric.role_dimensions(role):
+                item: dict[str, Any] = {
+                    "dimension_id": dimension.dimension_id,
+                    "name": dimension.name,
+                    "description": dimension.description,
+                    "exclusion_criteria": list(dimension.exclusion_criteria),
+                }
+                if self.mapping_schema_version == 3:
+                    item["criteria"] = [criterion.to_dict() for criterion in dimension.criteria]
+                else:
+                    item["inclusion_criteria"] = list(dimension.inclusion_criteria)
+                dimensions.append(item)
+            rubric_roles.append({"role_id": role, "dimensions": dimensions})
+        payload = json.dumps(
+            {
+                "career_profile": profile.to_dict(),
+                "allowed_evidence_spans": [
+                    span.to_transport_dict() for span in evidence_spans
+                ],
+                "allowed_canonical_role_ids": list(allowed_role_ids),
+                "rubric": {
+                    "rubric_version": rubric.rubric_version,
+                    "roles": rubric_roles,
+                },
+            },
+            ensure_ascii=False,
+        )
         last: Exception | None = None
         repair_error: str | None = None
         retry_baseline: ProfileDimensionMappingCandidateSet | None = None
@@ -2141,6 +3003,7 @@ class OpenAIProfileDimensionMapper:
                     attempt_number=attempt,
                     response_hash_reference=response_hash,
                     evidence_spans=evidence_spans,
+                    mapping_schema_version=self.mapping_schema_version,
                 )
                 validation_report = result.validation_report
                 if validation_report and validation_report.rejections and attempt < self.max_attempts:
@@ -2314,8 +3177,13 @@ class OpenAIProfileDimensionMapper:
     ) -> str:
         schema=json.dumps(response_schema,ensure_ascii=False,separators=(",",":"))
         allowed_roles=json.dumps(list(allowed_role_ids),ensure_ascii=False,separators=(",",":"))
+        instructions = (
+            MAPPING_V3_INSTRUCTIONS
+            if self.mapping_schema_version == 3
+            else MAPPING_INSTRUCTIONS
+        )
         base=(
-            f"{MAPPING_INSTRUCTIONS}\nAllowed canonical role IDs: {allowed_roles}. "
+            f"{instructions}\nAllowed canonical role IDs: {allowed_roles}. "
             f"The exact allowed JSON Schema is: {schema}"
         )
         if repair_error is None:
@@ -2413,10 +3281,44 @@ class OpenAIProfileDimensionMapper:
             atomic_guidance.append(
                 "Resubmit the complete Candidate from the supplied Profile and schema without local IDs or derived provenance."
             )
+        if MappingRejectionReason.UNKNOWN_CRITERION.value in repair_error:
+            atomic_guidance.append(
+                "Select criterion_id only from the criteria supplied in the Capability Rubric inventory."
+            )
+        if MappingRejectionReason.CRITERION_DIMENSION_MISMATCH.value in repair_error:
+            atomic_guidance.append(
+                "Select a criterion_id that belongs to the submitted dimension_id."
+            )
+        if MappingRejectionReason.FORBIDDEN_EVIDENCE_CLASS.value in repair_error:
+            atomic_guidance.append(
+                "Remove the binding or choose evidence whose Profile object type is allowed by that Dimension policy."
+            )
+        if MappingRejectionReason.UNSUPPORTED_EVIDENCE_CLASS.value in repair_error:
+            atomic_guidance.append(
+                "Current Fit evidence must be a skill name, paired skill proficiency, education field, experience summary, or project summary."
+            )
+        if MappingRejectionReason.SKILL_PROFICIENCY_WITHOUT_SKILL_NAME.value in repair_error:
+            atomic_guidance.append(
+                "A skill proficiency span requires a separate binding for the same skill record's skill_name and the same Role, Dimension, and criterion."
+            )
+        if MappingRejectionReason.INVALID_BINDING_TYPE.value in repair_error:
+            atomic_guidance.append(
+                "proposed_binding_type must be direct, bounded_semantic, or adjacent_transfer."
+            )
+        if MappingRejectionReason.INVALID_BINDING_PROVENANCE.value in repair_error:
+            atomic_guidance.append(
+                "Do not submit local binding IDs, derived fields, or review provenance; submit only the six allowed binding fields."
+            )
         atomic_repair_guidance = (
             "\nAtomic evidence corrections: " + " ".join(atomic_guidance)
             if atomic_guidance
             else ""
+        )
+        transport_guidance = (
+            "For every Current Fit binding, submit only role_id, dimension_id, criterion_id, "
+            "span_id, proposed_binding_type, and provider_confidence. "
+            if self.mapping_schema_version == 3
+            else "For every Profile fact reference, select only a span_id from allowed_evidence_spans. "
         )
         return (
             base
@@ -2427,8 +3329,8 @@ class OpenAIProfileDimensionMapper:
             + unknown_role_guidance
             + atomic_repair_guidance
             + "\nRegenerate the complete mapping from the original task and input. "
-            "For every Profile fact reference, select only a span_id from allowed_evidence_spans. "
-            "Do not output a path, value_snapshot, excerpt, offset, fingerprint, or custom span. "
+            + transport_guidance
+            + "Do not output a path, value_snapshot, excerpt, offset, fingerprint, or custom span. "
             "Do not merely patch a fragment. Do not output score, rank, Decision, Gap, stable ID, "
             "fingerprint, explanation outside JSON, or Markdown."
         )
