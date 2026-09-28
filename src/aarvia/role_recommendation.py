@@ -12,10 +12,15 @@ import re
 from typing import Any, Iterable, Mapping
 
 from .capability_rubric import (
+    BehaviorEvidenceRequirement,
     CapabilityDimension,
     CapabilityRubric,
     DimensionReadiness,
     EvidenceClass,
+)
+from .evidence_binding_review import (
+    BindingReviewDecision,
+    EvidenceBindingReviewArtifact,
 )
 from .career_direction import ProfileReference, RecommendationSet, profile_fingerprint
 from .phase2_storage import load_phase2_json, save_phase2_json
@@ -381,24 +386,46 @@ class RoleRecommendationArtifact:
     follow_up_questions: tuple[FollowUpQuestion, ...]
     tie_groups: tuple[tuple[str, ...], ...]
     blockers: tuple[str, ...]
+    evidence_review_artifact_id: str | None = None
     schema: str = RECOMMENDATION_SCHEMA
     schema_version: int = RECOMMENDATION_SCHEMA_VERSION
 
     @classmethod
     def from_dict(cls,value:Mapping[str,Any])->RoleRecommendationArtifact:
-        data=_mapping(value,"recommendations");_reject_unknown(data,{"schema","schema_version","recommendation_set_id","created_at","profile_fingerprint","rubric_version","catalog_version","provider_name","provider_model","mapping_schema_version","profile_conflict_warnings","role_results","follow_up_questions","tie_groups","blockers"},"recommendations")
+        data=_mapping(value,"recommendations")
         schema_version=data.get("schema_version")
         if data.get("schema")!=RECOMMENDATION_SCHEMA or schema_version not in {2,3,4}: raise Phase2ValidationError("unsupported Recommendation schema version")
+        allowed={"schema","schema_version","recommendation_set_id","created_at","profile_fingerprint","rubric_version","catalog_version","provider_name","provider_model","mapping_schema_version","profile_conflict_warnings","role_results","follow_up_questions","tie_groups","blockers"}
+        if schema_version == 4:
+            allowed.add("evidence_review_artifact_id")
+        _reject_unknown(data,allowed,"recommendations")
         mapping_version=data.get("mapping_schema_version")
         expected_mapping_version={2:1,3:2,4:3}[schema_version]
         if mapping_version!=expected_mapping_version: raise Phase2ValidationError("unsupported mapping schema version in Recommendation")
         groups=[]
         for i,item in enumerate(_list(data.get("tie_groups"),"recommendations.tie_groups")):
             groups.append(_string_tuple(item,f"recommendations.tie_groups[{i}]",ids=True))
-        return cls(recommendation_set_id=_stable_id(data.get("recommendation_set_id"),"recommendations.recommendation_set_id"),created_at=_iso_datetime(data.get("created_at"),"recommendations.created_at"),profile_fingerprint=_text(data.get("profile_fingerprint"),"recommendations.profile_fingerprint"),rubric_version=_version(data.get("rubric_version"),"recommendations.rubric_version"),catalog_version=_version(data.get("catalog_version"),"recommendations.catalog_version"),provider_name=_text(data.get("provider_name"),"recommendations.provider_name"),provider_model=_text(data.get("provider_model"),"recommendations.provider_model"),mapping_schema_version=mapping_version,profile_conflict_warnings=_string_tuple(data.get("profile_conflict_warnings"),"recommendations.profile_conflict_warnings"),role_results=tuple(RoleRecommendationResult.from_dict(x,f"recommendations.role_results[{i}]",schema_version=schema_version) for i,x in enumerate(_list(data.get("role_results"),"recommendations.role_results"))),follow_up_questions=tuple(FollowUpQuestion.from_dict(x,f"recommendations.follow_up_questions[{i}]") for i,x in enumerate(_list(data.get("follow_up_questions"),"recommendations.follow_up_questions"))),tie_groups=tuple(groups),blockers=_string_tuple(data.get("blockers"),"recommendations.blockers",ids=True),schema_version=schema_version)
+        review_artifact_id = data.get("evidence_review_artifact_id")
+        if schema_version != 4 and review_artifact_id is not None:
+            raise Phase2ValidationError("legacy Recommendation cannot reference Evidence Binding Reviews")
+        return cls(recommendation_set_id=_stable_id(data.get("recommendation_set_id"),"recommendations.recommendation_set_id"),created_at=_iso_datetime(data.get("created_at"),"recommendations.created_at"),profile_fingerprint=_text(data.get("profile_fingerprint"),"recommendations.profile_fingerprint"),rubric_version=_version(data.get("rubric_version"),"recommendations.rubric_version"),catalog_version=_version(data.get("catalog_version"),"recommendations.catalog_version"),provider_name=_text(data.get("provider_name"),"recommendations.provider_name"),provider_model=_text(data.get("provider_model"),"recommendations.provider_model"),mapping_schema_version=mapping_version,profile_conflict_warnings=_string_tuple(data.get("profile_conflict_warnings"),"recommendations.profile_conflict_warnings"),role_results=tuple(RoleRecommendationResult.from_dict(x,f"recommendations.role_results[{i}]",schema_version=schema_version) for i,x in enumerate(_list(data.get("role_results"),"recommendations.role_results"))),follow_up_questions=tuple(FollowUpQuestion.from_dict(x,f"recommendations.follow_up_questions[{i}]") for i,x in enumerate(_list(data.get("follow_up_questions"),"recommendations.follow_up_questions"))),tie_groups=tuple(groups),blockers=_string_tuple(data.get("blockers"),"recommendations.blockers",ids=True),evidence_review_artifact_id=None if review_artifact_id is None else _stable_id(review_artifact_id,"recommendations.evidence_review_artifact_id"),schema_version=schema_version)
 
-    def validate(self, *, profile: CareerProfile, rubric: CapabilityRubric, catalog: RoleCatalog) -> None:
+    def validate(self, *, profile: CareerProfile, rubric: CapabilityRubric, catalog: RoleCatalog, mapping_candidates: ProfileDimensionMappingCandidateSet | None = None, evidence_reviews: EvidenceBindingReviewArtifact | None = None) -> None:
         rubric.validate(catalog)
+        review_decisions: dict[str, BindingReviewDecision] = {}
+        if self.evidence_review_artifact_id is not None:
+            if mapping_candidates is None or evidence_reviews is None:
+                raise Phase2ValidationError("reviewed Recommendation requires Mapping and Evidence Review context")
+            evidence_reviews.validate(profile=profile,rubric=rubric,mapping=mapping_candidates,catalog=catalog)
+            if self.evidence_review_artifact_id != evidence_reviews.review_artifact_id:
+                raise Phase2ValidationError("Recommendation Evidence Review reference mismatch")
+            review_decisions = evidence_reviews.decision_by_binding()
+        elif evidence_reviews is not None:
+            raise Phase2ValidationError("Recommendation does not reference the supplied Evidence Reviews")
+        if mapping_candidates is not None:
+            mapping_candidates.validate(profile=profile,rubric=rubric,catalog=catalog)
+            if self.schema_version == 4 and mapping_candidates.schema_version != 3:
+                raise Phase2ValidationError("Recommendation schema 4 requires Mapping schema 3")
         if (self.schema, self.schema_version, self.mapping_schema_version) not in {
             (RECOMMENDATION_SCHEMA, 2, 1),
             (RECOMMENDATION_SCHEMA, 3, 2),
@@ -494,6 +521,18 @@ class RoleRecommendationArtifact:
                                 role_id=result.role_id,
                                 profile=profile,
                                 rubric=rubric,
+                                review_decisions=review_decisions,
+                                source_bindings=(
+                                    tuple(
+                                        item for item in mapping_candidates.mappings
+                                        if isinstance(item, ProfileCriterionEvidenceBinding)
+                                        and item.role_id == result.role_id
+                                        and item.dimension_id == dimension.dimension_id
+                                    )
+                                    if self.evidence_review_artifact_id is not None
+                                    and mapping_candidates is not None
+                                    else None
+                                ),
                             )
                         elif assessment.supporting_bindings:
                             raise Phase2ValidationError(
@@ -563,7 +602,7 @@ class RoleRecommendationArtifact:
                 result.core_current_fit.band == FitBand.INSUFFICIENT
                 and result.extended_current_fit.band != FitBand.INSUFFICIENT
             ) or expected_unstable or (
-                self.schema_version == 4 and _result_has_provisional_bindings(result)
+                self.schema_version == 4 and _result_has_provisional_bindings(result, review_decisions)
             )
             if result.provisional != expected_provisional:
                 raise Phase2ValidationError("Recommendation provisional flag is invalid")
@@ -574,17 +613,11 @@ class RoleRecommendationArtifact:
             if result.core_current_fit.band==FitBand.INSUFFICIENT and result.extended_current_fit.band!=FitBand.INSUFFICIENT: expected_blockers.append(RecommendationBlockerCode.CONDITIONAL_MARKET_BASIS.value)
             if result.constraint.status==MappingConstraintStatus.INCOMPATIBLE: expected_blockers.append(RecommendationBlockerCode.CONSTRAINT_INCOMPATIBLE.value)
             if all_provider_candidates_rejected: expected_blockers.append(RecommendationBlockerCode.PROVIDER_MAPPING_INSUFFICIENT.value)
-            if self.schema_version == 4:
-                expected_blockers.append(
-                    RecommendationBlockerCode.CONFIRMED_EVIDENCE_REQUIRED.value
-                )
-                if any(
-                    axis.band == FitBand.STRONG
-                    for axis in (result.core_current_fit, result.extended_current_fit)
-                ):
-                    raise Phase2ValidationError(
-                        "Recommendation schema 4 cannot claim Strong without confirmed evidence"
-                    )
+            if self.schema_version == 4 and not any(
+                axis.band == FitBand.STRONG
+                for axis in (result.core_current_fit, result.extended_current_fit)
+            ):
+                expected_blockers.append(RecommendationBlockerCode.CONFIRMED_EVIDENCE_REQUIRED.value)
             if result.blockers != tuple(expected_blockers):
                 raise Phase2ValidationError("Recommendation blockers are invalid")
             expected_confidence=_confidence(core=result.core_current_fit,extended=result.extended_current_fit,directional=result.directional_fit,constraint=result.constraint,market=result.market_evidence_confidence,conflicts=profile_conflicts,ranking_unstable=expected_unstable,separation=_separation_confidence(baseline_by_role[result.role_id],baseline_results),provider_rejection_cap=provider_rejection_cap)
@@ -618,11 +651,14 @@ class RoleRecommendationArtifact:
         expected_blockers=tuple(sorted(set(code for result in self.role_results for code in result.blockers)))
         if self.blockers!=expected_blockers:
             raise Phase2ValidationError("Recommendation aggregate blockers are invalid")
-        expected=generate_recommendation_id(profile_fingerprint=self.profile_fingerprint,rubric_version=self.rubric_version,catalog_version=self.catalog_version,provider_name=self.provider_name,provider_model=self.provider_model,role_results=self.role_results,schema_version=self.schema_version)
+        expected=generate_recommendation_id(profile_fingerprint=self.profile_fingerprint,rubric_version=self.rubric_version,catalog_version=self.catalog_version,provider_name=self.provider_name,provider_model=self.provider_model,role_results=self.role_results,schema_version=self.schema_version,evidence_review_artifact_id=self.evidence_review_artifact_id)
         if self.recommendation_set_id!=expected: raise Phase2ValidationError("Recommendation ID is not deterministic")
 
     def to_dict(self)->dict[str,Any]:
-        return {"schema":self.schema,"schema_version":self.schema_version,"recommendation_set_id":self.recommendation_set_id,"created_at":self.created_at,"profile_fingerprint":self.profile_fingerprint,"rubric_version":self.rubric_version,"catalog_version":self.catalog_version,"provider_name":self.provider_name,"provider_model":self.provider_model,"mapping_schema_version":self.mapping_schema_version,"profile_conflict_warnings":list(self.profile_conflict_warnings),"role_results":[x.to_dict(schema_version=self.schema_version) for x in self.role_results],"follow_up_questions":[x.to_dict() for x in self.follow_up_questions],"tie_groups":[list(x) for x in self.tie_groups],"blockers":list(self.blockers)}
+        result={"schema":self.schema,"schema_version":self.schema_version,"recommendation_set_id":self.recommendation_set_id,"created_at":self.created_at,"profile_fingerprint":self.profile_fingerprint,"rubric_version":self.rubric_version,"catalog_version":self.catalog_version,"provider_name":self.provider_name,"provider_model":self.provider_model,"mapping_schema_version":self.mapping_schema_version,"profile_conflict_warnings":list(self.profile_conflict_warnings),"role_results":[x.to_dict(schema_version=self.schema_version) for x in self.role_results],"follow_up_questions":[x.to_dict() for x in self.follow_up_questions],"tie_groups":[list(x) for x in self.tie_groups],"blockers":list(self.blockers)}
+        if self.evidence_review_artifact_id is not None:
+            result["evidence_review_artifact_id"] = self.evidence_review_artifact_id
+        return result
 
 
 def _list(value:Any,path:str)->list[Any]:
@@ -681,8 +717,40 @@ _BINDING_STATUS_ORDER = {
 def _policy_dimension_assessment(
     dimension: CapabilityDimension,
     bindings: tuple[ProfileCriterionEvidenceBinding, ...],
+    review_decisions: Mapping[str, BindingReviewDecision] | None = None,
 ) -> DimensionAssessment:
-    ordered = tuple(sorted(bindings, key=lambda item: item.binding_id))
+    decisions = {} if review_decisions is None else dict(review_decisions)
+    ordered = tuple(
+        sorted(
+            (
+                item for item in bindings
+                if decisions.get(item.binding_id) != BindingReviewDecision.REJECTED
+            ),
+            key=lambda item: item.binding_id,
+        )
+    )
+    skill_name_keys = {
+        (item.criterion_id, match.group(1))
+        for item in ordered
+        if item.evidence_class == EvidenceClass.SKILL_NAME
+        and (
+            match := re.fullmatch(
+                r"skills\[(\d+)\]\.skill_name",
+                item.atomic_evidence.profile_reference.path,
+            )
+        ) is not None
+    }
+    ordered = tuple(
+        item for item in ordered
+        if item.evidence_class != EvidenceClass.SKILL_PROFICIENCY
+        or (
+            (match := re.fullmatch(
+                r"skills\[(\d+)\]\.self_reported_proficiency",
+                item.atomic_evidence.profile_reference.path,
+            )) is not None
+            and (item.criterion_id, match.group(1)) in skill_name_keys
+        )
+    )
     if not ordered:
         status = CurrentMatchStatus.UNKNOWN
         strength = None
@@ -702,9 +770,57 @@ def _policy_dimension_assessment(
         inference = strongest.derived_inference_type
         review_required = any(item.derived_review_required for item in ordered)
         evidence = tuple(item.atomic_evidence for item in ordered)
-    if status == CurrentMatchStatus.DEMONSTRATED:
-        raise Phase2ValidationError(
-            "Recommendation schema 4 cannot derive demonstrated without confirmed evidence"
+        confirmed = tuple(
+            item for item in ordered
+            if item.trust_level == EvidenceTrustLevel.PROVISIONAL_SEMANTIC
+            and decisions.get(item.binding_id) == BindingReviewDecision.CONFIRMED
+        )
+        policy = dimension.evidence_support_policy
+        if policy is None:
+            raise Phase2ValidationError("Recommendation schema 4 Dimension lacks policy")
+        behavior_classes = {
+            EvidenceClass.EXPERIENCE_SUMMARY,
+            EvidenceClass.PROJECT_SUMMARY,
+        }
+
+        def rule_satisfied(rule: Any, *, demonstrated: bool) -> bool:
+            evidence_count = len(
+                {item.atomic_evidence.evidence_fingerprint for item in confirmed}
+            )
+            criteria = {item.criterion_id for item in confirmed}
+            criterion_coverage = any(
+                set(group).issubset(criteria) for group in rule.required_criterion_sets
+            )
+            behavior_required = (
+                policy.behavior_evidence_requirement
+                == BehaviorEvidenceRequirement.PARTIAL_AND_DEMONSTRATED
+                or (
+                    demonstrated
+                    and policy.behavior_evidence_requirement
+                    == BehaviorEvidenceRequirement.DEMONSTRATED_ONLY
+                )
+            )
+            behavior_ok = not behavior_required or any(
+                item.evidence_class in behavior_classes for item in confirmed
+            )
+            return (
+                evidence_count >= rule.minimum_independent_evidence_count
+                and criterion_coverage
+                and behavior_ok
+            )
+
+        if rule_satisfied(policy.confirmed_demonstrated_rule, demonstrated=True):
+            status = CurrentMatchStatus.DEMONSTRATED
+            strength = EvidenceStrength.STRONG
+            inference = InferenceType.BOUNDED_SEMANTIC
+        elif rule_satisfied(policy.confirmed_partial_rule, demonstrated=False):
+            status = CurrentMatchStatus.PARTIAL
+            strength = EvidenceStrength.SUPPORTING
+            inference = InferenceType.BOUNDED_SEMANTIC
+        review_required = any(
+            item.trust_level == EvidenceTrustLevel.PROVISIONAL_SEMANTIC
+            and decisions.get(item.binding_id) != BindingReviewDecision.CONFIRMED
+            for item in ordered
         )
     references = _profile_references(item.profile_reference for item in evidence)
     return DimensionAssessment(
@@ -734,6 +850,8 @@ def _validate_policy_assessment(
     role_id: str,
     profile: CareerProfile,
     rubric: CapabilityRubric,
+    review_decisions: Mapping[str, BindingReviewDecision] | None = None,
+    source_bindings: tuple[ProfileCriterionEvidenceBinding, ...] | None = None,
 ) -> None:
     binding_ids = [item.binding_id for item in assessment.supporting_bindings]
     if binding_ids != sorted(binding_ids) or len(binding_ids) != len(set(binding_ids)):
@@ -770,7 +888,9 @@ def _validate_policy_assessment(
                 "Recommendation skill proficiency requires its skill-name binding"
             )
     expected = _policy_dimension_assessment(
-        dimension, assessment.supporting_bindings
+        dimension,
+        assessment.supporting_bindings if source_bindings is None else source_bindings,
+        review_decisions,
     )
     if assessment != expected:
         raise Phase2ValidationError(
@@ -778,9 +898,14 @@ def _validate_policy_assessment(
         )
 
 
-def _result_has_provisional_bindings(result: RoleRecommendationResult) -> bool:
+def _result_has_provisional_bindings(
+    result: RoleRecommendationResult,
+    review_decisions: Mapping[str, BindingReviewDecision] | None = None,
+) -> bool:
+    decisions = {} if review_decisions is None else review_decisions
     return any(
         binding.trust_level == EvidenceTrustLevel.PROVISIONAL_SEMANTIC
+        and decisions.get(binding.binding_id) != BindingReviewDecision.CONFIRMED
         for assessment in result.extended_current_fit.dimension_assessments
         for binding in assessment.supporting_bindings
     )
@@ -815,6 +940,7 @@ def _policy_current_axis(
     bindings: tuple[ProfileCriterionEvidenceBinding, ...],
     *,
     conditional: bool,
+    review_decisions: Mapping[str, BindingReviewDecision] | None = None,
 ) -> FitAxisResult:
     assessments = tuple(
         _policy_dimension_assessment(
@@ -825,6 +951,7 @@ def _policy_current_axis(
                 if item.role_id == role_id
                 and item.dimension_id == dimension.dimension_id
             ),
+            review_decisions,
         )
         for dimension in dimensions
     )
@@ -851,10 +978,54 @@ def _policy_current_axis(
     band = _band(score, coverage)
     cap_reason = None
     if band == FitBand.STRONG:
-        band = FitBand.MODERATE
-        cap_reason = "confirmed_evidence_required_for_strong"
+        decisions = {} if review_decisions is None else review_decisions
+        confirmed_only = tuple(
+            item for item in bindings
+            if item.trust_level == EvidenceTrustLevel.STRUCTURAL_ONLY
+            or decisions.get(item.binding_id) == BindingReviewDecision.CONFIRMED
+        )
+        confirmed_assessments = tuple(
+            _policy_dimension_assessment(
+                dimension,
+                tuple(
+                    item for item in confirmed_only
+                    if item.role_id == role_id
+                    and item.dimension_id == dimension.dimension_id
+                ),
+                review_decisions,
+            )
+            for dimension in dimensions
+        )
+        confirmed_applicable = tuple(
+            item for item in confirmed_assessments
+            if item.status != CurrentMatchStatus.NOT_APPLICABLE
+        )
+        confirmed_assessed = tuple(
+            item for item in confirmed_applicable if item.status in CURRENT_VALUES
+        )
+        confirmed_score = (
+            None if not confirmed_assessed else _round_score(
+                sum(CURRENT_VALUES[item.status] for item in confirmed_assessed)
+                / len(confirmed_assessed) * 100
+            )
+        )
+        confirmed_coverage = (
+            0.0 if not confirmed_applicable else _round_score(
+                len(confirmed_assessed) / len(confirmed_applicable)
+            )
+        )
+        if _band(confirmed_score, confirmed_coverage) != FitBand.STRONG:
+            band = FitBand.MODERATE
+            cap_reason = "confirmed_evidence_required_for_strong"
     if conditional and band == FitBand.STRONG:
-        raise Phase2ValidationError("policy band cap was not applied")
+        ready_positive = any(
+            not item.conditional_market_basis
+            and item.status in {CurrentMatchStatus.DEMONSTRATED, CurrentMatchStatus.PARTIAL}
+            for item in assessments
+        )
+        if not ready_positive:
+            band = FitBand.MODERATE
+            cap_reason = "conditional_only_strong_prevention"
     return FitAxisResult(
         score,
         coverage,
@@ -1085,13 +1256,15 @@ def _follow_ups(results:tuple[RoleRecommendationResult,...])->tuple[FollowUpQues
     return tuple(selected)
 
 
-def generate_recommendation_id(*,profile_fingerprint:str,rubric_version:str,catalog_version:str,provider_name:str,provider_model:str,role_results:tuple[RoleRecommendationResult,...],schema_version:int=RECOMMENDATION_SCHEMA_VERSION)->str:
+def generate_recommendation_id(*,profile_fingerprint:str,rubric_version:str,catalog_version:str,provider_name:str,provider_model:str,role_results:tuple[RoleRecommendationResult,...],schema_version:int=RECOMMENDATION_SCHEMA_VERSION,evidence_review_artifact_id:str|None=None)->str:
     payload=json.dumps([x.to_dict(schema_version=schema_version) for x in sorted(role_results,key=lambda x:x.role_id)],sort_keys=True,ensure_ascii=False,separators=(",",":"))
     values=(RECOMMENDATION_ID_VERSION,profile_fingerprint,rubric_version,catalog_version,provider_name,provider_model,hashlib.sha256(payload.encode()).hexdigest())
+    if evidence_review_artifact_id is not None:
+        values=(*values,_stable_id(evidence_review_artifact_id,"evidence_review_artifact_id"))
     return f"recommendations_{hashlib.sha256('|'.join(values).encode()).hexdigest()[:24]}"
 
 
-def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:ProfileDimensionMappingCandidateSet,rubric:CapabilityRubric,catalog:RoleCatalog,created_at:str)->RoleRecommendationArtifact:
+def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:ProfileDimensionMappingCandidateSet,rubric:CapabilityRubric,catalog:RoleCatalog,created_at:str,evidence_reviews:EvidenceBindingReviewArtifact|None=None)->RoleRecommendationArtifact:
     mapping_candidates.validate(profile=profile,rubric=rubric,catalog=catalog);_iso_datetime(created_at,"created_at")
     recommendation_schema_version = {1: 2, 2: 3, 3: 4}.get(
         mapping_candidates.schema_version
@@ -1102,6 +1275,15 @@ def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:Profile
         raise Phase2ValidationError(
             "Recommendation schema 4 requires Capability Rubric schema 2"
         )
+    if evidence_reviews is not None:
+        if recommendation_schema_version != 4:
+            raise Phase2ValidationError("Evidence Binding Reviews require Recommendation schema 4")
+        evidence_reviews.validate(
+            profile=profile, rubric=rubric, mapping=mapping_candidates, catalog=catalog
+        )
+    review_decisions = (
+        {} if evidence_reviews is None else evidence_reviews.decision_by_binding()
+    )
     provider_rejection_cap, profile_conflicts, all_provider_candidates_rejected = (
         _provider_rejection_context(mapping_candidates.conflict_warnings, rubric)
     )
@@ -1123,10 +1305,12 @@ def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:Profile
                 if isinstance(item, ProfileCriterionEvidenceBinding)
             )
             core = _policy_current_axis(
-                role_id, ready, policy_bindings, conditional=False
+                role_id, ready, policy_bindings, conditional=False,
+                review_decisions=review_decisions,
             )
             extended = _policy_current_axis(
-                role_id, all_dims, policy_bindings, conditional=True
+                role_id, all_dims, policy_bindings, conditional=True,
+                review_decisions=review_decisions,
             )
         else:
             if any(
@@ -1162,6 +1346,8 @@ def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:Profile
         if recommendation_schema_version == 4:
             provisional = provisional or any(
                 binding.trust_level == EvidenceTrustLevel.PROVISIONAL_SEMANTIC
+                and review_decisions.get(binding.binding_id)
+                != BindingReviewDecision.CONFIRMED
                 for assessment in extended.dimension_assessments
                 for binding in assessment.supporting_bindings
             )
@@ -1172,10 +1358,10 @@ def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:Profile
         if conditional_provisional:blockers.append(RecommendationBlockerCode.CONDITIONAL_MARKET_BASIS.value)
         if constraint.status==MappingConstraintStatus.INCOMPATIBLE:blockers.append(RecommendationBlockerCode.CONSTRAINT_INCOMPATIBLE.value)
         if all_provider_candidates_rejected:blockers.append(RecommendationBlockerCode.PROVIDER_MAPPING_INSUFFICIENT.value)
-        if recommendation_schema_version == 4:
-            blockers.append(
-                RecommendationBlockerCode.CONFIRMED_EVIDENCE_REQUIRED.value
-            )
+        if recommendation_schema_version == 4 and not any(
+            axis.band == FitBand.STRONG for axis in (core, extended)
+        ):
+            blockers.append(RecommendationBlockerCode.CONFIRMED_EVIDENCE_REQUIRED.value)
         preliminary.append(RoleRecommendationResult(role_id,None,(),core,extended,directional,constraint,market,ConfidenceAssessment(RecommendationConfidence.HIGH,(),()),provisional,False,tuple(blockers),f"Current evidence supports {extended.band.value.replace('_',' ')} fit in the extended rubric.",f"The role is limited by {', '.join(blockers) if blockers else 'remaining unknown or weaker dimensions'}."))
     # Establish preliminary core/extended orders before confidence, then recompute with stability caps.
     core_ranks,_=_rank(preliminary);ext_ranks,_=_rank(preliminary,extended=True)
@@ -1192,30 +1378,33 @@ def build_role_recommendation(*,profile:CareerProfile,mapping_candidates:Profile
         effective.append(RoleRecommendationResult(**{**item.__dict__,"rank":rank,"tied_role_ids":related}))
     role_results=tuple(sorted(effective,key=lambda x:((x.rank or 999),x.role_id)))
     followups=_follow_ups(role_results)
-    recommendation_id=generate_recommendation_id(profile_fingerprint=profile_fingerprint(profile),rubric_version=rubric.rubric_version,catalog_version=catalog.catalog_version,provider_name=mapping_candidates.provider_name,provider_model=mapping_candidates.provider_model,role_results=role_results,schema_version=recommendation_schema_version)
-    artifact=RoleRecommendationArtifact(recommendation_id,created_at,profile_fingerprint(profile),rubric.rubric_version,catalog.catalog_version,mapping_candidates.provider_name,mapping_candidates.provider_model,mapping_candidates.schema_version,mapping_candidates.conflict_warnings,role_results,followups,tie_groups,tuple(sorted(set(code for x in role_results for code in x.blockers))),schema_version=recommendation_schema_version)
-    artifact.validate(profile=profile,rubric=rubric,catalog=catalog);return artifact
+    review_artifact_id = (
+        None if evidence_reviews is None else evidence_reviews.review_artifact_id
+    )
+    recommendation_id=generate_recommendation_id(profile_fingerprint=profile_fingerprint(profile),rubric_version=rubric.rubric_version,catalog_version=catalog.catalog_version,provider_name=mapping_candidates.provider_name,provider_model=mapping_candidates.provider_model,role_results=role_results,schema_version=recommendation_schema_version,evidence_review_artifact_id=review_artifact_id)
+    artifact=RoleRecommendationArtifact(recommendation_id,created_at,profile_fingerprint(profile),rubric.rubric_version,catalog.catalog_version,mapping_candidates.provider_name,mapping_candidates.provider_model,mapping_candidates.schema_version,mapping_candidates.conflict_warnings,role_results,followups,tie_groups,tuple(sorted(set(code for x in role_results for code in x.blockers))),evidence_review_artifact_id=review_artifact_id,schema_version=recommendation_schema_version)
+    artifact.validate(profile=profile,rubric=rubric,catalog=catalog,mapping_candidates=mapping_candidates,evidence_reviews=evidence_reviews);return artifact
 
 
-def save_role_recommendation(value:RoleRecommendationArtifact,path:str|Path,*,profile:CareerProfile,rubric:CapabilityRubric,catalog:RoleCatalog)->Path:
+def save_role_recommendation(value:RoleRecommendationArtifact,path:str|Path,*,profile:CareerProfile,rubric:CapabilityRubric,catalog:RoleCatalog,mapping_candidates:ProfileDimensionMappingCandidateSet|None=None,evidence_reviews:EvidenceBindingReviewArtifact|None=None)->Path:
     if not isinstance(value,RoleRecommendationArtifact):raise TypeError("value must be a RoleRecommendationArtifact")
-    value.validate(profile=profile,rubric=rubric,catalog=catalog);return save_phase2_json(RoleRecommendationArtifact.from_dict(value.to_dict()).to_dict(),path)
+    value.validate(profile=profile,rubric=rubric,catalog=catalog,mapping_candidates=mapping_candidates,evidence_reviews=evidence_reviews);return save_phase2_json(RoleRecommendationArtifact.from_dict(value.to_dict()).to_dict(),path)
 
 
-def load_role_recommendation(path:str|Path,*,profile:CareerProfile,rubric:CapabilityRubric,catalog:RoleCatalog)->RoleRecommendationArtifact:
+def load_role_recommendation(path:str|Path,*,profile:CareerProfile,rubric:CapabilityRubric,catalog:RoleCatalog,mapping_candidates:ProfileDimensionMappingCandidateSet|None=None,evidence_reviews:EvidenceBindingReviewArtifact|None=None)->RoleRecommendationArtifact:
     raw=load_phase2_json(path)
     if not isinstance(raw,Mapping) or raw.get("schema")!=RECOMMENDATION_SCHEMA:raise Phase2ValidationError("unsupported Recommendation artifact")
     if raw.get("schema_version")==1:raise Phase2ValidationError("Recommendation schema 1 requires load_recommendation_set")
-    value=RoleRecommendationArtifact.from_dict(raw);value.validate(profile=profile,rubric=rubric,catalog=catalog);return value
+    value=RoleRecommendationArtifact.from_dict(raw);value.validate(profile=profile,rubric=rubric,catalog=catalog,mapping_candidates=mapping_candidates,evidence_reviews=evidence_reviews);return value
 
 
-def load_any_recommendation(path:str|Path,*,profile:CareerProfile,rubric:CapabilityRubric,catalog:RoleCatalog)->RecommendationSet|RoleRecommendationArtifact:
+def load_any_recommendation(path:str|Path,*,profile:CareerProfile,rubric:CapabilityRubric,catalog:RoleCatalog,mapping_candidates:ProfileDimensionMappingCandidateSet|None=None,evidence_reviews:EvidenceBindingReviewArtifact|None=None)->RecommendationSet|RoleRecommendationArtifact:
     raw=load_phase2_json(path)
     if not isinstance(raw,Mapping) or raw.get("schema")!=RECOMMENDATION_SCHEMA:raise Phase2ValidationError("unsupported Recommendation artifact")
     if raw.get("schema_version")==1:
         value=RecommendationSet.from_dict(raw);value.validate(catalog,profile);return value
     if raw.get("schema_version") in {2,3,4}:
-        value=RoleRecommendationArtifact.from_dict(raw);value.validate(profile=profile,rubric=rubric,catalog=catalog);return value
+        value=RoleRecommendationArtifact.from_dict(raw);value.validate(profile=profile,rubric=rubric,catalog=catalog,mapping_candidates=mapping_candidates,evidence_reviews=evidence_reviews);return value
     raise Phase2ValidationError("unsupported Recommendation schema version")
 
 

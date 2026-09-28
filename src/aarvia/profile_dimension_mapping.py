@@ -42,6 +42,7 @@ ATOMIC_MAPPING_ID_VERSION = "profile-dimension-mapping-v2"
 ATOMIC_EVIDENCE_VERSION = "atomic-profile-evidence-v1"
 CANONICAL_EVIDENCE_SPAN_VERSION = "canonical-profile-evidence-span-v1"
 EVIDENCE_BINDING_ID_VERSION = "profile-criterion-evidence-binding-v1"
+MAPPING_ARTIFACT_ID_VERSION = "profile-dimension-mapping-artifact-v1"
 MAPPING_REJECTION_WARNING_PREFIX = "provider_mapping_rejection:"
 MAPPING_REJECTION_SUMMARY_PREFIX = "provider_mapping_rejection_summary:"
 
@@ -2066,6 +2067,24 @@ class ProfileDimensionMappingCandidateSet:
             "conflict_warnings": list(self.conflict_warnings),
             "provider_name": self.provider_name, "provider_model": self.provider_model,
         }
+
+
+def generate_mapping_artifact_id(
+    value: ProfileDimensionMappingCandidateSet,
+) -> str:
+    """Return a stable identity for one complete Mapping wire artifact."""
+    if not isinstance(value, ProfileDimensionMappingCandidateSet):
+        raise TypeError("value must be a ProfileDimensionMappingCandidateSet")
+    payload = json.dumps(
+        value.to_dict(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(
+        f"{MAPPING_ARTIFACT_ID_VERSION}|{payload}".encode("utf-8")
+    ).hexdigest()
+    return f"mapping_artifact_{digest[:24]}"
 
 
 _PROVIDER_MAPPING_FIELDS = {
