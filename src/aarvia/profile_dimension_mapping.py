@@ -1265,6 +1265,12 @@ class ProfileCriterionEvidenceBinding:
     derived_review_required: bool
     derivation_reason_codes: tuple[BindingDerivationReason, ...]
 
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any], path: str = "criterion_evidence_binding"
+    ) -> ProfileCriterionEvidenceBinding:
+        return _binding_from_dict(value, path=path)
+
     def validate(
         self,
         *,
@@ -2441,8 +2447,16 @@ def _mapping_from_dict(
     )
 
 
-def _binding_from_dict(value: Any, index: int) -> ProfileCriterionEvidenceBinding:
-    path = f"mapping_candidates.mappings[{index}]"
+def _binding_from_dict(
+    value: Any,
+    index: int | None = None,
+    *,
+    path: str | None = None,
+) -> ProfileCriterionEvidenceBinding:
+    if path is None:
+        if index is None:
+            raise ValueError("binding index or path is required")
+        path = f"mapping_candidates.mappings[{index}]"
     data = _mapping(value, path)
     _reject_unknown(
         data,

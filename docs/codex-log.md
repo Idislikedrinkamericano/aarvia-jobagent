@@ -501,3 +501,13 @@ Development records are appended to this file as the project evolves.
 - **Important Decisions:** Confirmed semantic evidence is unavailable in this stage. Structural evidence cannot establish partial or demonstrated status, provisional behavior evidence cannot establish demonstrated status, and Provider fields cannot inject derived outcomes or review provenance. The CLI remains on Mapping schema 2 and Recommendation/scoring are unchanged.
 - **Validation / Test Results:** Added 33 Mapping schema 3 tests; the complete synthetic suite passed all 736 tests without network access, real Provider calls, Profile changes, or `local_data` mutation.
 - **Next Step:** Design Recommendation schema 4 and a separate confirmation provenance contract before schema 3 bindings can affect user-facing ranking. User Decision, Gap Analysis, and Phase 2D remain out of scope.
+
+## 2026-09-27 - Evidence Support Policy Recommendation Contract
+
+- **Date:** 2026-09-27
+- **Phase:** Phase 2C - Evidence Support Policy, stage 3
+- **User Request:** Implement Recommendation schema 4 so deterministic scoring consumes Mapping schema 3 policy-derived bindings, while preserving Recommendation schemas 1–3, leaving the default CLI unchanged, and excluding confirmation, User Decision, Gap Analysis, and Phase 2D.
+- **What Codex Changed:** Recommendation schema 4 embeds validated criterion-binding provenance per Dimension and reconstructs status, strength, inference, review requirement, Profile references, atomic evidence, and reasoning from those bindings. Core and Extended coverage, confidence, ranking, ties, blockers, follow-ups, IDs, and serialization remain deterministic. Structural-only evidence remains capped by policy; provisional behavior evidence remains capped at adjacent or partial; neither can produce demonstrated status. A confirmed-evidence blocker prevents schema 4 from representing Strong fit before a later review contract exists.
+- **Important Decisions:** Schema 4 is valid only with Mapping schema 3 and Capability Rubric schema 2. Schemas 1–3 retain explicit loading and wire round-trip behavior. The default mapper and `aarvia recommend` remain on Mapping schema 2 / Recommendation schema 3. No confirmation is inferred or fabricated.
+- **Validation / Test Results:** Added 18 Recommendation schema 4 tests. The full synthetic suite passed all 754 tests without network access, Provider calls, private Profile changes, or `local_data` mutation.
+- **Next Step:** Design confirmed semantic-binding review provenance and an explicit user confirmation workflow before switching the CLI. User Decision, Gap Analysis, and Phase 2D remain out of scope.

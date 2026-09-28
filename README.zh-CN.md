@@ -22,7 +22,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 - ✅ Candidate 独立审核、受控 Cluster 审核与明确的 Logic Group resolution
 - ✅ Capability Rubric schema 2：20 个 Dimension、稳定 criterion ID 与强类型 Evidence Support Policy
 - ✅ 确定性 Current Fit、Directional Fit、约束、置信度、并列与追问
-- ✅ Mapping schema 3 的 evidence-to-criterion binding，并显式兼容 schema 1/2
+- ✅ Mapping schema 3 binding 与 Recommendation schema 4 policy 派生评分基础
 - ✅ 百炼/custom JSON mode、有限 repair retry 与显式启用的纯元数据诊断
 - ⏳ User Decision、Gap Analysis、真实岗位发现和简历链路尚未实现
 
@@ -115,7 +115,7 @@ Atomic evidence 校验会在源头产生结构化代码，区分 excerpt 错误�
 
 同一结构化边界也覆盖 Current Fit 字段类型、evidence strength、Provider confidence、review flag、contribution relationship、确定性 provenance、重复 mapping 与集合级 contribution cap。只有真正未知的旧异常才使用通用拒绝类别。
 
-Current Fit 现在使用字段内的原子证据，而不只依赖整个字段。Mapping schema 3 只允许 Provider 提出 canonical Role、Dimension、criterion、span、binding type 和 confidence。Python 负责物化 span、识别结构或行为证据类型、应用 Rubric policy、生成稳定 provenance，并派生保守的状态、强度、inference 与 review 要求。结构证据不能累积成 partial 或 demonstrated；未经确认的经历/项目 binding 也不能成为 demonstrated。当前 CLI 与 Recommendation schema 3 仍使用 Mapping schema 2，等待独立设计的 Recommendation schema 4 阶段。
+Current Fit 现在使用字段内的原子证据，而不只依赖整个字段。Mapping schema 3 只允许 Provider 提出 canonical Role、Dimension、criterion、span、binding type 和 confidence。Python 负责物化 span、识别结构或行为证据类型、应用 Rubric policy、生成稳定 provenance，并派生保守的状态、强度、inference 与 review 要求。Recommendation schema 4 只聚合这些派生 binding，并确定性重算 coverage、confidence、ranking、tie、blocker 与 follow-up。结构证据不能累积成 partial 或 demonstrated；未经确认的经历/项目 binding 也不能成为 demonstrated，且不能单独支撑 Strong fit。当前 CLI 有意继续使用 Mapping schema 2 与 Recommendation schema 3。
 
 ## 安全第一
 
@@ -190,7 +190,7 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - 真实 schema 6 Candidate Completion artifact 仍仅在本地且未被修改；它尚未迁移到 schema 7，没有改变任何审核状态，也没有计算正式 prevalence。
 - Production Requirement Logic、prevalence 发布、User Decision 与 Gap Analysis 仍明确未实现。
 - Capability Rubric schema 2 为每条 inclusion criterion 分配稳定 ID，并按 Dimension 声明 evidence class、保守 status cap、confirmed evidence 阈值与行为证据规则。Schema 1 继续显式可读并保持原格式 round-trip。
-- `0.8.0` 只在显式启用的 Mapping schema 3 中执行这些 policy。Recommendation 仍是 schema 3，CLI 仍使用 Mapping schema 2，因此 scoring、ranking、confidence 与 User Decision 行为均未改变。
+- `0.8.0` 已在显式启用的 Mapping schema 3 与 Recommendation schema 4 核心契约中执行这些 policy。CLI 仍使用 Mapping schema 2 与 Recommendation schema 3，因此当前用户流程没有切换。Confirmed review provenance、用户确认、User Decision、Gap Analysis 与 Phase 2D 尚未实现。
 - Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。Rubric policy contract 不代表已经发布任何市场 requirement。
 
 ## 设计原则

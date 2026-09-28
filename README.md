@@ -22,7 +22,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 - ✅ Independent Candidate review, controlled Cluster review, and explicit Logic Group resolution
 - ✅ Capability Rubric schema 2: 20 dimensions with stable criteria and typed Evidence Support Policies
 - ✅ Deterministic Current Fit, Directional Fit, constraints, confidence, ties, and follow-ups
-- ✅ Mapping schema 3 evidence-to-criterion bindings, with explicit schema 1/2 compatibility
+- ✅ Mapping schema 3 bindings and Recommendation schema 4 policy-derived scoring foundations
 - ✅ Bailian/custom JSON mode, bounded repair retry, and opt-in metadata-only diagnostics
 - ⏳ User Decision, Gap Analysis, live-job discovery, and resume work are not implemented
 
@@ -115,7 +115,7 @@ Atomic-evidence validation emits structured source-level codes for invalid excer
 
 The same structured boundary covers Current Fit field types, evidence strength, Provider confidence, review flags, contribution relationships, deterministic provenance, duplicate mappings, and aggregate contribution caps. Only genuinely unknown legacy failures use the generic rejection category.
 
-Current Fit evidence is span-level, not just field-level. Mapping schema 3 lets the Provider propose only a canonical Role, Dimension, criterion, span, binding type, and confidence. Python materializes the span, identifies its structural or behavioral evidence class, applies the Rubric policy, generates stable provenance, and derives a conservative status, strength, inference, and review requirement. Structural evidence cannot accumulate into partial or demonstrated capability; provisional experience/project bindings never become demonstrated. The current CLI and Recommendation schema 3 still use Mapping schema 2 until the separately designed Recommendation schema 4 stage.
+Current Fit evidence is span-level, not just field-level. Mapping schema 3 lets the Provider propose only a canonical Role, Dimension, criterion, span, binding type, and confidence. Python materializes the span, identifies its structural or behavioral evidence class, applies the Rubric policy, generates stable provenance, and derives a conservative status, strength, inference, and review requirement. Recommendation schema 4 aggregates only those derived bindings and deterministically recomputes coverage, confidence, ranking, ties, blockers, and follow-ups. Structural evidence cannot accumulate into partial or demonstrated capability; provisional experience/project bindings never become demonstrated or independently support Strong fit. The current CLI intentionally remains on Mapping schema 2 and Recommendation schema 3.
 
 ## Safety First
 
@@ -190,7 +190,7 @@ The packaged Capability Rubric is separate from the Production Role Catalog. It 
 - The real schema 6 Candidate Completion artifact remains local and unmodified. It has not been migrated to schema 7, no review state changed, and no formal prevalence has been calculated.
 - Production requirement logic, prevalence publication, User Decision, and Gap Analysis remain intentionally unimplemented.
 - Capability Rubric schema 2 assigns stable IDs to every inclusion criterion and declares per-Dimension evidence classes, conservative status caps, confirmed-evidence thresholds, and behavior-evidence rules. Schema 1 stays explicitly readable and round-trippable.
-- Version `0.8.0` now applies these policies only inside the opt-in Mapping schema 3 contract. Recommendation remains schema 3 and the CLI continues using Mapping schema 2, so scoring, ranking, confidence, and User Decision behavior are unchanged.
+- Version `0.8.0` applies these policies through the opt-in Mapping schema 3 and Recommendation schema 4 core contracts. The CLI continues using Mapping schema 2 and Recommendation schema 3, so the existing user-facing workflow is unchanged. Confirmed review provenance, user confirmation, User Decision, Gap Analysis, and Phase 2D are not implemented.
 - The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. No unpublished market requirement is implied by the Rubric policy contract.
 
 ## Design Principles
