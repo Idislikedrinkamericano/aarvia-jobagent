@@ -8,7 +8,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.8.0 — Capability Rubric 具备明确的证据支持契约。**
+**版本 0.9.0 — 可复用人工审核的证据感知推荐。**
 
 - ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
 - ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
@@ -68,13 +68,29 @@ aarvia discover --follow-up \
 # 不需要 LLM
 aarvia discover --manual
 
-# 使用离线、已验证的 mapping 生成可解释推荐
+# 首次推荐：同时保存 Mapping 3 与 Recommendation 4
+aarvia recommend --profile data/profiles/example.json \
+  --mapping-output mapping.json \
+  --output recommendation.json
+
+# 审核 provisional 经历/项目证据，不调用 Provider
+aarvia review-evidence --profile data/profiles/example.json \
+  --mapping mapping.json \
+  --output evidence-review.json
+
+# 使用同一 Mapping 和已保存 Review 重算；不会调用 Provider
+aarvia recommend --profile data/profiles/example.json \
+  --mapping-artifact mapping.json \
+  --review-artifact evidence-review.json \
+  --output reviewed-recommendation.json
+
+# 显式 legacy 离线流程（仅 Mapping schema 1/2）
 aarvia recommend --profile data/profiles/example.json \
   --mapping-candidates mapping-candidates.json \
-  --output recommendation.json
+  --output legacy-recommendation.json
 ```
 
-不提供 `--mapping-candidates` 时，`aarvia recommend` 会使用已配置的 OpenAI-compatible Provider，但 Provider 只能提出 Profile-to-Dimension mapping。所有分数、等级、置信度、并列和排名都由 Python 验证并计算。
+不提供 Mapping 输入时，`aarvia recommend` 会使用已配置的 OpenAI-compatible Provider，仅提出 Mapping schema 3 criterion binding，然后原子保存 Mapping 与 Recommendation schema 4。所有状态、分数、等级、置信度、并列和排名都由 Python 验证并计算。`--mapping-artifact` 始终复用已有 Mapping，不调用 Provider。Review 只对创建它时的精确 Profile、Rubric、Mapping 和 binding identity 有效。
 
 Provider 诊断必须显式开启，而且只保存元数据：
 
@@ -115,7 +131,7 @@ Atomic evidence 校验会在源头产生结构化代码，区分 excerpt 错误�
 
 同一结构化边界也覆盖 Current Fit 字段类型、evidence strength、Provider confidence、review flag、contribution relationship、确定性 provenance、重复 mapping 与集合级 contribution cap。只有真正未知的旧异常才使用通用拒绝类别。
 
-Current Fit 现在使用字段内的原子证据，而不只依赖整个字段。Mapping schema 3 只允许 Provider 提出 canonical Role、Dimension、criterion、span、binding type 和 confidence。Python 负责物化 span、识别结构或行为证据类型、应用 Rubric policy、生成稳定 provenance，并派生保守的状态、强度、inference 与 review 要求。Recommendation schema 4 只聚合这些派生 binding，并确定性重算 coverage、confidence、ranking、tie、blocker 与 follow-up。独立的强类型审核 artifact 可以对现有 binding 作出 confirm、reject 或 defer，并绑定精确的 Profile、Rubric 与 Mapping 上下文。confirm 仍不自动等于 `demonstrated`：policy 阈值、criterion coverage、独立证据数量和行为证据要求继续由 Python 强制执行；结构证据也不会因审核而变成语义证据。当前 CLI 有意继续使用 Mapping schema 2 与 Recommendation schema 3。
+Current Fit 现在使用字段内的原子证据，而不只依赖整个字段。Mapping schema 3 只允许 Provider 提出 canonical Role、Dimension、criterion、span、binding type 和 confidence。Python 负责物化 span、识别结构或行为证据类型、应用 Rubric policy、生成稳定 provenance，并派生保守的状态、强度、inference 与 review 要求。Recommendation schema 4 只聚合这些派生 binding，并确定性重算 coverage、confidence、ranking、tie、blocker 与 follow-up。独立的强类型审核 artifact 可以对现有 binding 作出 confirm、reject 或 defer，并绑定精确的 Profile、Rubric 与 Mapping 上下文。confirm 仍不自动等于 `demonstrated`：policy 阈值、criterion coverage、独立证据数量和行为证据要求继续由 Python 强制执行；结构证据也不会因审核而变成语义证据。版本 `0.9.0` 已将此链路设为 `recommend` 默认流程，legacy schema 只通过显式 `--mapping-candidates` 使用。
 
 ## 安全第一
 
@@ -190,7 +206,7 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - 真实 schema 6 Candidate Completion artifact 仍仅在本地且未被修改；它尚未迁移到 schema 7，没有改变任何审核状态，也没有计算正式 prevalence。
 - Production Requirement Logic、prevalence 发布、User Decision 与 Gap Analysis 仍明确未实现。
 - Capability Rubric schema 2 为每条 inclusion criterion 分配稳定 ID，并按 Dimension 声明 evidence class、保守 status cap、confirmed evidence 阈值与行为证据规则。Schema 1 继续显式可读并保持原格式 round-trip。
-- `0.8.0` 已在显式启用的 Mapping schema 3 与 Recommendation schema 4 核心契约中执行这些 policy，并为核心 API 提供独立的 evidence-binding review artifact。CLI 仍使用 Mapping schema 2 与 Recommendation schema 3，因此当前用户流程没有切换。交互式用户确认、User Decision、Gap Analysis 与 Phase 2D 尚未实现。
+- `0.9.0` 默认使用 Mapping schema 3 与 Recommendation schema 4，保存可复用 Mapping provenance，并提供独立的 `review-evidence` 命令。User Decision、Gap Analysis 与 Phase 2D 尚未实现。
 - Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。Rubric policy contract 不代表已经发布任何市场 requirement。
 
 ## 设计原则

@@ -8,6 +8,7 @@ from aarvia.profile_dimension_mapping import (
     ProfileDimensionMappingCandidateSet,
     canonical_evidence_span_inventory,
 )
+from aarvia.capability_rubric import EvidenceClass
 from aarvia.role_catalog import production_role_catalog
 
 
@@ -59,6 +60,67 @@ def mapping_payload(*, all_demonstrated: bool = False, unknown_constraints: bool
 
 def mapping_set(**kwargs) -> ProfileDimensionMappingCandidateSet:
     return ProfileDimensionMappingCandidateSet.from_provider_payload(mapping_payload(**kwargs), profile=synthetic_profile(), rubric=production_capability_rubric(), catalog=production_role_catalog(), provider_name="fixture", provider_model="fixture-model")
+
+
+def mapping_set_v3(
+    profile: CareerProfile | None = None, *, binding_count: int = 1
+) -> ProfileDimensionMappingCandidateSet:
+    active_profile = profile or synthetic_profile()
+    rubric = production_capability_rubric()
+    spans = canonical_evidence_span_inventory(active_profile)
+    summary_spans = [
+        item for item in spans
+        if item.path.endswith(".short_factual_summary")
+    ]
+    bindings = []
+    used_dimensions = set()
+    for span in summary_spans:
+        record_index = int(span.path.split("[")[1].split("]")[0])
+        experience_type = active_profile.experience_overview[record_index].experience_type
+        evidence_class = (
+            EvidenceClass.PROJECT_SUMMARY
+            if experience_type == "project"
+            else EvidenceClass.EXPERIENCE_SUMMARY
+        )
+        dimension = next(
+            (
+                item for item in rubric.dimensions
+                if item.dimension_id not in used_dimensions
+                and evidence_class in item.evidence_support_policy.allowed_evidence_classes
+            ),
+            None,
+        )
+        if dimension is None:
+            continue
+        used_dimensions.add(dimension.dimension_id)
+        bindings.append(
+            {
+                "role_id": dimension.role_id,
+                "dimension_id": dimension.dimension_id,
+                "criterion_id": dimension.criterion_ids[0],
+                "span_id": span.span_id,
+                "proposed_binding_type": "direct",
+                "provider_confidence": "high",
+            }
+        )
+        if len(bindings) == binding_count:
+            break
+    if len(bindings) != binding_count:
+        raise AssertionError("fixture Profile does not contain enough independent summary spans")
+    return ProfileDimensionMappingCandidateSet.from_provider_payload_v3(
+        {
+            "mappings": bindings,
+            "directional_signals": [],
+            "constraints": [],
+            "conflict_warnings": [],
+        },
+        profile=active_profile,
+        rubric=rubric,
+        catalog=production_role_catalog(),
+        provider_name="fixture",
+        provider_model="fixture-model",
+        evidence_spans=spans,
+    )
 
 
 def clone_payload(**kwargs) -> dict:
