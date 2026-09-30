@@ -178,6 +178,8 @@ from .capability_rubric import (
     save_capability_rubric,
 )
 from .profile_dimension_mapping import (
+    AllocatedProfileCriterionEvidenceBinding,
+    AllocationReasonCode,
     AtomicEvidenceLocator,
     BindingDerivationReason,
     CanonicalEvidenceSpan,
@@ -207,12 +209,14 @@ from .profile_dimension_mapping import (
     canonical_evidence_span_inventory,
     evidence_class_for_locator,
     generate_evidence_binding_id,
+    generate_evidence_group_id,
     generate_mapping_artifact_id,
     load_mapping_candidates,
     mapping_validation_report_from_warnings,
     parse_mapping_provider_output,
     provider_capabilities,
     save_mapping_candidates,
+    reallocate_evidence_bindings,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -246,6 +250,8 @@ __version__ = "0.9.0"
 
 __all__ = [
     "AtomicEvidenceLocator",
+    "AllocatedProfileCriterionEvidenceBinding",
+    "AllocationReasonCode",
     "BindingDerivationReason",
     "BehaviorEvidenceRequirement",
     "BindingReviewDecision",
@@ -388,6 +394,7 @@ __all__ = [
     "generate_criterion_id",
     "generate_dimension_id",
     "generate_evidence_binding_id",
+    "generate_evidence_group_id",
     "generate_binding_review_id",
     "generate_evidence_review_artifact_id",
     "generate_mapping_artifact_id",

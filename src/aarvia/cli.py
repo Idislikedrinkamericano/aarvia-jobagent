@@ -26,6 +26,7 @@ from .evidence_binding_review import (
 )
 from .phase2_storage import save_phase2_json_transaction
 from .profile_dimension_mapping import (
+    AllocatedProfileCriterionEvidenceBinding,
     EvidenceTrustLevel,
     OpenAIProfileDimensionMapper,
     ProfileDimensionMapper,
@@ -113,12 +114,12 @@ def build_parser() -> argparse.ArgumentParser:
     mapping_input.add_argument(
         "--mapping-artifact",
         type=Path,
-        help="existing Mapping schema 3 JSON; reuses it without calling the Provider",
+        help="existing Mapping schema 3/4 JSON; reuses it without calling the Provider",
     )
     recommend.add_argument(
         "--mapping-output",
         type=Path,
-        help="new Mapping schema 3 output path (default: PROFILE with .mapping.json suffix)",
+        help="new Mapping schema 4 output path (default: PROFILE with .mapping.json suffix)",
     )
     recommend.add_argument(
         "--review-artifact",
@@ -140,10 +141,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     review = subparsers.add_parser(
         "review-evidence",
-        help="review provisional semantic bindings from a Mapping schema 3 artifact",
+        help="review provisional semantic bindings from a Mapping schema 3/4 artifact",
     )
     review.add_argument("--profile", type=Path, required=True, help="existing Career Profile JSON path")
-    review.add_argument("--mapping", type=Path, required=True, help="Mapping schema 3 JSON path")
+    review.add_argument("--mapping", type=Path, required=True, help="Mapping schema 3/4 JSON path")
     review.add_argument("--output", type=Path, required=True, help="Evidence Binding Review JSON path")
     review.add_argument(
         "--overwrite", action="store_true", help="replace an existing Review output atomically"
@@ -261,8 +262,8 @@ def _run_recommend(
         candidates = load_mapping_candidates(
             arguments.mapping_artifact, profile=profile, rubric=rubric, catalog=catalog
         )
-        if candidates.schema_version != 3:
-            raise Phase2ValidationError("--mapping-artifact requires Mapping schema 3")
+        if candidates.schema_version not in {3, 4}:
+            raise Phase2ValidationError("--mapping-artifact requires Mapping schema 3 or 4")
         if arguments.review_artifact is not None:
             review_artifact = load_evidence_binding_reviews(
                 arguments.review_artifact,
@@ -284,12 +285,12 @@ def _run_recommend(
         )
         active_mapper = mapper or OpenAIProfileDimensionMapper(
             diagnostics_dir=arguments.provider_diagnostics_dir,
-            mapping_schema_version=3,
+            mapping_schema_version=4,
         )
         candidates = active_mapper.map(profile, rubric, catalog)
-        if candidates.schema_version != 3:
+        if candidates.schema_version != 4:
             raise Phase2ValidationError(
-                "the default recommend flow requires Mapping schema 3"
+                "the default recommend flow requires Mapping schema 4"
             )
 
     baseline = None
@@ -332,7 +333,7 @@ def _run_recommend(
             profile=profile,
             rubric=rubric,
             catalog=catalog,
-            mapping_candidates=candidates if candidates.schema_version == 3 else None,
+            mapping_candidates=candidates if candidates.schema_version in {3, 4} else None,
             evidence_reviews=review_artifact,
         )
 
@@ -392,8 +393,8 @@ def _run_review_evidence(
     candidates = load_mapping_candidates(
         arguments.mapping, profile=profile, rubric=rubric, catalog=catalog
     )
-    if candidates.schema_version != 3:
-        raise Phase2ValidationError("review-evidence requires Mapping schema 3")
+    if candidates.schema_version not in {3, 4}:
+        raise Phase2ValidationError("review-evidence requires Mapping schema 3 or 4")
     bindings = _provisional_semantic_bindings(candidates)
     if not bindings:
         output_fn("No provisional semantic bindings require review. No file was written.")
@@ -425,7 +426,11 @@ def _run_review_evidence(
         output_fn(f"Evidence class: {binding.evidence_class.value.replace('_', ' ')}")
         output_fn(
             "Current provisional impact: "
-            f"{binding.derived_match_status.value.replace('_', ' ')}"
+            f"{(
+                binding.allocated_match_status
+                if isinstance(binding, AllocatedProfileCriterionEvidenceBinding)
+                else binding.derived_match_status
+            ).value.replace('_', ' ')}"
         )
         while True:
             answer = input_fn("Decision [c]onfirmed/[r]ejected/[d]eferred/[q]uit: ").strip().lower()

@@ -123,6 +123,43 @@ def mapping_set_v3(
     )
 
 
+def mapping_set_v4(
+    profile: CareerProfile | None = None, *, binding_count: int = 1
+) -> ProfileDimensionMappingCandidateSet:
+    active_profile = profile or synthetic_profile()
+    v3 = mapping_set_v3(active_profile, binding_count=binding_count)
+    spans = canonical_evidence_span_inventory(active_profile)
+    span_ids = {
+        span.materialize(active_profile).evidence_fingerprint: span.span_id
+        for span in spans
+    }
+    payload = {
+        "mappings": [
+            {
+                "role_id": item.role_id,
+                "dimension_id": item.dimension_id,
+                "criterion_id": item.criterion_id,
+                "span_id": span_ids[item.atomic_evidence.evidence_fingerprint],
+                "proposed_binding_type": item.proposed_binding_type.value,
+                "provider_confidence": item.provider_confidence.value,
+            }
+            for item in v3.mappings
+        ],
+        "directional_signals": [],
+        "constraints": [],
+        "conflict_warnings": [],
+    }
+    return ProfileDimensionMappingCandidateSet.from_provider_payload_v4(
+        payload,
+        profile=active_profile,
+        rubric=production_capability_rubric(),
+        catalog=production_role_catalog(),
+        provider_name="fixture",
+        provider_model="fixture-model",
+        evidence_spans=spans,
+    )
+
+
 def clone_payload(**kwargs) -> dict:
     return deepcopy(mapping_payload(**kwargs))
 

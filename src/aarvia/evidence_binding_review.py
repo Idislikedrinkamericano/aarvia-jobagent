@@ -1,4 +1,4 @@
-"""Typed human-review provenance for Mapping schema 3 evidence bindings."""
+"""Typed human-review provenance for policy-derived Mapping evidence bindings."""
 
 from __future__ import annotations
 
@@ -271,9 +271,9 @@ class EvidenceBindingReviewArtifact:
             not isinstance(item, EvidenceBindingReview) for item in self.reviews
         ):
             raise Phase2ValidationError("Evidence Binding Reviews must be a typed tuple")
-        if rubric.schema_version != 2 or mapping.schema_version != 3:
+        if rubric.schema_version != 2 or mapping.schema_version not in {3, 4}:
             raise Phase2ValidationError(
-                "Evidence Binding Reviews require Rubric schema 2 and Mapping schema 3"
+                "Evidence Binding Reviews require Rubric schema 2 and Mapping schema 3 or 4"
             )
         expected_profile = profile_fingerprint(profile)
         expected_rubric_hash = capability_rubric_sha256(rubric)
@@ -342,9 +342,9 @@ def create_evidence_binding_review_artifact(
     decisions: Mapping[str, tuple[BindingReviewDecision, BindingReviewerType, str]],
 ) -> EvidenceBindingReviewArtifact:
     mapping.validate(profile=profile, rubric=rubric, catalog=catalog)
-    if rubric.schema_version != 2 or mapping.schema_version != 3:
+    if rubric.schema_version != 2 or mapping.schema_version not in {3, 4}:
         raise Phase2ValidationError(
-            "Evidence Binding Reviews require Rubric schema 2 and Mapping schema 3"
+            "Evidence Binding Reviews require Rubric schema 2 and Mapping schema 3 or 4"
         )
     bindings = {
         item.binding_id: item

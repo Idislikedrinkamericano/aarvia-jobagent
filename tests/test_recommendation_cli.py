@@ -21,7 +21,7 @@ from aarvia.profile_dimension_mapping import (
 from aarvia.storage import save_profile
 from aarvia.capability_rubric import production_capability_rubric
 from aarvia.role_catalog import production_role_catalog
-from recommendation_fixtures import mapping_set, mapping_set_v3, synthetic_profile
+from recommendation_fixtures import mapping_set, mapping_set_v3, mapping_set_v4, synthetic_profile
 
 
 def setup_inputs(tmp_path):
@@ -106,7 +106,7 @@ class FakeMapper:
     def __init__(self): self.called = False
     def map(self, profile, rubric, catalog):
         self.called = True
-        return mapping_set_v3(profile)
+        return mapping_set_v4(profile)
 
 
 def test_recommend_supports_injected_mock_provider(tmp_path) -> None:
@@ -115,8 +115,8 @@ def test_recommend_supports_injected_mock_provider(tmp_path) -> None:
     assert main(["recommend", "--profile", str(profile_path), "--output", str(output_path)], mapper=mapper, output_fn=lambda _: None) == 0
     assert mapper.called is True
     assert output_path.exists()
-    assert json.loads(output_path.read_text())["schema_version"] == 4
-    assert json.loads(profile_path.with_suffix(".mapping.json").read_text())["schema_version"] == 3
+    assert json.loads(output_path.read_text())["schema_version"] == 5
+    assert json.loads(profile_path.with_suffix(".mapping.json").read_text())["schema_version"] == 4
 
 
 def test_recommend_overwrite_is_explicit_and_atomic(tmp_path) -> None:
@@ -171,7 +171,7 @@ def test_cli_passes_explicit_diagnostics_directory_to_builtin_mapper(tmp_path, m
             received.append((diagnostics_dir, mapping_schema_version))
 
         def map(self, profile, rubric, catalog):
-            return mapping_set_v3(profile)
+            return mapping_set_v4(profile)
 
     monkeypatch.setattr("aarvia.cli.OpenAIProfileDimensionMapper", CapturingMapper)
     assert main(
@@ -182,7 +182,7 @@ def test_cli_passes_explicit_diagnostics_directory_to_builtin_mapper(tmp_path, m
         ],
         output_fn=lambda _: None,
     ) == 0
-    assert received == [(diagnostics_path, 3)]
+    assert received == [(diagnostics_path, 4)]
 
 
 def test_cli_warns_when_provider_candidates_are_isolated(tmp_path) -> None:
@@ -217,7 +217,7 @@ def test_cli_warns_when_provider_candidates_are_isolated(tmp_path) -> None:
         attempt_number=2,
         response_hash_reference="sha256:" + hashlib.sha256(b"fixture").hexdigest(),
         evidence_spans=canonical_evidence_span_inventory(profile),
-        mapping_schema_version=3,
+        mapping_schema_version=4,
     )
 
     class IsolatingMapper:
@@ -236,7 +236,7 @@ def test_cli_warns_when_provider_candidates_are_isolated(tmp_path) -> None:
     )
 
 
-def test_default_recommend_saves_mapping_three_and_recommendation_four(tmp_path) -> None:
+def test_default_recommend_saves_mapping_four_and_recommendation_five(tmp_path) -> None:
     profile = review_profile()
     profile_path = save_profile(profile, tmp_path / "profile.json")
     mapping_path = tmp_path / "mapping-v3.json"
@@ -253,8 +253,8 @@ def test_default_recommend_saves_mapping_three_and_recommendation_four(tmp_path)
         output_fn=messages.append,
     ) == 0
     assert mapper.called
-    assert json.loads(mapping_path.read_text())["schema_version"] == 3
-    assert json.loads(recommendation_path.read_text())["schema_version"] == 4
+    assert json.loads(mapping_path.read_text())["schema_version"] == 4
+    assert json.loads(recommendation_path.read_text())["schema_version"] == 5
     assert any(f"Mapping saved to: {mapping_path}" == item for item in messages)
     assert any("review-evidence" in item for item in messages)
 

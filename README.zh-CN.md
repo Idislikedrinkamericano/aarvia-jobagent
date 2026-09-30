@@ -22,7 +22,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 - ✅ Candidate 独立审核、受控 Cluster 审核与明确的 Logic Group resolution
 - ✅ Capability Rubric schema 2：20 个 Dimension、稳定 criterion ID 与强类型 Evidence Support Policy
 - ✅ 确定性 Current Fit、Directional Fit、约束、置信度、并列与追问
-- ✅ Mapping schema 3 binding、Recommendation schema 4 评分与强类型证据审核 provenance
+- ✅ Mapping schema 4 证据分配、Recommendation schema 5 评分与强类型证据审核 provenance
 - ✅ 百炼/custom JSON mode、有限 repair retry 与显式启用的纯元数据诊断
 - ⏳ User Decision、Gap Analysis、真实岗位发现和简历链路尚未实现
 
@@ -90,7 +90,7 @@ aarvia recommend --profile data/profiles/example.json \
   --output legacy-recommendation.json
 ```
 
-不提供 Mapping 输入时，`aarvia recommend` 会使用已配置的 OpenAI-compatible Provider，仅提出 Mapping schema 3 criterion binding，然后原子保存 Mapping 与 Recommendation schema 4。所有状态、分数、等级、置信度、并列和排名都由 Python 验证并计算。`--mapping-artifact` 始终复用已有 Mapping，不调用 Provider。Review 只对创建它时的精确 Profile、Rubric、Mapping 和 binding identity 有效。
+不提供 Mapping 输入时，`aarvia recommend` 会使用已配置的 OpenAI-compatible Provider 仅提出 criterion binding，然后原子保存 Mapping schema 4 与 Recommendation schema 5。Python 验证引用、把一个 evidence span 最多分配给一个 primary 和一个受限 secondary Dimension，并计算所有状态、分数、等级、置信度、并列和排名。`--mapping-artifact` 始终复用已有 Mapping，不调用 Provider。Review 只对创建它时的精确 Profile、Rubric、Mapping 和 binding identity 有效。
 
 Provider 诊断必须显式开启，而且只保存元数据：
 
@@ -131,7 +131,7 @@ Atomic evidence 校验会在源头产生结构化代码，区分 excerpt 错误�
 
 同一结构化边界也覆盖 Current Fit 字段类型、evidence strength、Provider confidence、review flag、contribution relationship、确定性 provenance、重复 mapping 与集合级 contribution cap。只有真正未知的旧异常才使用通用拒绝类别。
 
-Current Fit 现在使用字段内的原子证据，而不只依赖整个字段。Mapping schema 3 只允许 Provider 提出 canonical Role、Dimension、criterion、span、binding type 和 confidence。Python 负责物化 span、识别结构或行为证据类型、应用 Rubric policy、生成稳定 provenance，并派生保守的状态、强度、inference 与 review 要求。Recommendation schema 4 只聚合这些派生 binding，并确定性重算 coverage、confidence、ranking、tie、blocker 与 follow-up。独立的强类型审核 artifact 可以对现有 binding 作出 confirm、reject 或 defer，并绑定精确的 Profile、Rubric 与 Mapping 上下文。confirm 仍不自动等于 `demonstrated`：policy 阈值、criterion coverage、独立证据数量和行为证据要求继续由 Python 强制执行；结构证据也不会因审核而变成语义证据。版本 `0.9.0` 已将此链路设为 `recommend` 默认流程，legacy schema 只通过显式 `--mapping-candidates` 使用。
+Current Fit 使用字段内的原子证据。Mapping schema 4 仍只允许 Provider 提出 canonical Role、Dimension、criterion、span、binding type 和 confidence。Python 物化 span、应用 Rubric policy，并以稳定规则分配跨 Dimension 复用：一个 primary 最多贡献 `1.0`，一个 secondary 最多贡献 `0.3`；无法确定 primary 时整组拒绝并要求修正。Recommendation schema 5 只消费这些分配结果，并在审核拒绝 primary 后对已持久化的剩余成员重新分配。审核仍不自动等于 `demonstrated`，结构证据也不会因审核变成语义证据。旧 Mapping 1–3 与 Recommendation 1–4 继续显式可读。
 
 ## 安全第一
 
@@ -206,7 +206,7 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - 真实 schema 6 Candidate Completion artifact 仍仅在本地且未被修改；它尚未迁移到 schema 7，没有改变任何审核状态，也没有计算正式 prevalence。
 - Production Requirement Logic、prevalence 发布、User Decision 与 Gap Analysis 仍明确未实现。
 - Capability Rubric schema 2 为每条 inclusion criterion 分配稳定 ID，并按 Dimension 声明 evidence class、保守 status cap、confirmed evidence 阈值与行为证据规则。Schema 1 继续显式可读并保持原格式 round-trip。
-- `0.9.0` 默认使用 Mapping schema 3 与 Recommendation schema 4，保存可复用 Mapping provenance，并提供独立的 `review-evidence` 命令。User Decision、Gap Analysis 与 Phase 2D 尚未实现。
+- `0.9.0` 默认使用 Mapping schema 4 与 Recommendation schema 5，保存可复用的确定性分配 provenance，并提供独立的 `review-evidence` 命令。User Decision、Gap Analysis 与 Phase 2D 尚未实现。
 - Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。Rubric policy contract 不代表已经发布任何市场 requirement。
 
 ## 设计原则
