@@ -271,7 +271,7 @@ class EvidenceBindingReviewArtifact:
             not isinstance(item, EvidenceBindingReview) for item in self.reviews
         ):
             raise Phase2ValidationError("Evidence Binding Reviews must be a typed tuple")
-        if rubric.schema_version != 2 or mapping.schema_version not in {3, 4}:
+        if rubric.schema_version != 2 or mapping.schema_version not in {3, 4, 5}:
             raise Phase2ValidationError(
                 "Evidence Binding Reviews require Rubric schema 2 and Mapping schema 3 or 4"
             )
@@ -296,6 +296,8 @@ class EvidenceBindingReviewArtifact:
             for item in mapping.mappings
             if isinstance(item, ProfileCriterionEvidenceBinding)
         }
+        for group in mapping.unresolved_evidence_groups:
+            bindings.update({item.binding_id: item for item in group.members})
         for review in self.reviews:
             binding = bindings.get(review.binding_id)
             if binding is None:
@@ -342,7 +344,7 @@ def create_evidence_binding_review_artifact(
     decisions: Mapping[str, tuple[BindingReviewDecision, BindingReviewerType, str]],
 ) -> EvidenceBindingReviewArtifact:
     mapping.validate(profile=profile, rubric=rubric, catalog=catalog)
-    if rubric.schema_version != 2 or mapping.schema_version not in {3, 4}:
+    if rubric.schema_version != 2 or mapping.schema_version not in {3, 4, 5}:
         raise Phase2ValidationError(
             "Evidence Binding Reviews require Rubric schema 2 and Mapping schema 3 or 4"
         )
@@ -351,6 +353,8 @@ def create_evidence_binding_review_artifact(
         for item in mapping.mappings
         if isinstance(item, ProfileCriterionEvidenceBinding)
     }
+    for group in mapping.unresolved_evidence_groups:
+        bindings.update({item.binding_id: item for item in group.members})
     if set(decisions) - set(bindings):
         raise Phase2ValidationError("Evidence Binding Review references a missing Mapping binding")
     mapping_id = generate_mapping_artifact_id(mapping)

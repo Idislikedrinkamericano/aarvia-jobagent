@@ -28,6 +28,9 @@ class ProviderDiagnosticsWriter:
         fallback_reason: str | None,
         candidate_rejection_count: int = 0,
         candidate_rejection_reason_codes: list[str] | tuple[str, ...] = (),
+        rejected_evidence_group_count: int = 0,
+        unresolved_candidate_count: int = 0,
+        unresolved_evidence_group_count: int = 0,
         retry_selection_reason: str | None = None,
         selected_attempt: int | None = None,
     ) -> Path:
@@ -58,6 +61,9 @@ class ProviderDiagnosticsWriter:
             payload["candidate_rejection_reason_codes"] = sorted(
                 set(candidate_rejection_reason_codes)
             )
+        payload["rejected_evidence_group_count"] = rejected_evidence_group_count
+        payload["unresolved_candidate_count"] = unresolved_candidate_count
+        payload["unresolved_evidence_group_count"] = unresolved_evidence_group_count
         if retry_selection_reason is not None:
             payload["retry_selection_reason"] = retry_selection_reason
             payload["selected_attempt"] = selected_attempt

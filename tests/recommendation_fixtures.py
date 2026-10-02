@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 
 from aarvia.capability_rubric import production_capability_rubric
 from aarvia.profile import CareerProfile
@@ -157,6 +158,59 @@ def mapping_set_v4(
         provider_name="fixture",
         provider_model="fixture-model",
         evidence_spans=spans,
+    )
+
+
+def mapping_set_v5(
+    profile: CareerProfile | None = None, *, binding_count: int = 1
+) -> ProfileDimensionMappingCandidateSet:
+    active_profile = profile or synthetic_profile()
+    v4 = mapping_set_v4(active_profile, binding_count=binding_count)
+    return replace(v4, schema_version=5, unresolved_evidence_groups=())
+
+
+def mapping_set_v5_unresolved(
+    profile: CareerProfile | None = None,
+) -> ProfileDimensionMappingCandidateSet:
+    active_profile = profile or synthetic_profile()
+    rubric = production_capability_rubric()
+    spans = canonical_evidence_span_inventory(active_profile)
+    span = next(item for item in spans if item.path.endswith("short_factual_summary"))
+    dimensions = [
+        item for item in rubric.dimensions
+        if item.role_id == "applied_ai_engineer"
+        and EvidenceClass.PROJECT_SUMMARY
+        in item.evidence_support_policy.allowed_evidence_classes
+        and item.evidence_support_policy.provisional_status_cap.value
+        == "partially_demonstrated"
+    ][:2]
+    payload = {
+        "mappings": [
+            {
+                "role_id": dimension.role_id,
+                "dimension_id": dimension.dimension_id,
+                "criterion_id": dimension.criterion_ids[0],
+                "span_id": span.span_id,
+                "proposed_binding_type": "direct",
+                "provider_confidence": "high",
+            }
+            for dimension in dimensions
+        ],
+        "directional_signals": [],
+        "constraints": [],
+        "conflict_warnings": [],
+    }
+    return ProfileDimensionMappingCandidateSet.from_provider_payload_isolated(
+        payload,
+        profile=active_profile,
+        rubric=rubric,
+        catalog=production_role_catalog(),
+        provider_name="fixture",
+        provider_model="fixture-model",
+        attempt_number=1,
+        response_hash_reference="sha256:" + "7" * 64,
+        evidence_spans=spans,
+        mapping_schema_version=5,
     )
 
 

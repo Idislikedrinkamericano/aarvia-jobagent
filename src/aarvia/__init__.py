@@ -202,6 +202,7 @@ from .profile_dimension_mapping import (
     ProfileDimensionMappingCandidate,
     ProfileDimensionMappingCandidateSet,
     ProfileCriterionEvidenceBinding,
+    UnresolvedEvidenceGroup,
     ProposedBindingType,
     ProviderConfidence,
     ProviderCapabilities,
@@ -217,6 +218,15 @@ from .profile_dimension_mapping import (
     provider_capabilities,
     save_mapping_candidates,
     reallocate_evidence_bindings,
+)
+from .evidence_group_allocation_review import (
+    AllocationReviewDecision,
+    AllocationReviewerType,
+    EvidenceGroupAllocationReview,
+    EvidenceGroupAllocationReviewArtifact,
+    create_evidence_group_allocation_review_artifact,
+    load_evidence_group_allocation_reviews,
+    save_evidence_group_allocation_reviews,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -246,10 +256,15 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "AtomicEvidenceLocator",
+    "UnresolvedEvidenceGroup",
+    "AllocationReviewDecision",
+    "AllocationReviewerType",
+    "EvidenceGroupAllocationReview",
+    "EvidenceGroupAllocationReviewArtifact",
     "AllocatedProfileCriterionEvidenceBinding",
     "AllocationReasonCode",
     "BindingDerivationReason",
@@ -377,6 +392,7 @@ __all__ = [
     "create_profile",
     "capability_rubric_sha256",
     "create_evidence_binding_review_artifact",
+    "create_evidence_group_allocation_review_artifact",
     "approve_candidate",
     "assign_candidates_to_cluster",
     "aggregate_logic_status",
@@ -407,6 +423,7 @@ __all__ = [
     "load_capability_rubric",
     "load_mapping_candidates",
     "load_evidence_binding_reviews",
+    "load_evidence_group_allocation_reviews",
     "mapping_validation_report_from_warnings",
     "parse_mapping_provider_output",
     "provider_capabilities",
@@ -438,6 +455,7 @@ __all__ = [
     "save_capability_rubric",
     "save_mapping_candidates",
     "save_evidence_binding_reviews",
+    "save_evidence_group_allocation_reviews",
     "reclassify_job_role",
     "reject_candidate",
     "reject_candidate_logic_group",

@@ -586,6 +586,9 @@ def test_failed_prompt_only_fallback_retains_structured_reason() -> None:
         "response_length": 0,
         "fallback_reason": "provider_rejected_json_object_mode",
         "raw_response_saved": False,
+        "rejected_evidence_group_count": 0,
+        "unresolved_candidate_count": 0,
+        "unresolved_evidence_group_count": 0,
     }]
 
 

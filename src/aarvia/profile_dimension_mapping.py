@@ -35,8 +35,8 @@ from .role_catalog import (
 
 
 MAPPING_SCHEMA = "aarvia.profile_dimension_mapping_candidates"
-MAPPING_SCHEMA_VERSION = 4
-SUPPORTED_MAPPING_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4})
+MAPPING_SCHEMA_VERSION = 5
+SUPPORTED_MAPPING_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4, 5})
 MAPPING_ID_VERSION = "profile-dimension-mapping-v1"
 ATOMIC_MAPPING_ID_VERSION = "profile-dimension-mapping-v2"
 ATOMIC_EVIDENCE_VERSION = "atomic-profile-evidence-v1"
@@ -510,6 +510,7 @@ class MappingCandidateRejection:
     attempt_number: int
     recoverable: bool
     response_hash_reference: str
+    evidence_group_id: str | None = field(default=None, compare=False, repr=False)
 
     def validate(self) -> None:
         if (
@@ -1570,6 +1571,68 @@ class AllocatedProfileCriterionEvidenceBinding(ProfileCriterionEvidenceBinding):
         return result
 
 
+@dataclass(frozen=True, eq=True)
+class UnresolvedEvidenceGroup:
+    """Validated evidence bindings awaiting an explicit allocation decision."""
+
+    evidence_group_id: str
+    role_id: str
+    evidence_fingerprint: str
+    members: tuple[ProfileCriterionEvidenceBinding, ...]
+    unresolved_reason_code: MappingRejectionReason
+    allowed_primary_dimension_ids: tuple[str, ...]
+    allowed_secondary_dimension_ids: tuple[str, ...]
+
+    def validate(self, *, profile: CareerProfile, rubric: CapabilityRubric) -> None:
+        if self.unresolved_reason_code != MappingRejectionReason.AMBIGUOUS_PRIMARY_ALLOCATION:
+            raise Phase2ValidationError("unsupported unresolved evidence reason")
+        if len(self.members) < 2:
+            raise Phase2ValidationError("unresolved evidence group requires at least two members")
+        for member in self.members:
+            if not isinstance(member, ProfileCriterionEvidenceBinding) or isinstance(
+                member, AllocatedProfileCriterionEvidenceBinding
+            ):
+                raise Phase2ValidationError("unresolved group members must be unallocated bindings")
+            member.validate(profile=profile, rubric=rubric)
+            if member.role_id != self.role_id or member.atomic_evidence.evidence_fingerprint != self.evidence_fingerprint:
+                raise Phase2ValidationError("unresolved group member identity mismatch")
+        expected_group = generate_evidence_group_id(
+            role_id=self.role_id, evidence_fingerprint=self.evidence_fingerprint
+        )
+        if self.evidence_group_id != expected_group:
+            raise Phase2ValidationError("unresolved evidence group ID is not deterministic")
+        member_ids = [item.binding_id for item in self.members]
+        if len(member_ids) != len(set(member_ids)):
+            raise Phase2ValidationError("unresolved evidence group contains duplicate bindings")
+        expected_members = tuple(sorted(self.members, key=lambda item: item.binding_id))
+        if self.members != expected_members:
+            raise Phase2ValidationError("unresolved evidence group members are not canonical")
+        dimensions = tuple(sorted({item.dimension_id for item in self.members}))
+        strengths = {
+            dimension_id: _allocation_strength(
+                tuple(item for item in self.members if item.dimension_id == dimension_id)
+            )
+            for dimension_id in dimensions
+        }
+        strongest = max(strengths.values())
+        primary = tuple(sorted(key for key, value in strengths.items() if value == strongest))
+        if len(primary) < 2 or self.allowed_primary_dimension_ids != primary:
+            raise Phase2ValidationError("unresolved primary choices are not deterministic")
+        if self.allowed_secondary_dimension_ids != dimensions:
+            raise Phase2ValidationError("unresolved secondary choices are not deterministic")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_group_id": self.evidence_group_id,
+            "role_id": self.role_id,
+            "evidence_fingerprint": self.evidence_fingerprint,
+            "members": [item.to_dict() for item in self.members],
+            "unresolved_reason_code": self.unresolved_reason_code.value,
+            "allowed_primary_dimension_ids": list(self.allowed_primary_dimension_ids),
+            "allowed_secondary_dimension_ids": list(self.allowed_secondary_dimension_ids),
+        }
+
+
 _ALLOCATION_STATUS_ORDER = {
     CurrentMatchStatus.DEMONSTRATED: 4,
     CurrentMatchStatus.PARTIAL: 3,
@@ -1758,6 +1821,38 @@ def allocate_evidence_group_bindings(
     )
 
 
+def unresolved_evidence_group(
+    bindings: tuple[ProfileCriterionEvidenceBinding, ...],
+) -> UnresolvedEvidenceGroup:
+    ordered = tuple(sorted(bindings, key=lambda item: item.binding_id))
+    if not ordered:
+        raise Phase2ValidationError("cannot create an empty unresolved evidence group")
+    dimensions = tuple(sorted({item.dimension_id for item in ordered}))
+    strengths = {
+        dimension_id: _allocation_strength(
+            tuple(item for item in ordered if item.dimension_id == dimension_id)
+        )
+        for dimension_id in dimensions
+    }
+    strongest = max(strengths.values())
+    primary = tuple(sorted(key for key, value in strengths.items() if value == strongest))
+    if len(primary) < 2:
+        raise Phase2ValidationError("evidence group has a deterministic primary")
+    first = ordered[0]
+    return UnresolvedEvidenceGroup(
+        evidence_group_id=generate_evidence_group_id(
+            role_id=first.role_id,
+            evidence_fingerprint=first.atomic_evidence.evidence_fingerprint,
+        ),
+        role_id=first.role_id,
+        evidence_fingerprint=first.atomic_evidence.evidence_fingerprint,
+        members=ordered,
+        unresolved_reason_code=MappingRejectionReason.AMBIGUOUS_PRIMARY_ALLOCATION,
+        allowed_primary_dimension_ids=primary,
+        allowed_secondary_dimension_ids=dimensions,
+    )
+
+
 def reallocate_evidence_bindings(
     bindings: tuple[AllocatedProfileCriterionEvidenceBinding, ...],
     *,
@@ -1875,6 +1970,62 @@ def _allocate_indexed_evidence_bindings(
                 ),
             )
         ),
+        tuple(sorted(rejected, key=lambda item: (item[0], item[1].value))),
+    )
+
+
+def _allocate_indexed_evidence_bindings_v5(
+    indexed: tuple[tuple[int, ProfileCriterionEvidenceBinding], ...],
+) -> tuple[
+    tuple[AllocatedProfileCriterionEvidenceBinding, ...],
+    tuple[UnresolvedEvidenceGroup, ...],
+    tuple[tuple[int, MappingRejectionReason, ProfileCriterionEvidenceBinding], ...],
+]:
+    """Schema 5 allocation: retain ambiguous groups with zero contribution."""
+    by_id: dict[str, list[tuple[int, ProfileCriterionEvidenceBinding]]] = {}
+    for item in indexed:
+        by_id.setdefault(item[1].binding_id, []).append(item)
+    unique: list[tuple[int, ProfileCriterionEvidenceBinding]] = []
+    rejected: list[tuple[int, MappingRejectionReason, ProfileCriterionEvidenceBinding]] = []
+    confidence_order = {ProviderConfidence.HIGH: 3, ProviderConfidence.MEDIUM: 2, ProviderConfidence.LOW: 1}
+    for binding_id in sorted(by_id):
+        candidates = sorted(
+            by_id[binding_id],
+            key=lambda item: (-confidence_order[item[1].provider_confidence], json.dumps(item[1].to_dict(), sort_keys=True, separators=(",", ":")), item[0]),
+        )
+        unique.append(candidates[0])
+        rejected.extend((index, MappingRejectionReason.EXACT_DUPLICATE_BINDING, binding) for index, binding in candidates[1:])
+    by_group: dict[tuple[str, str], list[tuple[int, ProfileCriterionEvidenceBinding]]] = {}
+    for item in unique:
+        by_group.setdefault((item[1].role_id, item[1].atomic_evidence.evidence_fingerprint), []).append(item)
+    overlapping: set[tuple[str, str]] = set()
+    keys = sorted(by_group)
+    for position, left_key in enumerate(keys):
+        left = by_group[left_key][0][1].atomic_evidence
+        for right_key in keys[position + 1:]:
+            right = by_group[right_key][0][1].atomic_evidence
+            if left_key[0] == right_key[0] and left.profile_reference.path == right.profile_reference.path and max(left.start_offset, right.start_offset) < min(left.end_offset, right.end_offset):
+                overlapping.update((left_key, right_key))
+    allocated: list[AllocatedProfileCriterionEvidenceBinding] = []
+    unresolved: list[UnresolvedEvidenceGroup] = []
+    for key in keys:
+        members = tuple(sorted(by_group[key], key=lambda item: item[1].binding_id))
+        if key in overlapping:
+            rejected.extend((index, MappingRejectionReason.OVERLAPPING_ATOMIC_EVIDENCE, binding) for index, binding in members)
+            continue
+        member_bindings = tuple(binding for _, binding in members)
+        group_allocated, group_rejected = allocate_evidence_group_bindings(member_bindings)
+        if group_rejected and all(reason == MappingRejectionReason.AMBIGUOUS_PRIMARY_ALLOCATION for _, reason in group_rejected):
+            unresolved.append(unresolved_evidence_group(member_bindings))
+            continue
+        allocated.extend(group_allocated)
+        by_binding = {binding.binding_id: (index, binding) for index, binding in members}
+        for binding_id, reason in group_rejected:
+            index, binding = by_binding[binding_id]
+            rejected.append((index, reason, binding))
+    return (
+        tuple(sorted(allocated, key=lambda item: (item.evidence_group_id, item.dimension_id, item.criterion_id, item.binding_id))),
+        tuple(sorted(unresolved, key=lambda item: item.evidence_group_id)),
         tuple(sorted(rejected, key=lambda item: (item[0], item[1].value))),
     )
 
@@ -2069,6 +2220,7 @@ class ProfileDimensionMappingCandidateSet:
     ]
     directional_signals: tuple[DirectionalSignalCandidate, ...]
     constraints: tuple[ConstraintCompatibilityCandidate, ...]
+    unresolved_evidence_groups: tuple[UnresolvedEvidenceGroup, ...] = ()
     conflict_warnings: tuple[str, ...] = ()
     provider_name: str = "offline"
     provider_model: str = "offline"
@@ -2393,6 +2545,36 @@ class ProfileDimensionMappingCandidateSet:
         return result
 
     @classmethod
+    def from_provider_payload_v5(
+        cls, payload: Mapping[str, Any], *, profile: CareerProfile,
+        rubric: CapabilityRubric, catalog: RoleCatalog,
+        provider_name: str, provider_model: str,
+        evidence_spans: tuple[CanonicalEvidenceSpan, ...],
+    ) -> ProfileDimensionMappingCandidateSet:
+        data = _mapping(payload, "mapping_candidates")
+        _reject_unknown(data, {"mappings", "directional_signals", "constraints", "conflict_warnings"}, "mapping_candidates")
+        spans_by_id = {span.span_id: span for span in evidence_spans}
+        raw_mappings = tuple(sorted(_list(data.get("mappings"), "mapping_candidates.mappings"), key=_canonical_provider_candidate_key))
+        parsed = tuple((index, _binding_from_provider(item, index=index, profile=profile, rubric=rubric, spans_by_id=spans_by_id)) for index, item in enumerate(raw_mappings))
+        allocated, unresolved, rejected = _allocate_indexed_evidence_bindings_v5(parsed)
+        if rejected:
+            raise _CodedMappingValidationError(_MappingValidationCode.INVALID_CONTRIBUTION_ALLOCATION, "Mapping schema 5 Provider bindings require isolation")
+        raw_directional = tuple(sorted(_list(data.get("directional_signals"), "mapping_candidates.directional_signals"), key=_canonical_provider_candidate_key))
+        raw_constraints = tuple(sorted(_list(data.get("constraints"), "mapping_candidates.constraints"), key=_canonical_provider_candidate_key))
+        result = cls(
+            rubric_version=rubric.rubric_version,
+            role_catalog_version=catalog.catalog_version,
+            profile_fingerprint=profile_fingerprint(profile), mappings=allocated,
+            directional_signals=tuple(_directional_from_provider(_materialize_profile_reference_transport_candidate(item, profile=profile, spans_by_id=spans_by_id), index=index, profile=profile) for index, item in enumerate(raw_directional)),
+            constraints=tuple(_constraint_from_provider(_materialize_profile_reference_transport_candidate(item, profile=profile, spans_by_id=spans_by_id), index=index, profile=profile) for index, item in enumerate(raw_constraints)),
+            unresolved_evidence_groups=unresolved,
+            conflict_warnings=_string_tuple(data.get("conflict_warnings"), "mapping_candidates.conflict_warnings"),
+            provider_name=_text(provider_name, "provider_name"), provider_model=_text(provider_model, "provider_model"), schema_version=5,
+        )
+        result.validate(profile=profile, rubric=rubric, catalog=catalog)
+        return result
+
+    @classmethod
     def from_provider_payload_isolated(
         cls,
         payload: Mapping[str, Any],
@@ -2428,6 +2610,8 @@ class ProfileDimensionMappingCandidateSet:
             "profile_fingerprint", "mappings", "directional_signals", "constraints",
             "conflict_warnings", "provider_name", "provider_model",
         }
+        if data.get("schema_version") == 5:
+            allowed.add("unresolved_evidence_groups")
         _reject_unknown(data, allowed, "mapping_candidates")
         schema_version = data.get("schema_version")
         if data.get("schema") != MAPPING_SCHEMA or schema_version not in SUPPORTED_MAPPING_SCHEMA_VERSIONS:
@@ -2450,6 +2634,10 @@ class ProfileDimensionMappingCandidateSet:
             role_catalog_version=_text(data.get("role_catalog_version"), "mapping_candidates.role_catalog_version"),
             profile_fingerprint=_text(data.get("profile_fingerprint"), "mapping_candidates.profile_fingerprint"),
             mappings=mappings, directional_signals=directional, constraints=constraints,
+            unresolved_evidence_groups=(
+                tuple(_unresolved_group_from_dict(item, index) for index, item in enumerate(_list(data.get("unresolved_evidence_groups"), "mapping_candidates.unresolved_evidence_groups")))
+                if schema_version == 5 else ()
+            ),
             conflict_warnings=_string_tuple(data.get("conflict_warnings"), "mapping_candidates.conflict_warnings"),
             provider_name=_text(data.get("provider_name"), "mapping_candidates.provider_name"),
             provider_model=_text(data.get("provider_model"), "mapping_candidates.provider_model"),
@@ -2465,7 +2653,7 @@ class ProfileDimensionMappingCandidateSet:
             or self.schema_version not in SUPPORTED_MAPPING_SCHEMA_VERSIONS
         ):
             raise Phase2ValidationError("unsupported Profile mapping schema version")
-        if self.schema_version in {3, 4} and rubric.schema_version != 2:
+        if self.schema_version in {3, 4, 5} and rubric.schema_version != 2:
             raise Phase2ValidationError(
                 f"Mapping schema {self.schema_version} requires Capability Rubric schema 2"
             )
@@ -2484,12 +2672,58 @@ class ProfileDimensionMappingCandidateSet:
             )
         if self.schema_version == 3:
             self._validate_schema_three_bindings(profile=profile, rubric=rubric)
-        elif self.schema_version == 4:
+        elif self.schema_version in {4, 5}:
             self._validate_schema_four_bindings(profile=profile, rubric=rubric)
+        if self.schema_version != 5 and self.unresolved_evidence_groups:
+            raise Phase2ValidationError("legacy Mapping cannot contain unresolved evidence groups")
+        if self.schema_version == 5:
+            group_ids = [item.evidence_group_id for item in self.unresolved_evidence_groups]
+            if group_ids != sorted(group_ids) or len(group_ids) != len(set(group_ids)):
+                raise Phase2ValidationError("unresolved evidence groups must be unique and canonical")
+            allocated_group_ids = {item.evidence_group_id for item in self.mappings if isinstance(item, AllocatedProfileCriterionEvidenceBinding)}
+            if allocated_group_ids.intersection(group_ids):
+                raise Phase2ValidationError("an evidence group cannot be both allocated and unresolved")
+            unresolved_binding_ids: set[str] = set()
+            for group in self.unresolved_evidence_groups:
+                group.validate(profile=profile, rubric=rubric)
+                for member in group.members:
+                    if member.binding_id in unresolved_binding_ids:
+                        raise Phase2ValidationError("an unresolved binding cannot belong to multiple groups")
+                    unresolved_binding_ids.add(member.binding_id)
+            evidence_groups = [
+                (item.role_id, item.evidence_group_id, item.atomic_evidence)
+                for item in self.mappings
+                if isinstance(item, AllocatedProfileCriterionEvidenceBinding)
+            ]
+            evidence_groups.extend(
+                (group.role_id, group.evidence_group_id, group.members[0].atomic_evidence)
+                for group in self.unresolved_evidence_groups
+            )
+            unique_groups = {
+                (role_id, group_id): locator
+                for role_id, group_id, locator in evidence_groups
+            }
+            ordered_groups = sorted(
+                (role_id, group_id, locator)
+                for (role_id, group_id), locator in unique_groups.items()
+            )
+            for index, (role_id, group_id, left) in enumerate(ordered_groups):
+                for other_role_id, other_group_id, right in ordered_groups[index + 1:]:
+                    if role_id != other_role_id or group_id == other_group_id:
+                        continue
+                    if (
+                        left.profile_reference.path == right.profile_reference.path
+                        and max(left.start_offset, right.start_offset)
+                        < min(left.end_offset, right.end_offset)
+                    ):
+                        raise _CodedMappingValidationError(
+                            _MappingValidationCode.OVERLAPPING_ATOMIC_EVIDENCE,
+                            "allocated and unresolved evidence groups cannot overlap",
+                        )
         contribution_keys: set[tuple[str, str]] = set()
         primary_by_fact: dict[tuple[str, str], str] = {}
         for item in self.mappings:
-            if self.schema_version in {3, 4}:
+            if self.schema_version in {3, 4, 5}:
                 continue
             assert isinstance(item, ProfileDimensionMappingCandidate)
             item.validate(
@@ -2548,7 +2782,7 @@ class ProfileDimensionMappingCandidateSet:
             raise Phase2ValidationError("mapping rejection warnings do not match validation report")
         if persisted_report is not None:
             accepted_count = (
-                len(self.mappings) + len(self.directional_signals) + len(self.constraints)
+                len(self.mappings) + sum(len(group.members) for group in self.unresolved_evidence_groups) + len(self.directional_signals) + len(self.constraints)
             )
             if (
                 persisted_report.total_candidate_count
@@ -2769,6 +3003,7 @@ class ProfileDimensionMappingCandidateSet:
             ],
             "directional_signals": [item.to_dict() for item in self.directional_signals],
             "constraints": [item.to_dict() for item in self.constraints],
+            **({"unresolved_evidence_groups": [item.to_dict() for item in self.unresolved_evidence_groups]} if self.schema_version == 5 else {}),
             "conflict_warnings": list(self.conflict_warnings),
             "provider_name": self.provider_name, "provider_model": self.provider_model,
         }
@@ -2861,7 +3096,7 @@ def _precheck_rejection_reason(
     allowed = {
         MappingCandidateKind.CURRENT_FIT: (
             _PROVIDER_BINDING_FIELDS
-            if mapping_schema_version in {3, 4}
+            if mapping_schema_version in {3, 4, 5}
             else _PROVIDER_MAPPING_FIELDS
         ),
         MappingCandidateKind.DIRECTIONAL: _PROVIDER_DIRECTIONAL_FIELDS,
@@ -2882,7 +3117,7 @@ def _precheck_rejection_reason(
             return MappingRejectionReason.UNKNOWN_DIMENSION
         if dimension.role_id != role_id:
             return MappingRejectionReason.ROLE_DIMENSION_MISMATCH
-        if mapping_schema_version in {3, 4}:
+        if mapping_schema_version in {3, 4, 5}:
             return None
         references = raw.get("profile_fact_references")
         reference_paths = (
@@ -2947,6 +3182,7 @@ def _isolate_provider_candidates_v4(
     attempt_number: int,
     response_hash_reference: str,
     evidence_spans: tuple[CanonicalEvidenceSpan, ...],
+    mapping_schema_version: int = 4,
 ) -> ProfileDimensionMappingCandidateSet:
     data = _mapping(payload, "mapping_candidates")
     _reject_unknown(
@@ -3023,6 +3259,14 @@ def _isolate_provider_candidates_v4(
                 attempt_number=attempt_number,
                 recoverable=True,
                 response_hash_reference=stable_response_hash_reference,
+                evidence_group_id=(
+                    None
+                    if binding is None
+                    else generate_evidence_group_id(
+                        role_id=binding.role_id,
+                        evidence_fingerprint=binding.atomic_evidence.evidence_fingerprint,
+                    )
+                ),
             )
         )
 
@@ -3035,7 +3279,7 @@ def _isolate_provider_candidates_v4(
             raw,
             kind=MappingCandidateKind.CURRENT_FIT,
             rubric=rubric,
-            mapping_schema_version=4,
+            mapping_schema_version=mapping_schema_version,
         )
         binding = None
         if reason is None:
@@ -3062,9 +3306,11 @@ def _isolate_provider_candidates_v4(
         else:
             assert binding is not None
             individually_valid.append((index, binding))
-    allocated, allocation_rejections = _allocate_indexed_evidence_bindings(
-        tuple(individually_valid)
-    )
+    unresolved: tuple[UnresolvedEvidenceGroup, ...] = ()
+    if mapping_schema_version == 5:
+        allocated, unresolved, allocation_rejections = _allocate_indexed_evidence_bindings_v5(tuple(individually_valid))
+    else:
+        allocated, allocation_rejections = _allocate_indexed_evidence_bindings(tuple(individually_valid))
     for index, reason, binding in allocation_rejections:
         reject(
             kind=MappingCandidateKind.CURRENT_FIT,
@@ -3085,7 +3331,7 @@ def _isolate_provider_candidates_v4(
             raw,
             kind=MappingCandidateKind.DIRECTIONAL,
             rubric=rubric,
-            mapping_schema_version=4,
+            mapping_schema_version=mapping_schema_version,
         )
         item = None
         if reason is None:
@@ -3125,7 +3371,7 @@ def _isolate_provider_candidates_v4(
             raw,
             kind=MappingCandidateKind.CONSTRAINT,
             rubric=rubric,
-            mapping_schema_version=4,
+            mapping_schema_version=mapping_schema_version,
         )
         item = None
         if reason is None:
@@ -3172,10 +3418,11 @@ def _isolate_provider_candidates_v4(
         mappings=allocated,
         directional_signals=tuple(directional),
         constraints=tuple(constraints),
+        unresolved_evidence_groups=unresolved,
         conflict_warnings=(*warnings, *report.warning_tokens()),
         provider_name=_text(provider_name, "provider_name"),
         provider_model=_text(provider_model, "provider_model"),
-        schema_version=4,
+        schema_version=mapping_schema_version,
         validation_report=report if report.rejections else None,
     )
     result.validate(profile=profile, rubric=rubric, catalog=catalog)
@@ -3195,9 +3442,9 @@ def _isolate_provider_candidates(
     evidence_spans: tuple[CanonicalEvidenceSpan, ...] | None = None,
     mapping_schema_version: int = 2,
 ) -> ProfileDimensionMappingCandidateSet:
-    if mapping_schema_version not in {2, 3, 4}:
-        raise Phase2ValidationError("Provider isolation supports Mapping schema 2, 3, or 4")
-    if mapping_schema_version == 4:
+    if mapping_schema_version not in {2, 3, 4, 5}:
+        raise Phase2ValidationError("Provider isolation supports Mapping schema 2, 3, 4, or 5")
+    if mapping_schema_version in {4, 5}:
         if evidence_spans is None:
             raise Phase2ValidationError("Mapping schema 4 requires canonical evidence spans")
         return _isolate_provider_candidates_v4(
@@ -3210,6 +3457,7 @@ def _isolate_provider_candidates(
             attempt_number=attempt_number,
             response_hash_reference=response_hash_reference,
             evidence_spans=evidence_spans,
+            mapping_schema_version=mapping_schema_version,
         )
     data = _mapping(payload, "mapping_candidates")
     _reject_unknown(
@@ -3553,6 +3801,25 @@ def _allocated_binding_from_dict(
     )
 
 
+def _unresolved_group_from_dict(value: Any, index: int) -> UnresolvedEvidenceGroup:
+    path = f"mapping_candidates.unresolved_evidence_groups[{index}]"
+    data = _mapping(value, path)
+    _reject_unknown(data, {
+        "evidence_group_id", "role_id", "evidence_fingerprint", "members",
+        "unresolved_reason_code", "allowed_primary_dimension_ids",
+        "allowed_secondary_dimension_ids",
+    }, path)
+    return UnresolvedEvidenceGroup(
+        evidence_group_id=_stable_id(data.get("evidence_group_id"), f"{path}.evidence_group_id"),
+        role_id=_stable_id(data.get("role_id"), f"{path}.role_id"),
+        evidence_fingerprint=_text(data.get("evidence_fingerprint"), f"{path}.evidence_fingerprint"),
+        members=tuple(_binding_from_dict(item, path=f"{path}.members[{member_index}]") for member_index, item in enumerate(_list(data.get("members"), f"{path}.members"))),
+        unresolved_reason_code=_enum(data.get("unresolved_reason_code"), MappingRejectionReason, f"{path}.unresolved_reason_code"),
+        allowed_primary_dimension_ids=_string_tuple(data.get("allowed_primary_dimension_ids"), f"{path}.allowed_primary_dimension_ids", ids=True),
+        allowed_secondary_dimension_ids=_string_tuple(data.get("allowed_secondary_dimension_ids"), f"{path}.allowed_secondary_dimension_ids", ids=True),
+    )
+
+
 def _directional_from_provider(value: Any, *, index: int, profile: CareerProfile) -> DirectionalSignalCandidate:
     path=f"mapping_candidates.directional_signals[{index}]"; data=_mapping(value,path)
     _reject_unknown(data,{"role_id","signal_type","status","profile_fact_references","reasoning","provider_confidence","review_required","suggested_follow_up"},path)
@@ -3627,9 +3894,9 @@ def provider_mapping_schema(
     mapping_schema_version: int = 2,
 ) -> dict[str, Any]:
     """Return the Provider schema with role IDs constrained to this Rubric."""
-    if mapping_schema_version not in {2, 3, 4}:
-        raise Phase2ValidationError("Provider schema supports Mapping schema 2, 3, or 4")
-    if mapping_schema_version in {3, 4} and rubric.schema_version != 2:
+    if mapping_schema_version not in {2, 3, 4, 5}:
+        raise Phase2ValidationError("Provider schema supports Mapping schema 2, 3, 4, or 5")
+    if mapping_schema_version in {3, 4, 5} and rubric.schema_version != 2:
         raise Phase2ValidationError(
             f"Mapping schema {mapping_schema_version} requires Capability Rubric schema 2"
         )
@@ -3638,7 +3905,7 @@ def provider_mapping_schema(
         raise Phase2ValidationError("Capability Rubric must support at least one role")
     schema = deepcopy(
         PROVIDER_BINDING_SCHEMA
-        if mapping_schema_version in {3, 4}
+        if mapping_schema_version in {3, 4, 5}
         else PROVIDER_MAPPING_SCHEMA
     )
     for collection in ("mappings", "directional_signals", "constraints"):
@@ -3698,6 +3965,7 @@ Use double-quoted JSON property names and strings. Do not emit trailing commas, 
 
 MAPPING_V3_INSTRUCTIONS = """Propose atomic Profile evidence bindings to the supplied Capability Rubric criteria.
 For every Current Fit binding, output only role_id, dimension_id, criterion_id, span_id, proposed_binding_type, and provider_confidence. Select role, Dimension, criterion, and span IDs exactly from the supplied inventories.
+For the same role_id and span_id, prefer only the single Dimension that the evidence most directly supports. You may submit multiple different criteria within that same Dimension. Do not expand one span indiscriminately across every related Dimension; if a genuine tie remains, Python preserves it as an unresolved group with zero scoring contribution.
 The Provider proposes only whether the evidence appears direct, bounded_semantic, or adjacent_transfer. Python determines evidence_class, trust_level, final inference, match status, evidence strength, review requirement, stable IDs, fingerprints, and derivation reasons from the validated Profile and Rubric policy.
 Never output binding_id, path, value_snapshot, excerpt, offset, fingerprint, evidence_class, trust_level, match_status, evidence_strength, inference_type, review_required, relationship, score, rank, recommendation, Decision, or review provenance in a Current Fit binding.
 Career interests, target roles, desired growth, preferred work content, and statements about wanting to learn may support Directional Fit only. They must never be submitted as Current Fit evidence bindings.
@@ -3823,7 +4091,13 @@ def _accepted_candidate_keys(
     value: ProfileDimensionMappingCandidateSet,
 ) -> frozenset[tuple[Any, ...]]:
     keys: set[tuple[Any, ...]] = set()
-    for item in value.mappings:
+    current_fit_items = [*value.mappings]
+    current_fit_items.extend(
+        member
+        for group in value.unresolved_evidence_groups
+        for member in group.members
+    )
+    for item in current_fit_items:
         if isinstance(item, ProfileCriterionEvidenceBinding):
             keys.add((
                 "criterion_binding",
@@ -3866,7 +4140,10 @@ def _mapping_attempt_quality(
     value: ProfileDimensionMappingCandidateSet,
 ) -> _MappingAttemptQuality:
     accepted_count = (
-        len(value.mappings) + len(value.directional_signals) + len(value.constraints)
+        len(value.mappings)
+        + sum(len(group.members) for group in value.unresolved_evidence_groups)
+        + len(value.directional_signals)
+        + len(value.constraints)
     )
     report = value.validation_report
     rejected_count = 0 if report is None else report.rejected_count
@@ -3875,6 +4152,11 @@ def _mapping_attempt_quality(
     )
     role_ids = {
         *(item.role_id for item in value.mappings),
+        *(
+            member.role_id
+            for group in value.unresolved_evidence_groups
+            for member in group.members
+        ),
         *(item.role_id for item in value.directional_signals),
         *(item.role_id for item in value.constraints),
     }
@@ -3884,7 +4166,17 @@ def _mapping_attempt_quality(
         accepted_candidate_keys=_accepted_candidate_keys(value),
         canonical_role_ids=frozenset(role_ids),
         current_fit_dimensions=frozenset(
-            (item.role_id, item.dimension_id) for item in value.mappings
+            (
+                (item.role_id, item.dimension_id)
+                for item in (
+                    *value.mappings,
+                    *(
+                        member
+                        for group in value.unresolved_evidence_groups
+                        for member in group.members
+                    ),
+                )
+            )
         ),
     )
 
@@ -3913,7 +4205,7 @@ def _accepted_retry_candidates(
             raise Phase2ValidationError("mapping candidate collections must be lists")
         ordered_values = (
             sorted(values, key=_canonical_provider_candidate_key)
-            if mapping_schema_version == 4
+            if mapping_schema_version in {4, 5}
             else values
         )
         accepted[collection] = [
@@ -3922,6 +4214,49 @@ def _accepted_retry_candidates(
             if index not in rejected[kind]
         ]
     return accepted
+
+
+def _retry_evidence_group_summaries(
+    payload: Mapping[str, Any],
+    report: MappingValidationReport,
+    *,
+    mapping_schema_version: int,
+) -> tuple[dict[str, str | None], ...]:
+    """Build privacy-safe allocation conflict context for a bounded retry."""
+    if mapping_schema_version not in {4, 5}:
+        return ()
+    values = payload.get("mappings")
+    if not isinstance(values, list):
+        raise Phase2ValidationError("mapping candidate collections must be lists")
+    ordered = sorted(values, key=_canonical_provider_candidate_key)
+    summaries: list[dict[str, str | None]] = []
+    group_reasons = {
+        MappingRejectionReason.OVERLAPPING_ATOMIC_EVIDENCE,
+        MappingRejectionReason.EVIDENCE_GROUP_DIMENSION_LIMIT,
+    }
+    for rejection in report.rejections:
+        if (
+            rejection.candidate_kind != MappingCandidateKind.CURRENT_FIT
+            or rejection.reason_code not in group_reasons
+            or rejection.candidate_index >= len(ordered)
+        ):
+            continue
+        item = ordered[rejection.candidate_index]
+        if not isinstance(item, Mapping):
+            continue
+        summaries.append({
+            "role_id": item.get("role_id") if isinstance(item.get("role_id"), str) else None,
+            "span_id": item.get("span_id") if isinstance(item.get("span_id"), str) else None,
+            "dimension_id": item.get("dimension_id") if isinstance(item.get("dimension_id"), str) else None,
+            "criterion_id": item.get("criterion_id") if isinstance(item.get("criterion_id"), str) else None,
+            "reason_code": rejection.reason_code.value,
+        })
+    return tuple(sorted(
+        summaries,
+        key=lambda item: tuple(item.get(key) or "" for key in (
+            "role_id", "span_id", "dimension_id", "criterion_id", "reason_code"
+        )),
+    ))
 
 
 def _select_retry_result(
@@ -3976,8 +4311,8 @@ class OpenAIProfileDimensionMapper:
             raise ValueError("max_attempts must be 1 or 2")
         self.max_attempts = max_attempts
         self.capabilities = capabilities or provider_capabilities(self.settings)
-        if mapping_schema_version not in {2, 3, 4}:
-            raise ValueError("mapping_schema_version must be 2, 3, or 4")
+        if mapping_schema_version not in {2, 3, 4, 5}:
+            raise ValueError("mapping_schema_version must be 2, 3, 4, or 5")
         self.mapping_schema_version = mapping_schema_version
         self.attempt_diagnostics: list[dict[str, Any]] = []
         self._active_response_format_mode = self.capabilities.response_format_mode
@@ -3997,7 +4332,7 @@ class OpenAIProfileDimensionMapper:
         response_schema = provider_mapping_schema(
             rubric, profile, mapping_schema_version=self.mapping_schema_version
         )
-        if self.mapping_schema_version in {3, 4} and rubric.schema_version != 2:
+        if self.mapping_schema_version in {3, 4, 5} and rubric.schema_version != 2:
             raise Phase2ValidationError(
                 f"Mapping schema {self.mapping_schema_version} requires Capability Rubric schema 2"
             )
@@ -4011,7 +4346,7 @@ class OpenAIProfileDimensionMapper:
                     "description": dimension.description,
                     "exclusion_criteria": list(dimension.exclusion_criteria),
                 }
-                if self.mapping_schema_version in {3, 4}:
+                if self.mapping_schema_version in {3, 4, 5}:
                     item["criteria"] = [criterion.to_dict() for criterion in dimension.criteria]
                 else:
                     item["inclusion_criteria"] = list(dimension.inclusion_criteria)
@@ -4035,6 +4370,7 @@ class OpenAIProfileDimensionMapper:
         repair_error: str | None = None
         retry_baseline: ProfileDimensionMappingCandidateSet | None = None
         retry_accepted_candidates: dict[str, list[Any]] | None = None
+        retry_group_summaries: tuple[dict[str, str | None], ...] | None = None
         for attempt in range(1, self.max_attempts + 1):
             response: _ProviderResponse | None = None
             validation_report: MappingValidationReport | None = None
@@ -4045,6 +4381,7 @@ class OpenAIProfileDimensionMapper:
                     allowed_role_ids=allowed_role_ids,
                     response_schema=response_schema,
                     accepted_candidates=retry_accepted_candidates,
+                    evidence_group_summaries=retry_group_summaries,
                 )
                 parsed = parse_mapping_provider_output(response.content)
                 response_hash = "sha256:" + hashlib.sha256(
@@ -4070,6 +4407,11 @@ class OpenAIProfileDimensionMapper:
                         validation_report,
                         mapping_schema_version=self.mapping_schema_version,
                     )
+                    retry_group_summaries = _retry_evidence_group_summaries(
+                        parsed,
+                        validation_report,
+                        mapping_schema_version=self.mapping_schema_version,
+                    )
                     repair_error = (
                         "Recoverable candidate validation failed: "
                         + ", ".join(validation_report.reason_codes)
@@ -4079,6 +4421,7 @@ class OpenAIProfileDimensionMapper:
                         response=response,
                         error=repair_error,
                         validation_report=validation_report,
+                        mapping_result=result,
                     )
                     continue
                 if retry_baseline is not None:
@@ -4092,6 +4435,7 @@ class OpenAIProfileDimensionMapper:
                         validation_report=validation_report,
                         retry_selection_reason=selection_reason,
                         selected_attempt=selected_attempt,
+                        mapping_result=result,
                     )
                     self._annotate_retry_selection(
                         reason=selection_reason, selected_attempt=selected_attempt
@@ -4102,6 +4446,7 @@ class OpenAIProfileDimensionMapper:
                     response=response,
                     error=None,
                     validation_report=validation_report,
+                    mapping_result=result,
                 )
                 return result
             except (json.JSONDecodeError, MappingProviderOutputError, TypeError, Phase2ValidationError) as error:
@@ -4159,12 +4504,14 @@ class OpenAIProfileDimensionMapper:
         allowed_role_ids: tuple[str, ...],
         response_schema: dict[str, Any],
         accepted_candidates: dict[str, list[Any]] | None,
+        evidence_group_summaries: tuple[dict[str, str | None], ...] | None,
     ) -> _ProviderResponse:
         instructions = self._instructions(
             repair_error,
             allowed_role_ids=allowed_role_ids,
             response_schema=response_schema,
             accepted_candidates=accepted_candidates,
+            evidence_group_summaries=evidence_group_summaries,
         )
         self._active_response_format_mode = self.capabilities.response_format_mode
         self._active_fallback_reason = None
@@ -4233,12 +4580,13 @@ class OpenAIProfileDimensionMapper:
         allowed_role_ids: tuple[str, ...],
         response_schema: dict[str, Any],
         accepted_candidates: dict[str, list[Any]] | None,
+        evidence_group_summaries: tuple[dict[str, str | None], ...] | None,
     ) -> str:
         schema=json.dumps(response_schema,ensure_ascii=False,separators=(",",":"))
         allowed_roles=json.dumps(list(allowed_role_ids),ensure_ascii=False,separators=(",",":"))
         instructions = (
             MAPPING_V3_INSTRUCTIONS
-            if self.mapping_schema_version in {3, 4}
+            if self.mapping_schema_version in {3, 4, 5}
             else MAPPING_INSTRUCTIONS
         )
         base=(
@@ -4249,8 +4597,9 @@ class OpenAIProfileDimensionMapper:
             return base
         accepted_guidance = (
             "\nThe following candidates from the first response already passed validation. "
-            "The complete retry response must include every one of them unchanged. Correct only "
-            "the rejected candidates; do not delete, replace, or weaken accepted candidates: "
+            "The retry JSON envelope must include every one of them unchanged. Submit only "
+            "corrected replacements for rejected candidates; do not rediscover, add, delete, "
+            "replace, or weaken accepted candidates: "
             + json.dumps(
                 accepted_candidates,
                 ensure_ascii=False,
@@ -4258,6 +4607,18 @@ class OpenAIProfileDimensionMapper:
                 separators=(",", ":"),
             )
             if accepted_candidates is not None
+            else ""
+        )
+        group_guidance = (
+            "\nPrivacy-safe evidence-group conflicts from the first response: "
+            + json.dumps(
+                evidence_group_summaries,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + ". Correct only these listed bindings; no Profile text is included."
+            if evidence_group_summaries
             else ""
         )
         interest_guidance = (
@@ -4270,7 +4631,7 @@ class OpenAIProfileDimensionMapper:
         )
         unknown_role_guidance = (
             "\nThe previous response used an unsupported role_id. User-entered job names in "
-            "currently_considered_roles are not canonical IDs. Resubmit the complete response "
+            "currently_considered_roles are not canonical IDs. Correct the rejected candidates "
             f"using only these canonical role IDs: {allowed_roles}."
             if MappingRejectionReason.UNKNOWN_ROLE.value in repair_error
             else ""
@@ -4390,7 +4751,7 @@ class OpenAIProfileDimensionMapper:
         transport_guidance = (
             "For every Current Fit binding, submit only role_id, dimension_id, criterion_id, "
             "span_id, proposed_binding_type, and provider_confidence. "
-            if self.mapping_schema_version in {3, 4}
+            if self.mapping_schema_version in {3, 4, 5}
             else "For every Profile fact reference, select only a span_id from allowed_evidence_spans. "
         )
         return (
@@ -4398,10 +4759,12 @@ class OpenAIProfileDimensionMapper:
             + "\nThe previous attempt failed strict JSON parsing or typed validation: "
             + repair_error
             + accepted_guidance
+            + group_guidance
             + interest_guidance
             + unknown_role_guidance
             + atomic_repair_guidance
-            + "\nRegenerate the complete mapping from the original task and input. "
+            + "\nReturn one complete JSON envelope containing the preserved accepted candidates "
+            "and only corrected replacements for rejected candidates. Do not expand the candidate set. "
             + transport_guidance
             + "Do not output a path, value_snapshot, excerpt, offset, fingerprint, or custom span. "
             "Do not merely patch a fragment. Do not output score, rank, Decision, Gap, stable ID, "
@@ -4415,6 +4778,7 @@ class OpenAIProfileDimensionMapper:
         response: _ProviderResponse | None,
         error: str | None,
         validation_report: MappingValidationReport | None,
+        mapping_result: ProfileDimensionMappingCandidateSet | None = None,
         retry_selection_reason: str | None = None,
         selected_attempt: int | None = None,
     ) -> None:
@@ -4434,6 +4798,18 @@ class OpenAIProfileDimensionMapper:
         if validation_report is not None and validation_report.rejections:
             metadata["candidate_rejection_count"] = validation_report.rejected_count
             metadata["candidate_rejection_reason_codes"] = list(validation_report.reason_codes)
+        unresolved_groups = () if mapping_result is None else mapping_result.unresolved_evidence_groups
+        metadata["rejected_evidence_group_count"] = len({
+            rejection.evidence_group_id
+            for rejection in (() if validation_report is None else validation_report.rejections)
+            if rejection.evidence_group_id is not None
+            and rejection.reason_code in {
+                MappingRejectionReason.OVERLAPPING_ATOMIC_EVIDENCE,
+                MappingRejectionReason.EVIDENCE_GROUP_DIMENSION_LIMIT,
+            }
+        })
+        metadata["unresolved_candidate_count"] = sum(len(group.members) for group in unresolved_groups)
+        metadata["unresolved_evidence_group_count"] = len(unresolved_groups)
         if retry_selection_reason is not None:
             metadata["retry_selection_reason"] = retry_selection_reason
             metadata["selected_attempt"] = selected_attempt
@@ -4450,6 +4826,9 @@ class OpenAIProfileDimensionMapper:
             fallback_reason=metadata["fallback_reason"],
             candidate_rejection_count=metadata.get("candidate_rejection_count", 0),
             candidate_rejection_reason_codes=metadata.get("candidate_rejection_reason_codes", []),
+            rejected_evidence_group_count=metadata["rejected_evidence_group_count"],
+            unresolved_candidate_count=metadata["unresolved_candidate_count"],
+            unresolved_evidence_group_count=metadata["unresolved_evidence_group_count"],
             retry_selection_reason=retry_selection_reason,
             selected_attempt=selected_attempt,
         )

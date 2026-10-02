@@ -8,7 +8,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 
 ## 当前状态
 
-**版本 0.9.0 — 可复用人工审核的证据感知推荐。**
+**版本 0.10.0 — 模糊证据保持可见、安全且可审核。**
 
 - ✅ Phase 1：经过确认的 Career Profile 与 Adaptive Career Discovery
 - ✅ Phase 2A：版本化 Role Catalog 与共享数据契约
@@ -22,7 +22,7 @@ Aarvia 是一个 **Career Navigation + Job Application Agent**。它先了解你
 - ✅ Candidate 独立审核、受控 Cluster 审核与明确的 Logic Group resolution
 - ✅ Capability Rubric schema 2：20 个 Dimension、稳定 criterion ID 与强类型 Evidence Support Policy
 - ✅ 确定性 Current Fit、Directional Fit、约束、置信度、并列与追问
-- ✅ Mapping schema 4 证据分配、Recommendation schema 5 评分与强类型证据审核 provenance
+- ✅ Mapping schema 5 unresolved evidence group、Recommendation schema 6 与独立的 allocation/binding review provenance
 - ✅ 百炼/custom JSON mode、有限 repair retry 与显式启用的纯元数据诊断
 - ⏳ User Decision、Gap Analysis、真实岗位发现和简历链路尚未实现
 
@@ -68,19 +68,21 @@ aarvia discover --follow-up \
 # 不需要 LLM
 aarvia discover --manual
 
-# 首次推荐：同时保存 Mapping 3 与 Recommendation 4
+# 首次推荐：同时保存 Mapping 5 与 Recommendation 6
 aarvia recommend --profile data/profiles/example.json \
   --mapping-output mapping.json \
   --output recommendation.json
 
-# 审核 provisional 经历/项目证据，不调用 Provider
+# 先解决模糊分组，再审核 provisional 证据；不调用 Provider
 aarvia review-evidence --profile data/profiles/example.json \
   --mapping mapping.json \
+  --allocation-output allocation-review.json \
   --output evidence-review.json
 
 # 使用同一 Mapping 和已保存 Review 重算；不会调用 Provider
 aarvia recommend --profile data/profiles/example.json \
   --mapping-artifact mapping.json \
+  --allocation-review-artifact allocation-review.json \
   --review-artifact evidence-review.json \
   --output reviewed-recommendation.json
 
@@ -90,7 +92,7 @@ aarvia recommend --profile data/profiles/example.json \
   --output legacy-recommendation.json
 ```
 
-不提供 Mapping 输入时，`aarvia recommend` 会使用已配置的 OpenAI-compatible Provider 仅提出 criterion binding，然后原子保存 Mapping schema 4 与 Recommendation schema 5。Python 验证引用、把一个 evidence span 最多分配给一个 primary 和一个受限 secondary Dimension，并计算所有状态、分数、等级、置信度、并列和排名。`--mapping-artifact` 始终复用已有 Mapping，不调用 Provider。Review 只对创建它时的精确 Profile、Rubric、Mapping 和 binding identity 有效。
+不提供 Mapping 输入时，`aarvia recommend` 会使用已配置的 OpenAI-compatible Provider 仅提出 criterion binding，然后原子保存 Mapping schema 5 与 Recommendation schema 6。Python 验证引用，并把一个 evidence span 最多分配给一个 primary 和一个受限 secondary Dimension。真正的 primary 并列会保存为零评分贡献的 unresolved group，等待用户审核。`--mapping-artifact` 始终复用已有 Mapping，不调用 Provider。Allocation Review 与 Binding Review 是两类独立、强类型的 provenance，并绑定精确的 Profile、Rubric、Mapping、group 与 binding identity。
 
 Provider 诊断必须显式开启，而且只保存元数据：
 
@@ -131,7 +133,7 @@ Atomic evidence 校验会在源头产生结构化代码，区分 excerpt 错误�
 
 同一结构化边界也覆盖 Current Fit 字段类型、evidence strength、Provider confidence、review flag、contribution relationship、确定性 provenance、重复 mapping 与集合级 contribution cap。只有真正未知的旧异常才使用通用拒绝类别。
 
-Current Fit 使用字段内的原子证据。Mapping schema 4 仍只允许 Provider 提出 canonical Role、Dimension、criterion、span、binding type 和 confidence。Python 物化 span、应用 Rubric policy，并以稳定规则分配跨 Dimension 复用：一个 primary 最多贡献 `1.0`，一个 secondary 最多贡献 `0.3`；无法确定 primary 时整组拒绝并要求修正。Recommendation schema 5 只消费这些分配结果，并在审核拒绝 primary 后对已持久化的剩余成员重新分配。审核仍不自动等于 `demonstrated`，结构证据也不会因审核变成语义证据。旧 Mapping 1–3 与 Recommendation 1–4 继续显式可读。
+Current Fit 使用字段内的原子证据。Mapping schema 5 仍只允许 Provider 提出 canonical Role、Dimension、criterion、span、binding type 和 confidence。Python 物化 span、应用 Rubric policy，并以稳定规则分配跨 Dimension 复用：一个 primary 最多贡献 `1.0`，一个 secondary 最多贡献 `0.3`；真正无法确定 primary 时保存强类型 unresolved group，全部成员贡献为 `0`。Allocation Review 负责 resolve/reject/defer 分组，Binding Review 另行确认、拒绝或延后选中的语义 binding。Recommendation schema 6 重算两层审核；primary 被拒绝后，只能晋升用户已批准的 secondary。审核仍不自动等于 `demonstrated`，结构证据也不会因审核变成语义证据。旧 Mapping 1–4 与 Recommendation 1–5 继续显式可读。
 
 ## 安全第一
 
@@ -206,7 +208,7 @@ Career Profile → Career Discovery → Role Recommendation → Live Job Example
 - 真实 schema 6 Candidate Completion artifact 仍仅在本地且未被修改；它尚未迁移到 schema 7，没有改变任何审核状态，也没有计算正式 prevalence。
 - Production Requirement Logic、prevalence 发布、User Decision 与 Gap Analysis 仍明确未实现。
 - Capability Rubric schema 2 为每条 inclusion criterion 分配稳定 ID，并按 Dimension 声明 evidence class、保守 status cap、confirmed evidence 阈值与行为证据规则。Schema 1 继续显式可读并保持原格式 round-trip。
-- `0.9.0` 默认使用 Mapping schema 4 与 Recommendation schema 5，保存可复用的确定性分配 provenance，并提供独立的 `review-evidence` 命令。User Decision、Gap Analysis 与 Phase 2D 尚未实现。
+- `0.10.0` 默认使用 Mapping schema 5 与 Recommendation schema 6。Unresolved group 在独立 allocation review 之前保持零贡献；`review-evidence` 随后审核选中的 provisional binding，全程无需再次调用 Provider。User Decision、Gap Analysis 与 Phase 2D 尚未实现。
 - Production Catalog 仍是 `1.0.0`：8 个 role、0 条 requirement、0 个 source。Rubric policy contract 不代表已经发布任何市场 requirement。
 
 ## 设计原则

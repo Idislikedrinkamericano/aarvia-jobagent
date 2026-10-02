@@ -8,7 +8,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 
 ## Status
 
-**Version 0.9.0 — Evidence-aware recommendations with reusable human review.**
+**Version 0.10.0 — Ambiguous evidence stays visible, safe, and reviewable.**
 
 - ✅ Phase 1: confirmed Career Profile and adaptive Career Discovery
 - ✅ Phase 2A: versioned Role Catalog and shared data contracts
@@ -22,7 +22,7 @@ It is not a resume slot machine. A new JD should not generate a newly invented p
 - ✅ Independent Candidate review, controlled Cluster review, and explicit Logic Group resolution
 - ✅ Capability Rubric schema 2: 20 dimensions with stable criteria and typed Evidence Support Policies
 - ✅ Deterministic Current Fit, Directional Fit, constraints, confidence, ties, and follow-ups
-- ✅ Mapping schema 4 evidence allocation, Recommendation schema 5 scoring, and typed evidence review provenance
+- ✅ Mapping schema 5 unresolved evidence groups, Recommendation schema 6, and separate allocation/binding review provenance
 - ✅ Bailian/custom JSON mode, bounded repair retry, and opt-in metadata-only diagnostics
 - ⏳ User Decision, Gap Analysis, live-job discovery, and resume work are not implemented
 
@@ -68,19 +68,21 @@ aarvia discover --follow-up \
 # No LLM required
 aarvia discover --manual
 
-# First recommendation: save Mapping 3 and Recommendation 4 together
+# First recommendation: save Mapping 5 and Recommendation 6 together
 aarvia recommend --profile data/profiles/example.json \
   --mapping-output mapping.json \
   --output recommendation.json
 
-# Review provisional experience/project evidence without calling the Provider
+# Resolve ambiguous groups, then review provisional evidence; Provider is not called
 aarvia review-evidence --profile data/profiles/example.json \
   --mapping mapping.json \
+  --allocation-output allocation-review.json \
   --output evidence-review.json
 
 # Recompute from the exact same Mapping and the saved Review; Provider is not called
 aarvia recommend --profile data/profiles/example.json \
   --mapping-artifact mapping.json \
+  --allocation-review-artifact allocation-review.json \
   --review-artifact evidence-review.json \
   --output reviewed-recommendation.json
 
@@ -90,7 +92,7 @@ aarvia recommend --profile data/profiles/example.json \
   --output legacy-recommendation.json
 ```
 
-Without a Mapping input, `aarvia recommend` uses the configured OpenAI-compatible Provider only to propose criterion bindings, then atomically saves Mapping schema 4 and Recommendation schema 5. Python validates references, allocates one evidence span to at most one primary and one capped secondary Dimension, and calculates every status, score, band, confidence result, tie, and rank. `--mapping-artifact` always reuses an existing Mapping without calling the Provider. A Review is valid only for the exact Profile, Rubric, Mapping, and binding identities it was created from.
+Without a Mapping input, `aarvia recommend` uses the configured OpenAI-compatible Provider only to propose criterion bindings, then atomically saves Mapping schema 5 and Recommendation schema 6. Python validates references and allocates one evidence span to at most one primary and one capped secondary Dimension. A genuine primary tie is preserved as an unresolved group with zero scoring contribution until the user reviews it. `--mapping-artifact` always reuses an existing Mapping without calling the Provider. Allocation Review and Binding Review are separate, typed provenance objects bound to the exact Profile, Rubric, Mapping, group, and binding identities.
 
 Provider diagnostics are opt-in and metadata-only:
 
@@ -131,7 +133,7 @@ Atomic-evidence validation emits structured source-level codes for invalid excer
 
 The same structured boundary covers Current Fit field types, evidence strength, Provider confidence, review flags, contribution relationships, deterministic provenance, duplicate mappings, and aggregate contribution caps. Only genuinely unknown legacy failures use the generic rejection category.
 
-Current Fit evidence is span-level, not just field-level. Mapping schema 4 lets the Provider propose only a canonical Role, Dimension, criterion, span, binding type, and confidence. Python materializes the span, applies the Rubric policy, and deterministically allocates cross-Dimension reuse without using Provider order: one primary may contribute `1.0`, one secondary is capped at `0.3`, and ambiguous primary groups are rejected for repair. Recommendation schema 5 consumes only these allocated bindings and recomputes allocation after a reviewed primary is rejected. A separate typed review artifact remains bound to the exact Profile, Rubric, Mapping, and binding identities. Confirmation still does not guarantee `demonstrated`, and structural evidence never becomes semantic evidence through review. Legacy Mapping 1–3 and Recommendation 1–4 remain explicit and readable.
+Current Fit evidence is span-level, not just field-level. Mapping schema 5 lets the Provider propose only a canonical Role, Dimension, criterion, span, binding type, and confidence. Python materializes the span, applies the Rubric policy, and allocates cross-Dimension reuse without Provider order: one primary may contribute `1.0`, one secondary is capped at `0.3`, and a true primary tie becomes a typed unresolved group whose members contribute `0`. Allocation Review can resolve, reject, or defer that group; Binding Review separately confirms, rejects, or defers the selected semantic bindings. Recommendation schema 6 recomputes both layers, including safe promotion only of a user-approved secondary after a primary rejection. Confirmation still does not guarantee `demonstrated`, and structural evidence never becomes semantic evidence through review. Legacy Mapping 1–4 and Recommendation 1–5 remain explicit and readable.
 
 ## Safety First
 
@@ -206,7 +208,7 @@ The packaged Capability Rubric is separate from the Production Role Catalog. It 
 - The real schema 6 Candidate Completion artifact remains local and unmodified. It has not been migrated to schema 7, no review state changed, and no formal prevalence has been calculated.
 - Production requirement logic, prevalence publication, User Decision, and Gap Analysis remain intentionally unimplemented.
 - Capability Rubric schema 2 assigns stable IDs to every inclusion criterion and declares per-Dimension evidence classes, conservative status caps, confirmed-evidence thresholds, and behavior-evidence rules. Schema 1 stays explicitly readable and round-trippable.
-- Version `0.9.0` uses Mapping schema 4 and Recommendation schema 5 by default, saves deterministic allocation provenance for reuse, and provides the separate `review-evidence` command. User Decision, Gap Analysis, and Phase 2D are not implemented.
+- Version `0.10.0` uses Mapping schema 5 and Recommendation schema 6 by default. Unresolved groups remain zero-contribution until a separate allocation review is saved; `review-evidence` then handles selected provisional bindings without another Provider call. User Decision, Gap Analysis, and Phase 2D are not implemented.
 - The production Catalog remains `1.0.0`: eight roles, zero requirements, and zero sources. No unpublished market requirement is implied by the Rubric policy contract.
 
 ## Design Principles

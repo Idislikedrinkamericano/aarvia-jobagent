@@ -24,6 +24,13 @@ from .evidence_binding_review import (
     load_evidence_binding_reviews,
     save_evidence_binding_reviews,
 )
+from .evidence_group_allocation_review import (
+    AllocationReviewDecision,
+    AllocationReviewerType,
+    create_evidence_group_allocation_review_artifact,
+    load_evidence_group_allocation_reviews,
+    save_evidence_group_allocation_reviews,
+)
 from .phase2_storage import save_phase2_json_transaction
 from .profile_dimension_mapping import (
     AllocatedProfileCriterionEvidenceBinding,
@@ -114,17 +121,21 @@ def build_parser() -> argparse.ArgumentParser:
     mapping_input.add_argument(
         "--mapping-artifact",
         type=Path,
-        help="existing Mapping schema 3/4 JSON; reuses it without calling the Provider",
+        help="existing Mapping schema 3/4/5 JSON; reuses it without calling the Provider",
     )
     recommend.add_argument(
         "--mapping-output",
         type=Path,
-        help="new Mapping schema 4 output path (default: PROFILE with .mapping.json suffix)",
+        help="new Mapping schema 5 output path (default: PROFILE with .mapping.json suffix)",
     )
     recommend.add_argument(
         "--review-artifact",
         type=Path,
         help="Evidence Binding Review JSON for the supplied --mapping-artifact",
+    )
+    recommend.add_argument(
+        "--allocation-review-artifact", type=Path,
+        help="Evidence Group Allocation Review JSON for a Mapping schema 5 artifact",
     )
     recommend.add_argument(
         "--output",
@@ -141,11 +152,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     review = subparsers.add_parser(
         "review-evidence",
-        help="review provisional semantic bindings from a Mapping schema 3/4 artifact",
+        help="resolve Mapping 5 evidence groups, then review provisional semantic bindings",
     )
     review.add_argument("--profile", type=Path, required=True, help="existing Career Profile JSON path")
-    review.add_argument("--mapping", type=Path, required=True, help="Mapping schema 3/4 JSON path")
+    review.add_argument("--mapping", type=Path, required=True, help="Mapping schema 3/4/5 JSON path")
     review.add_argument("--output", type=Path, required=True, help="Evidence Binding Review JSON path")
+    review.add_argument("--allocation-output", type=Path, help="Evidence Group Allocation Review JSON path")
     review.add_argument(
         "--overwrite", action="store_true", help="replace an existing Review output atomically"
     )
@@ -200,11 +212,16 @@ def _print_recommendation(
     output_fn("No career direction was selected. User Decision remains separate.")
 
 
-def _provisional_semantic_bindings(candidates) -> tuple[ProfileCriterionEvidenceBinding, ...]:
+def _provisional_semantic_bindings(candidates, *, extra_binding_ids: frozenset[str] = frozenset()) -> tuple[ProfileCriterionEvidenceBinding, ...]:
+    values = list(candidates.mappings)
+    values.extend(
+        member for group in candidates.unresolved_evidence_groups for member in group.members
+        if member.binding_id in extra_binding_ids
+    )
     return tuple(
         sorted(
             (
-                item for item in candidates.mappings
+                item for item in values
                 if isinstance(item, ProfileCriterionEvidenceBinding)
                 and item.trust_level == EvidenceTrustLevel.PROVISIONAL_SEMANTIC
             ),
@@ -228,7 +245,7 @@ def _run_recommend(
     protected_inputs = {
         path for path in (
             arguments.profile, arguments.mapping_candidates, arguments.mapping_artifact,
-            arguments.review_artifact,
+            arguments.review_artifact, arguments.allocation_review_artifact,
         ) if path is not None
     }
     if output_path in protected_inputs:
@@ -241,6 +258,8 @@ def _run_recommend(
 
     if arguments.review_artifact is not None and arguments.mapping_artifact is None:
         raise Phase2ValidationError("--review-artifact requires --mapping-artifact")
+    if arguments.allocation_review_artifact is not None and arguments.mapping_artifact is None:
+        raise Phase2ValidationError("--allocation-review-artifact requires --mapping-artifact")
     if arguments.mapping_output is not None and (
         arguments.mapping_candidates is not None or arguments.mapping_artifact is not None
     ):
@@ -249,6 +268,7 @@ def _run_recommend(
         )
 
     review_artifact = None
+    allocation_review_artifact = None
     mapping_output_path: Path | None = None
     if arguments.mapping_candidates is not None:
         candidates = load_mapping_candidates(
@@ -262,8 +282,13 @@ def _run_recommend(
         candidates = load_mapping_candidates(
             arguments.mapping_artifact, profile=profile, rubric=rubric, catalog=catalog
         )
-        if candidates.schema_version not in {3, 4}:
-            raise Phase2ValidationError("--mapping-artifact requires Mapping schema 3 or 4")
+        if candidates.schema_version not in {3, 4, 5}:
+            raise Phase2ValidationError("--mapping-artifact requires Mapping schema 3, 4, or 5")
+        if arguments.allocation_review_artifact is not None:
+            allocation_review_artifact = load_evidence_group_allocation_reviews(
+                arguments.allocation_review_artifact, profile=profile, rubric=rubric,
+                mapping=candidates, catalog=catalog,
+            )
         if arguments.review_artifact is not None:
             review_artifact = load_evidence_binding_reviews(
                 arguments.review_artifact,
@@ -285,12 +310,12 @@ def _run_recommend(
         )
         active_mapper = mapper or OpenAIProfileDimensionMapper(
             diagnostics_dir=arguments.provider_diagnostics_dir,
-            mapping_schema_version=4,
+            mapping_schema_version=5,
         )
         candidates = active_mapper.map(profile, rubric, catalog)
-        if candidates.schema_version != 4:
+        if candidates.schema_version != 5:
             raise Phase2ValidationError(
-                "the default recommend flow requires Mapping schema 4"
+                "the default recommend flow requires Mapping schema 5"
             )
 
     baseline = None
@@ -301,6 +326,7 @@ def _run_recommend(
             rubric=rubric,
             catalog=catalog,
             created_at=datetime.now(timezone.utc).isoformat(),
+            allocation_reviews=allocation_review_artifact,
         )
     created_at = datetime.now(timezone.utc).isoformat()
     artifact = build_role_recommendation(
@@ -310,6 +336,7 @@ def _run_recommend(
         catalog=catalog,
         created_at=created_at,
         evidence_reviews=review_artifact,
+        allocation_reviews=allocation_review_artifact,
     )
 
     if mapping_output_path is not None:
@@ -333,18 +360,23 @@ def _run_recommend(
             profile=profile,
             rubric=rubric,
             catalog=catalog,
-            mapping_candidates=candidates if candidates.schema_version in {3, 4} else None,
+            mapping_candidates=candidates if candidates.schema_version in {3, 4, 5} else None,
             evidence_reviews=review_artifact,
+            allocation_reviews=allocation_review_artifact,
         )
 
     _print_recommendation(
         artifact, candidates, output_path=output_path, output_fn=output_fn
     )
     provisional_count = len(_provisional_semantic_bindings(candidates))
+    unresolved_count = len(candidates.unresolved_evidence_groups)
     if mapping_output_path is not None:
         output_fn(f"Mapping saved to: {mapping_output_path}")
         output_fn(f"Provisional semantic bindings requiring review: {provisional_count}")
-        if provisional_count:
+        if unresolved_count:
+            unresolved_candidates = sum(len(group.members) for group in candidates.unresolved_evidence_groups)
+            output_fn(f"Unresolved evidence groups: {unresolved_count} ({unresolved_candidates} candidates); they currently contribute nothing to scoring.")
+        if provisional_count or unresolved_count:
             suggested_review = mapping_output_path.with_suffix(".review.json")
             output_fn(
                 "Next: aarvia review-evidence "
@@ -380,30 +412,91 @@ def _run_review_evidence(
     input_fn: InputFunction,
     output_fn: OutputFunction,
 ) -> int:
-    _ensure_output_available(
-        arguments.output, overwrite=arguments.overwrite, label="Evidence Review"
-    )
-    if arguments.output in {arguments.profile, arguments.mapping}:
-        raise Phase2ValidationError(
-            "Profile, Mapping, and Evidence Review paths must be different"
-        )
+    _ensure_output_available(arguments.output, overwrite=arguments.overwrite, label="Evidence Review")
+    allocation_output = arguments.allocation_output or arguments.output.with_name(arguments.output.stem + ".allocation.json")
+    if len({arguments.output, allocation_output, arguments.profile, arguments.mapping}) != 4:
+        raise Phase2ValidationError("Profile, Mapping, Binding Review, and Allocation Review paths must be different")
     profile = load_profile(arguments.profile)
     catalog = production_role_catalog()
     rubric = production_capability_rubric()
     candidates = load_mapping_candidates(
         arguments.mapping, profile=profile, rubric=rubric, catalog=catalog
     )
-    if candidates.schema_version not in {3, 4}:
-        raise Phase2ValidationError("review-evidence requires Mapping schema 3 or 4")
-    bindings = _provisional_semantic_bindings(candidates)
-    if not bindings:
-        output_fn("No provisional semantic bindings require review. No file was written.")
+    if candidates.schema_version not in {3, 4, 5}:
+        raise Phase2ValidationError("review-evidence requires Mapping schema 3, 4, or 5")
+    if candidates.unresolved_evidence_groups:
+        _ensure_output_available(
+            allocation_output,
+            overwrite=arguments.overwrite,
+            label="Allocation Review",
+        )
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+    allocation_decisions = {}
+    selected_binding_ids: set[str] = set()
+    for index, group in enumerate(candidates.unresolved_evidence_groups, 1):
+        output_fn(f"Unresolved evidence group {index} of {len(candidates.unresolved_evidence_groups)}")
+        output_fn(f"Role: {group.role_id.replace('_', ' ').title()}")
+        output_fn(f"Profile excerpt: {group.members[0].atomic_evidence.exact_excerpt}")
+        dimensions = list(group.allowed_primary_dimension_ids)
+        for choice, dimension_id in enumerate(dimensions, 1):
+            dimension = rubric.dimension(dimension_id)
+            members = tuple(
+                member for member in group.members
+                if member.dimension_id == dimension_id
+            )
+            criterion_text = {
+                criterion.criterion_id: criterion.text
+                for criterion in dimension.criteria
+            }
+            criteria = sorted({
+                criterion_text[member.criterion_id] for member in members
+            })
+            impacts = sorted({
+                f"{member.derived_match_status.value.replace('_', ' ')} / "
+                f"{member.derived_evidence_strength.value}"
+                for member in members
+            })
+            evidence_classes = sorted({member.evidence_class.value for member in members})
+            output_fn(f"{choice}. {dimension.name}")
+            output_fn(f"   Criteria: {'; '.join(criteria)}")
+            output_fn(f"   Evidence class: {', '.join(evidence_classes)}")
+            output_fn(f"   Provisional impact: {', '.join(impacts)}")
+        output_fn("Primary contribution: 1.0. Optional secondary: at most 0.3 and adjacent/weak.")
+        while True:
+            answer = input_fn("Primary number, [r]eject, [d]efer, or [q]uit: ").strip().lower()
+            if answer == "q":
+                output_fn("Evidence review cancelled. No files were changed."); return 0
+            if answer in {"r", "d"}:
+                decision = AllocationReviewDecision.REJECTED if answer == "r" else AllocationReviewDecision.DEFERRED
+                allocation_decisions[group.evidence_group_id] = (decision, None, None, AllocationReviewerType.PROFILE_OWNER, reviewed_at)
+                break
+            if answer.isdigit() and 1 <= int(answer) <= len(dimensions):
+                primary = dimensions[int(answer)-1]
+                secondary_choices = [item for item in group.allowed_secondary_dimension_ids if item != primary]
+                secondary_answer = input_fn("Optional secondary number from the same list, or Enter for none: ").strip()
+                secondary = None
+                if secondary_answer:
+                    if not secondary_answer.isdigit() or not 1 <= int(secondary_answer) <= len(dimensions):
+                        output_fn("Invalid secondary choice; choose the group again."); continue
+                    secondary = dimensions[int(secondary_answer)-1]
+                    if secondary == primary or secondary not in secondary_choices:
+                        output_fn("Secondary must differ from primary; choose the group again."); continue
+                allocation_decisions[group.evidence_group_id] = (AllocationReviewDecision.RESOLVED, primary, secondary, AllocationReviewerType.PROFILE_OWNER, reviewed_at)
+                selected_binding_ids.update(member.binding_id for member in group.members if member.dimension_id in {primary, secondary})
+                break
+            output_fn("Enter a listed primary number, r, d, or q.")
+    allocation_artifact = (
+        create_evidence_group_allocation_review_artifact(profile=profile, rubric=rubric, mapping=candidates, catalog=catalog, decisions=allocation_decisions)
+        if candidates.unresolved_evidence_groups else None
+    )
+    bindings = _provisional_semantic_bindings(candidates, extra_binding_ids=frozenset(selected_binding_ids))
+    if not bindings and allocation_artifact is None:
+        output_fn("No evidence requires review. No file was written.")
         return 0
 
     output_fn(f"Provisional semantic bindings to review: {len(bindings)}")
     output_fn("Choose confirmed, rejected, deferred, or q to cancel the whole review.")
     decisions = {}
-    reviewed_at = datetime.now(timezone.utc).isoformat()
     aliases = {
         "c": BindingReviewDecision.CONFIRMED,
         "confirmed": BindingReviewDecision.CONFIRMED,
@@ -456,14 +549,10 @@ def _run_review_evidence(
         catalog=catalog,
         decisions=decisions,
     )
-    save_evidence_binding_reviews(
-        artifact,
-        arguments.output,
-        profile=profile,
-        rubric=rubric,
-        mapping=candidates,
-        catalog=catalog,
-    )
+    writes = [(arguments.output, artifact.to_dict())]
+    if allocation_artifact is not None:
+        writes.append((allocation_output, allocation_artifact.to_dict()))
+    save_phase2_json_transaction(tuple(writes))
     counts = {decision: 0 for decision in BindingReviewDecision}
     for review in artifact.reviews:
         counts[review.decision] += 1
@@ -474,6 +563,8 @@ def _run_review_evidence(
         f"{counts[BindingReviewDecision.DEFERRED]} deferred."
     )
     output_fn(f"Saved to: {arguments.output}")
+    if allocation_artifact is not None:
+        output_fn(f"Allocation review saved to: {allocation_output}")
     return 0
 
 

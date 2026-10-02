@@ -213,7 +213,7 @@ def test_run9_shape_retry_repairs_inference_rules_and_preserves_accepted_candida
     assert "must include every one of them unchanged" in retry
     for dimension_id in accepted_dimension_ids:
         assert dimension_id in retry
-    marker = "the rejected candidates; do not delete, replace, or weaken accepted candidates: "
+    marker = "replace, or weaken accepted candidates: "
     accepted_retry_payload, _ = json.JSONDecoder().raw_decode(
         retry[retry.index(marker) + len(marker):]
     )
@@ -437,7 +437,8 @@ def test_unknown_free_text_role_ids_trigger_canonical_retry_then_succeed() -> No
     allowed = list(production_capability_rubric().supported_role_ids)
     repair = responses.calls[1]["instructions"]
     assert "unsupported role_id" in repair
-    assert "Resubmit the complete response" in repair
+    assert "Correct the rejected candidates" in repair
+    assert "Do not expand the candidate set" in repair
     for role_id in allowed:
         assert role_id in repair
     assert all(item.role_id in allowed for item in result.mappings)

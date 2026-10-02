@@ -525,7 +525,8 @@ def test_v3_retry_preserves_accepted_bindings_and_selects_strict_improvement() -
     }
     retry_prompt = client.calls[1]["instructions"]
     assert accepted["span_id"] in retry_prompt
-    assert "complete retry response must include every one" in retry_prompt
+    assert "retry JSON envelope must include every one" in retry_prompt
+    assert "Do not expand the candidate set" in retry_prompt
     assert mapper.attempt_diagnostics[-1]["selected_attempt"] == 2
     safe_diagnostics = json.dumps(mapper.attempt_diagnostics)
     assert "Synthetic Skill 1" not in safe_diagnostics
