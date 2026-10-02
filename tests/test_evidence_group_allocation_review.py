@@ -34,7 +34,10 @@ from aarvia.profile_dimension_mapping import (
     canonical_evidence_span_inventory,
 )
 from aarvia.role_catalog import Phase2ValidationError, production_role_catalog
-from aarvia.role_recommendation import build_role_recommendation
+from aarvia.role_recommendation import (
+    RoleRecommendationArtifact,
+    build_role_recommendation,
+)
 from recommendation_fixtures import synthetic_profile
 
 
@@ -189,6 +192,149 @@ def test_same_dimension_multiple_criteria_are_retained_inside_unresolved_group()
         ) == 2
         baseline = value.to_dict() if baseline is None else baseline
         assert value.to_dict() == baseline
+
+
+def test_reviewed_multi_criterion_reasoning_is_stably_deduplicated():
+    profile = synthetic_profile()
+    rubric = production_capability_rubric()
+    catalog = production_role_catalog()
+    span = next(
+        item for item in canonical_evidence_span_inventory(profile)
+        if item.path.endswith("short_factual_summary")
+    )
+    dimensions = [
+        item for item in rubric.dimensions
+        if item.role_id == "applied_ai_engineer"
+        and EvidenceClass.PROJECT_SUMMARY
+        in item.evidence_support_policy.allowed_evidence_classes
+        and item.evidence_support_policy.provisional_status_cap.value
+        == "partially_demonstrated"
+    ]
+    primary = next(item for item in dimensions if len(item.criterion_ids) >= 2)
+    secondary = next(item for item in dimensions if item.dimension_id != primary.dimension_id)
+    rows = [
+        {
+            "role_id": item.role_id,
+            "dimension_id": item.dimension_id,
+            "criterion_id": criterion_id,
+            "span_id": span.span_id,
+            "proposed_binding_type": "direct",
+            "provider_confidence": "high",
+        }
+        for item, criterion_id in (
+            (primary, primary.criterion_ids[0]),
+            (primary, primary.criterion_ids[1]),
+            (secondary, secondary.criterion_ids[0]),
+        )
+    ]
+
+    recommendations = []
+    for provider_rows in (rows, list(reversed(rows))):
+        mapping = ProfileDimensionMappingCandidateSet.from_provider_payload_isolated(
+            {
+                "mappings": provider_rows,
+                "directional_signals": [],
+                "constraints": [],
+                "conflict_warnings": [],
+            },
+            profile=profile,
+            rubric=rubric,
+            catalog=catalog,
+            provider_name="fixture",
+            provider_model="fixture",
+            attempt_number=1,
+            response_hash_reference="sha256:" + "4" * 64,
+            evidence_spans=canonical_evidence_span_inventory(profile),
+            mapping_schema_version=5,
+        )
+        group = mapping.unresolved_evidence_groups[0]
+        allocation_reviews = create_evidence_group_allocation_review_artifact(
+            profile=profile,
+            rubric=rubric,
+            mapping=mapping,
+            catalog=catalog,
+            decisions={
+                group.evidence_group_id: (
+                    AllocationReviewDecision.RESOLVED,
+                    primary.dimension_id,
+                    secondary.dimension_id,
+                    AllocationReviewerType.PROFILE_OWNER,
+                    "2026-01-01T00:00:00+00:00",
+                )
+            },
+        )
+        allocated = resolved_group_bindings(mapping, allocation_reviews)
+        binding_reviews = create_evidence_binding_review_artifact(
+            profile=profile,
+            rubric=rubric,
+            mapping=mapping,
+            catalog=catalog,
+            decisions={
+                item.binding_id: (
+                    BindingReviewDecision.CONFIRMED
+                    if item.dimension_id == primary.dimension_id
+                    else BindingReviewDecision.REJECTED,
+                    BindingReviewerType.PROFILE_OWNER,
+                    "2026-01-01T00:00:00+00:00",
+                )
+                for item in allocated
+            },
+        )
+        recommendation = build_role_recommendation(
+            profile=profile,
+            mapping_candidates=mapping,
+            rubric=rubric,
+            catalog=catalog,
+            created_at="2026-01-01T00:00:00+00:00",
+            evidence_reviews=binding_reviews,
+            allocation_reviews=allocation_reviews,
+        )
+        result = next(
+            item for item in recommendation.role_results
+            if item.role_id == primary.role_id
+        )
+        assessment = next(
+            item for item in result.extended_current_fit.dimension_assessments
+            if item.dimension_id == primary.dimension_id
+        )
+        assert len(assessment.supporting_bindings) == 2
+        assert {item.criterion_id for item in assessment.supporting_bindings} == {
+            primary.criterion_ids[0],
+            primary.criterion_ids[1],
+        }
+        assert len(assessment.supporting_atomic_evidence) == 2
+        assert len(assessment.reasoning) == 1
+        assert len(assessment.reasoning) == len(set(assessment.reasoning))
+
+        loaded = RoleRecommendationArtifact.from_dict(recommendation.to_dict())
+        loaded.validate(
+            profile=profile,
+            rubric=rubric,
+            catalog=catalog,
+            mapping_candidates=mapping,
+            evidence_reviews=binding_reviews,
+            allocation_reviews=allocation_reviews,
+        )
+        assert loaded == recommendation
+
+        raw = recommendation.to_dict()
+        raw_assessment = next(
+            item
+            for role in raw["role_results"]
+            if role["role_id"] == primary.role_id
+            for item in role["extended_current_fit"]["dimension_assessments"]
+            if item["dimension_id"] == primary.dimension_id
+        )
+        raw_assessment["reasoning"].append(raw_assessment["reasoning"][0])
+        with pytest.raises(Phase2ValidationError, match="contains duplicate values"):
+            RoleRecommendationArtifact.from_dict(raw)
+        recommendations.append(recommendation)
+
+    assert recommendations[0].to_dict() == recommendations[1].to_dict()
+    assert (
+        recommendations[0].recommendation_set_id
+        == recommendations[1].recommendation_set_id
+    )
 
 
 def test_allocation_review_staleness_save_load_and_effective_unresolved_summary(tmp_path):

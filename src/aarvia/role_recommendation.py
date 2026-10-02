@@ -796,10 +796,11 @@ def _deterministic_dimension_reasoning(
     if not evidence:
         return ("No validated atomic Profile evidence was provided.",)
     inference = "direct" if inference_type is None else inference_type.value.replace("_", " ")
-    return tuple(
+    rendered = (
         f'{dimension.name}: {status.value.replace("_", " ")} from {inference} evidence "{item.exact_excerpt}".'
         for item in sorted(evidence, key=lambda value: value.evidence_fingerprint)
     )
+    return tuple(dict.fromkeys(rendered))
 
 
 _BINDING_STATUS_ORDER = {
