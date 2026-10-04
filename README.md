@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.10.1**
+**Version 0.11.0**
 
 Ready today:
 
@@ -17,6 +17,7 @@ Ready today:
 - Strict confirmation and correction before Profile facts are saved
 - Current Fit and Directional Fit for Applied AI Engineer, Machine Learning Engineer, and Research Engineer
 - Reusable evidence Mapping plus separate allocation and evidence reviews
+- One global role ranking: Core-supported roles first, then Extended-only roles
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 

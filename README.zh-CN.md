@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.10.1**
+**版本 0.11.0**
 
 现在能用：
 
@@ -17,6 +17,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 - 保存 Profile 前必须确认，修改时显示差异
 - 为 Applied AI Engineer、Machine Learning Engineer 和 Research Engineer 分别计算 Current Fit 与 Directional Fit
 - 保存可复用的 evidence Mapping，并独立审核模糊分配和语义证据
+- 单一全局职业排名：Core-supported 优先，其次是 Extended-only
 - 支持 OpenAI-compatible Provider，包括阿里云百炼
 - 原子 JSON 保存、确定性验证和隐私安全的诊断信息
 

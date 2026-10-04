@@ -191,7 +191,24 @@ def _print_recommendation(
     for result in artifact.role_results:
         rank = "Unranked" if result.rank is None else f"Rank {result.rank}"
         marker = " (provisional)" if result.provisional else ""
-        output_fn(f"{rank}: {result.role_id.replace('_', ' ').title()}{marker}")
+        tier = ""
+        if result.ranking_tier is not None:
+            tier = {
+                "core_supported": " - Core evidence",
+                "extended_only": " - Extended evidence only",
+                "unranked": " - Unranked",
+            }[result.ranking_tier.value]
+        output_fn(
+            f"{rank}: {result.role_id.replace('_', ' ').title()}{marker}{tier}"
+        )
+        if result.tied_role_ids:
+            output_fn(
+                "  Tied with: "
+                + ", ".join(
+                    role_id.replace("_", " ").title()
+                    for role_id in result.tied_role_ids
+                )
+            )
         output_fn(
             f"  Current Fit: {result.core_current_fit.band.value.replace('_', ' ').title()}"
         )

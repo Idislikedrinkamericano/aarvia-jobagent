@@ -71,7 +71,7 @@ def test_ambiguous_group_is_preserved_with_zero_contribution_and_is_order_indepe
     assert len(first.unresolved_evidence_groups) == 1
     assert len(first.unresolved_evidence_groups[0].members) == 2
     recommendation = build_role_recommendation(profile=profile, mapping_candidates=first, rubric=rubric, catalog=production_role_catalog(), created_at="2026-01-01T00:00:00+00:00")
-    assert recommendation.schema_version == 6
+    assert recommendation.schema_version == 7
     assert recommendation.unresolved_evidence_group_ids == (first.unresolved_evidence_groups[0].evidence_group_id,)
     assert all(result.extended_current_fit.coverage == 0 for result in recommendation.role_results)
     without_group = replace(first, unresolved_evidence_groups=())

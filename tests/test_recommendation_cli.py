@@ -122,7 +122,7 @@ def test_recommend_supports_injected_mock_provider(tmp_path) -> None:
     assert main(["recommend", "--profile", str(profile_path), "--output", str(output_path)], mapper=mapper, output_fn=lambda _: None) == 0
     assert mapper.called is True
     assert output_path.exists()
-    assert json.loads(output_path.read_text())["schema_version"] == 6
+    assert json.loads(output_path.read_text())["schema_version"] == 7
     assert json.loads(profile_path.with_suffix(".mapping.json").read_text())["schema_version"] == 5
 
 
@@ -244,7 +244,7 @@ def test_cli_warns_when_provider_candidates_are_isolated(tmp_path) -> None:
     )
 
 
-def test_default_recommend_saves_mapping_four_and_recommendation_five(tmp_path) -> None:
+def test_default_recommend_saves_mapping_five_and_recommendation_seven(tmp_path) -> None:
     profile = review_profile()
     profile_path = save_profile(profile, tmp_path / "profile.json")
     mapping_path = tmp_path / "mapping-v3.json"
@@ -262,7 +262,7 @@ def test_default_recommend_saves_mapping_four_and_recommendation_five(tmp_path) 
     ) == 0
     assert mapper.called
     assert json.loads(mapping_path.read_text())["schema_version"] == 5
-    assert json.loads(recommendation_path.read_text())["schema_version"] == 6
+    assert json.loads(recommendation_path.read_text())["schema_version"] == 7
     assert any(f"Mapping saved to: {mapping_path}" == item for item in messages)
     assert any("review-evidence" in item for item in messages)
 

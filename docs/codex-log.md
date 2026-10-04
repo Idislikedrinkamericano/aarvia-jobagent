@@ -552,3 +552,11 @@ Development records are appended to this file as the project evolves.
 - **Compatibility:** Mapping schema 5, Recommendation schema 6, allocation, binding review, coverage, score, band, confidence, rank, and Recommendation schemas 1-5 are unchanged. No Provider call or private artifact mutation is part of the fix.
 - **Validation / Test Results:** Added a reviewed multi-criterion allocation regression covering complete binding retention, mixed binding decisions, stable reasoning deduplication, Provider-order invariance, typed round-trip, and duplicate-reasoning tamper rejection. The complete synthetic suite passed all 810 tests.
 - **Not Implemented:** User Decision, Gap Analysis, Phase 2D, Evidence Bank, and resume workflows remain outside this bugfix.
+
+## 2026-10-03 - Recommendation Schema 7 Global Ranking
+
+- **User Request:** Replace Recommendation schema 6's ambiguous Core/Extended rank fallback with an explicit ranking tier and one deterministic global competition ranking, while preserving schema 6 wire semantics.
+- **What Changed:** Version `0.11.0` adds Recommendation schema 7 and the `core_supported`, `extended_only`, and `unranked` ranking tiers. Core-supported roles are ranked before Extended-only roles; ties are allowed only within one tier; non-tied roles cannot share a rank. Typed validation recomputes tiers, ranks, tie groups, tied-role references, role order, and artifact identity. The CLI names the ranking basis and displays true ties.
+- **Compatibility:** Mapping remains schema 5. Recommendation schemas 1-6 retain explicit loading and their original wire behavior; schema 6's legacy fallback ranks are not silently reinterpreted. The default recommendation output is schema 7.
+- **Validation / Test Results:** Added 12 ranking regressions covering the v15 shape, unique non-tied ranks, global competition ranks, same-tier ties, cross-tier isolation, deterministic ordering and identity, typed tampering, CLI labels, and schema 6 round-trip compatibility. The complete synthetic suite passed all 822 tests.
+- **Not Implemented:** User Decision, Gap Analysis, Phase 2D, Evidence Bank, and resume workflows remain outside this change.

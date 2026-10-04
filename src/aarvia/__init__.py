@@ -247,6 +247,7 @@ from .role_recommendation import (
     FollowUpQuestion,
     MarketEvidenceConfidence,
     RecommendationConfidence,
+    RecommendationRankingTier,
     RoleRecommendationArtifact,
     RoleRecommendationResult,
     build_role_recommendation,
@@ -256,7 +257,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.10.1"
+__version__ = "0.11.0"
 
 __all__ = [
     "AtomicEvidenceLocator",
@@ -314,6 +315,7 @@ __all__ = [
     "canonical_evidence_span_inventory",
     "evidence_class_for_locator",
     "RecommendationConfidence",
+    "RecommendationRankingTier",
     "RoleRecommendationArtifact",
     "RoleRecommendationResult",
     "BasicProfile",
