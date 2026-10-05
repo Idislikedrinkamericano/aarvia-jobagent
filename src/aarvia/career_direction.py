@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 import hashlib
 import json
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping
 
+from .capability_rubric import CapabilityRubric, capability_rubric_fingerprint
 from .profile import CareerProfile
 from .role_catalog import (
     Phase2ValidationError,
@@ -62,6 +64,7 @@ class Confidence(str, Enum):
 class DecisionStatus(str, Enum):
     DRAFT = "draft"
     CONFIRMED = "confirmed"
+    DEFERRED = "deferred"
 
 
 class GapStatus(str, Enum):
@@ -94,6 +97,22 @@ def profile_fingerprint(profile: CareerProfile) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def _fingerprint(value: Any, path: str) -> str:
+    result = _text(value, path)
+    assert result is not None
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", result):
+        raise Phase2ValidationError(f"{path} must be a SHA-256 fingerprint")
+    return result
+
+
+def _optional_stable_id(value: Any, path: str) -> str | None:
+    return None if value is None else _stable_id(value, path)
+
+
+def _parsed_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _json_snapshot(value: Any, path: str) -> Any:
@@ -451,20 +470,36 @@ class UserRoleDecision:
     created_at: str
     updated_at: str
     source_recommendation_reference: str | None = None
+    source_recommendation_schema_version: int | None = None
+    profile_fingerprint: str | None = None
+    rubric_version: str | None = None
+    rubric_fingerprint: str | None = None
+    supersedes_decision_id: str | None = None
     schema: str = "aarvia.user_role_decision"
     schema_version: int = 1
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> UserRoleDecision:
         data = _mapping(value, "decision")
+        schema_version = data.get("schema_version")
         allowed = {
             "schema", "schema_version", "decision_id", "status", "catalog_version",
             "primary_role", "secondary_roles", "rejected_role_ids", "explore_later_role_ids",
             "unmapped_roles", "user_reason", "created_at", "updated_at",
             "source_recommendation_reference",
         }
+        if schema_version == 2:
+            allowed.update(
+                {
+                    "source_recommendation_schema_version",
+                    "profile_fingerprint",
+                    "rubric_version",
+                    "rubric_fingerprint",
+                    "supersedes_decision_id",
+                }
+            )
         _reject_unknown(data, allowed, "decision")
-        if data.get("schema") != "aarvia.user_role_decision" or data.get("schema_version") != 1:
+        if data.get("schema") != "aarvia.user_role_decision" or schema_version not in {1, 2}:
             raise Phase2ValidationError("unsupported User Decision schema version")
         raw_primary = data.get("primary_role")
         primary = None if raw_primary is None else SelectedRole.from_dict(raw_primary, "decision.primary_role")
@@ -476,9 +511,20 @@ class UserRoleDecision:
             UnmappedRoleDirection.from_dict(item, f"decision.unmapped_roles[{index}]")
             for index, item in enumerate(raw_unmapped)
         )
+        status = _enum(data.get("status"), DecisionStatus, "decision.status")
+        if schema_version == 1 and status == DecisionStatus.DEFERRED:
+            raise Phase2ValidationError("User Decision schema 1 does not support deferred status")
+        source_schema_version = data.get("source_recommendation_schema_version")
+        if schema_version == 2 and (
+            not isinstance(source_schema_version, int)
+            or isinstance(source_schema_version, bool)
+        ):
+            raise Phase2ValidationError(
+                "decision.source_recommendation_schema_version must be an integer"
+            )
         result = cls(
             decision_id=_stable_id(data.get("decision_id"), "decision.decision_id"),
-            status=_enum(data.get("status"), DecisionStatus, "decision.status"),
+            status=status,
             catalog_version=_version(data.get("catalog_version"), "decision.catalog_version"),
             primary_role=primary,
             secondary_roles=secondary,
@@ -497,13 +543,49 @@ class UserRoleDecision:
                 "decision.source_recommendation_reference",
                 required=False,
             ),
+            source_recommendation_schema_version=(
+                source_schema_version if schema_version == 2 else None
+            ),
+            profile_fingerprint=(
+                _fingerprint(
+                    data.get("profile_fingerprint"), "decision.profile_fingerprint"
+                )
+                if schema_version == 2
+                else None
+            ),
+            rubric_version=(
+                _version(data.get("rubric_version"), "decision.rubric_version")
+                if schema_version == 2
+                else None
+            ),
+            rubric_fingerprint=(
+                _fingerprint(
+                    data.get("rubric_fingerprint"), "decision.rubric_fingerprint"
+                )
+                if schema_version == 2
+                else None
+            ),
+            supersedes_decision_id=(
+                _optional_stable_id(
+                    data.get("supersedes_decision_id"),
+                    "decision.supersedes_decision_id",
+                )
+                if schema_version == 2
+                else None
+            ),
+            schema_version=schema_version,
         )
         result._validate_shape()
+        if schema_version == 2 and result.decision_id != generate_user_role_decision_id(result):
+            raise Phase2ValidationError("User Decision ID is not deterministic")
         return result
+
 
     def _validate_shape(self) -> None:
         if self.status == DecisionStatus.CONFIRMED and self.primary_role is None:
             raise Phase2ValidationError("confirmed decision requires exactly one Primary Role Family")
+        if self.status == DecisionStatus.DEFERRED and self.primary_role is not None:
+            raise Phase2ValidationError("deferred decision cannot contain a Primary Role Family")
         if len(self.secondary_roles) > 2:
             raise Phase2ValidationError("decision allows at most two Secondary Role Families")
         secondary_ids = [item.role_id for item in self.secondary_roles]
@@ -523,6 +605,47 @@ class UserRoleDecision:
                 "explore-later roles cannot be selected: "
                 f"{', '.join(sorted(explore_conflicts))}"
             )
+        if self.schema_version == 2:
+            if self.source_recommendation_schema_version != 7:
+                raise Phase2ValidationError(
+                    "User Decision schema 2 requires Recommendation schema 7 provenance"
+                )
+            if self.source_recommendation_reference is None:
+                raise Phase2ValidationError(
+                    "User Decision schema 2 requires Recommendation provenance"
+                )
+            if self.profile_fingerprint is None or self.rubric_version is None or self.rubric_fingerprint is None:
+                raise Phase2ValidationError(
+                    "User Decision schema 2 requires Profile and Rubric provenance"
+                )
+            _ensure_unique(self.rejected_role_ids, "rejected role IDs")
+            _ensure_unique(self.explore_later_role_ids, "explore-later role IDs")
+            overlap = set(self.rejected_role_ids) & set(self.explore_later_role_ids)
+            if overlap:
+                raise Phase2ValidationError(
+                    "roles cannot be both rejected and explore-later: "
+                    f"{', '.join(sorted(overlap))}"
+                )
+            role_groups = (
+                secondary_ids,
+                list(self.rejected_role_ids),
+                list(self.explore_later_role_ids),
+            )
+            if any(values != sorted(values) for values in role_groups):
+                raise Phase2ValidationError("User Decision role lists must use deterministic order")
+            selected_roles = (() if self.primary_role is None else (self.primary_role,)) + self.secondary_roles
+            if any(
+                list(role.specialization_ids) != sorted(role.specialization_ids)
+                or len(role.specialization_ids) != len(set(role.specialization_ids))
+                for role in selected_roles
+            ):
+                raise Phase2ValidationError(
+                    "selected Role specializations must be unique and deterministically ordered"
+                )
+            if _parsed_datetime(self.updated_at) < _parsed_datetime(self.created_at):
+                raise Phase2ValidationError("decision.updated_at cannot precede created_at")
+        elif self.status == DecisionStatus.DEFERRED:
+            raise Phase2ValidationError("User Decision schema 1 does not support deferred status")
 
     def _validate_catalog_selection(self, catalog: RoleCatalog) -> None:
         self._validate_shape()
@@ -537,10 +660,40 @@ class UserRoleDecision:
     def validate(
         self,
         catalog: RoleCatalog,
-        recommendation_set: RecommendationSet | None = None,
+        recommendation_set: Any | None = None,
         profile: CareerProfile | None = None,
+        rubric: CapabilityRubric | None = None,
+        superseded_decision: UserRoleDecision | None = None,
     ) -> None:
         self._validate_catalog_selection(catalog)
+        if self.schema_version == 2:
+            if recommendation_set is None or profile is None or rubric is None:
+                raise Phase2ValidationError(
+                    "User Decision schema 2 requires Recommendation, Profile, and Rubric context"
+                )
+            from .role_recommendation import RoleRecommendationArtifact
+
+            if not isinstance(recommendation_set, RoleRecommendationArtifact):
+                raise Phase2ValidationError(
+                    "User Decision schema 2 requires a Recommendation schema 7 artifact"
+                )
+            recommendation_set.validate_decision_source(
+                profile=profile, rubric=rubric, catalog=catalog
+            )
+            if self.source_recommendation_reference != recommendation_set.recommendation_set_id:
+                raise Phase2ValidationError("User Decision references a different Recommendation Set")
+            if self.profile_fingerprint != profile_fingerprint(profile):
+                raise Phase2ValidationError("User Decision Profile fingerprint is stale")
+            if self.rubric_version != rubric.rubric_version:
+                raise Phase2ValidationError("User Decision Rubric version is stale")
+            if self.rubric_fingerprint != capability_rubric_fingerprint(rubric):
+                raise Phase2ValidationError("User Decision Rubric fingerprint is stale")
+            if self.catalog_version != recommendation_set.catalog_version:
+                raise Phase2ValidationError("User Decision Catalog provenance is stale")
+            if self.decision_id != generate_user_role_decision_id(self):
+                raise Phase2ValidationError("User Decision ID is not deterministic")
+            self._validate_revision(superseded_decision, catalog)
+            return
         if self.source_recommendation_reference is not None:
             if recommendation_set is None:
                 raise Phase2ValidationError("source recommendation cannot be validated without its set")
@@ -556,8 +709,41 @@ class UserRoleDecision:
                 )
             recommendation_set.validate(catalog, profile)
 
+    def _validate_revision(
+        self,
+        superseded_decision: UserRoleDecision | None,
+        catalog: RoleCatalog,
+    ) -> None:
+        if self.supersedes_decision_id is None:
+            if superseded_decision is not None:
+                raise Phase2ValidationError(
+                    "supplied prior Decision is not referenced by this revision"
+                )
+            return
+        if superseded_decision is None:
+            raise Phase2ValidationError(
+                "Decision revision requires the confirmed Decision it supersedes"
+            )
+        if superseded_decision.schema_version != 2:
+            raise Phase2ValidationError("Decision revision can supersede only schema 2")
+        superseded_decision._validate_catalog_selection(catalog)
+        if superseded_decision.status != DecisionStatus.CONFIRMED:
+            raise Phase2ValidationError("Decision revision can supersede only a confirmed Decision")
+        if superseded_decision.decision_id != self.supersedes_decision_id:
+            raise Phase2ValidationError("Decision revision references a different prior Decision")
+        if superseded_decision.decision_id != generate_user_role_decision_id(
+            superseded_decision
+        ):
+            raise Phase2ValidationError("superseded Decision ID is not deterministic")
+        if _parsed_datetime(self.created_at) < _parsed_datetime(
+            superseded_decision.updated_at
+        ):
+            raise Phase2ValidationError(
+                "Decision revision cannot predate the Decision it supersedes"
+            )
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema": self.schema,
             "schema_version": self.schema_version,
             "decision_id": self.decision_id,
@@ -573,6 +759,126 @@ class UserRoleDecision:
             "updated_at": self.updated_at,
             "source_recommendation_reference": self.source_recommendation_reference,
         }
+        if self.schema_version == 2:
+            result.update(
+                {
+                    "source_recommendation_schema_version": self.source_recommendation_schema_version,
+                    "profile_fingerprint": self.profile_fingerprint,
+                    "rubric_version": self.rubric_version,
+                    "rubric_fingerprint": self.rubric_fingerprint,
+                    "supersedes_decision_id": self.supersedes_decision_id,
+                }
+            )
+        return result
+
+
+def generate_user_role_decision_id(value: UserRoleDecision) -> str:
+    """Generate the schema 2 Decision ID from its complete immutable payload."""
+    if not isinstance(value, UserRoleDecision):
+        raise TypeError("value must be a UserRoleDecision")
+    if value.schema_version != 2:
+        raise Phase2ValidationError(
+            "deterministic Decision IDs are available only for schema 2"
+        )
+    payload = {
+        "schema": value.schema,
+        "schema_version": value.schema_version,
+        "status": value.status.value,
+        "catalog_version": value.catalog_version,
+        "primary_role": None if value.primary_role is None else value.primary_role.to_dict(),
+        "secondary_roles": [item.to_dict() for item in value.secondary_roles],
+        "rejected_role_ids": list(value.rejected_role_ids),
+        "explore_later_role_ids": list(value.explore_later_role_ids),
+        "unmapped_roles": [item.to_dict() for item in value.unmapped_roles],
+        "user_reason": value.user_reason,
+        "created_at": value.created_at,
+        "updated_at": value.updated_at,
+        "source_recommendation_reference": value.source_recommendation_reference,
+        "source_recommendation_schema_version": value.source_recommendation_schema_version,
+        "profile_fingerprint": value.profile_fingerprint,
+        "rubric_version": value.rubric_version,
+        "rubric_fingerprint": value.rubric_fingerprint,
+        "supersedes_decision_id": value.supersedes_decision_id,
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return f"decision_{hashlib.sha256(encoded).hexdigest()[:24]}"
+
+
+def create_user_role_decision(
+    *,
+    status: DecisionStatus,
+    catalog: RoleCatalog,
+    rubric: CapabilityRubric,
+    profile: CareerProfile,
+    recommendation_set: Any,
+    primary_role: SelectedRole | None,
+    secondary_roles: tuple[SelectedRole, ...] = (),
+    rejected_role_ids: tuple[str, ...] = (),
+    explore_later_role_ids: tuple[str, ...] = (),
+    unmapped_roles: tuple[UnmappedRoleDirection, ...] = (),
+    user_reason: str | None = None,
+    created_at: str,
+    updated_at: str,
+    superseded_decision: UserRoleDecision | None = None,
+) -> UserRoleDecision:
+    """Create and fully validate a deterministic schema 2 Decision."""
+    from .role_recommendation import RoleRecommendationArtifact
+
+    if not isinstance(recommendation_set, RoleRecommendationArtifact):
+        raise Phase2ValidationError(
+            "User Decision schema 2 requires a Recommendation schema 7 artifact"
+        )
+    recommendation_set.validate_decision_source(
+        profile=profile, rubric=rubric, catalog=catalog
+    )
+
+    def normalized_role(role: SelectedRole) -> SelectedRole:
+        return SelectedRole(role.role_id, tuple(sorted(role.specialization_ids)))
+
+    normalized_primary = None if primary_role is None else normalized_role(primary_role)
+    normalized_secondary = tuple(
+        sorted((normalized_role(item) for item in secondary_roles), key=lambda item: item.role_id)
+    )
+    provisional = UserRoleDecision(
+        decision_id="decision_pending",
+        status=status,
+        catalog_version=catalog.catalog_version,
+        primary_role=normalized_primary,
+        secondary_roles=normalized_secondary,
+        rejected_role_ids=tuple(sorted(rejected_role_ids)),
+        explore_later_role_ids=tuple(sorted(explore_later_role_ids)),
+        unmapped_roles=tuple(
+            sorted(
+                unmapped_roles,
+                key=lambda item: (item.user_provided_name.casefold(), item.created_at),
+            )
+        ),
+        user_reason=None if user_reason is None or not user_reason.strip() else user_reason.strip(),
+        created_at=_iso_datetime(created_at, "decision.created_at"),
+        updated_at=_iso_datetime(updated_at, "decision.updated_at"),
+        source_recommendation_reference=recommendation_set.recommendation_set_id,
+        source_recommendation_schema_version=recommendation_set.schema_version,
+        profile_fingerprint=profile_fingerprint(profile),
+        rubric_version=rubric.rubric_version,
+        rubric_fingerprint=capability_rubric_fingerprint(rubric),
+        supersedes_decision_id=(
+            None if superseded_decision is None else superseded_decision.decision_id
+        ),
+        schema_version=2,
+    )
+    result = UserRoleDecision(
+        **{**provisional.__dict__, "decision_id": generate_user_role_decision_id(provisional)}
+    )
+    result.validate(
+        catalog,
+        recommendation_set,
+        profile,
+        rubric,
+        superseded_decision,
+    )
+    return result
 
 
 @dataclass(frozen=True, eq=True)
@@ -797,28 +1103,61 @@ def save_user_role_decision(
     path: str | Path,
     *,
     catalog: RoleCatalog,
-    recommendation_set: RecommendationSet | None = None,
+    recommendation_set: Any | None = None,
     profile: CareerProfile | None = None,
+    rubric: CapabilityRubric | None = None,
+    superseded_decision: UserRoleDecision | None = None,
 ) -> Path:
     if not isinstance(value, UserRoleDecision):
         raise TypeError("value must be a UserRoleDecision")
-    value.validate(catalog, recommendation_set, profile)
+    target = Path(path)
+    if value.schema_version == 2 and target.exists():
+        raise FileExistsError(
+            f"User Decision schema 2 artifacts are immutable: {target}. "
+            "Create a new revision at a new path."
+        )
+    value.validate(
+        catalog, recommendation_set, profile, rubric, superseded_decision
+    )
     from .phase2_storage import save_phase2_json
 
-    return save_phase2_json(UserRoleDecision.from_dict(value.to_dict()).to_dict(), path)
+    return save_phase2_json(UserRoleDecision.from_dict(value.to_dict()).to_dict(), target)
 
 
 def load_user_role_decision(
     path: str | Path,
     *,
     catalog: RoleCatalog,
-    recommendation_set: RecommendationSet | None = None,
+    recommendation_set: Any | None = None,
     profile: CareerProfile | None = None,
+    rubric: CapabilityRubric | None = None,
+    superseded_decision: UserRoleDecision | None = None,
 ) -> UserRoleDecision:
     from .phase2_storage import load_phase2_json
 
     value = UserRoleDecision.from_dict(load_phase2_json(path))
-    value.validate(catalog, recommendation_set, profile)
+    value.validate(
+        catalog, recommendation_set, profile, rubric, superseded_decision
+    )
+    return value
+
+
+def load_user_role_decision_revision_source(
+    path: str | Path, *, catalog: RoleCatalog
+) -> UserRoleDecision:
+    """Load an immutable confirmed Decision only as revision lineage.
+
+    Its original Recommendation may now be stale; the new Decision will bind a
+    separately validated current Recommendation while retaining this stable ID.
+    """
+    from .phase2_storage import load_phase2_json
+
+    value = UserRoleDecision.from_dict(load_phase2_json(path))
+    if value.schema_version != 2 or value.status != DecisionStatus.CONFIRMED:
+        raise Phase2ValidationError(
+            "--supersede requires a confirmed User Decision schema 2 artifact"
+        )
+    value._validate_catalog_selection(catalog)
     return value
 
 

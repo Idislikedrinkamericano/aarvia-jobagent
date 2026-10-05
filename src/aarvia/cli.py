@@ -17,6 +17,13 @@ from .narrative_extraction import ExtractionDebugError, NarrativeExtractor, Open
 from .profile import ProfileValidationError
 from .role_catalog import Phase2ValidationError, production_role_catalog
 from .capability_rubric import production_capability_rubric
+from .career_direction import (
+    DecisionStatus,
+    SelectedRole,
+    create_user_role_decision,
+    load_user_role_decision_revision_source,
+    save_user_role_decision,
+)
 from .evidence_binding_review import (
     BindingReviewDecision,
     BindingReviewerType,
@@ -31,7 +38,7 @@ from .evidence_group_allocation_review import (
     load_evidence_group_allocation_reviews,
     save_evidence_group_allocation_reviews,
 )
-from .phase2_storage import save_phase2_json_transaction
+from .phase2_storage import load_phase2_json, save_phase2_json_transaction
 from .profile_dimension_mapping import (
     AllocatedProfileCriterionEvidenceBinding,
     EvidenceTrustLevel,
@@ -41,7 +48,11 @@ from .profile_dimension_mapping import (
     load_mapping_candidates,
     mapping_validation_report_from_warnings,
 )
-from .role_recommendation import build_role_recommendation, save_role_recommendation
+from .role_recommendation import (
+    RoleRecommendationArtifact,
+    build_role_recommendation,
+    save_role_recommendation,
+)
 from .storage import load_profile
 
 DEFAULT_PROFILE_PATH = Path("data/profiles/default.json")
@@ -50,6 +61,10 @@ MAX_NARRATIVE_FILE_BYTES = 2 * 1024 * 1024
 
 class NarrativeFileError(ValueError):
     """Raised when a narrative text file cannot be used safely."""
+
+
+class DecisionSessionCancelled(Exception):
+    """Raised when the user cancels before a Decision artifact is written."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -160,6 +175,19 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--allocation-output", type=Path, help="Evidence Group Allocation Review JSON path")
     review.add_argument(
         "--overwrite", action="store_true", help="replace an existing Review output atomically"
+    )
+    decide = subparsers.add_parser(
+        "decide", help="choose and save a career direction from Recommendation schema 7"
+    )
+    decide.add_argument("--profile", type=Path, required=True, help="existing Career Profile JSON path")
+    decide.add_argument(
+        "--recommendation", type=Path, required=True,
+        help="validated Recommendation schema 7 JSON path",
+    )
+    decide.add_argument("--output", type=Path, required=True, help="new User Decision JSON path")
+    decide.add_argument(
+        "--supersede", type=Path,
+        help="confirmed User Decision schema 2 to replace with an explicit new revision",
     )
     return parser
 
@@ -585,6 +613,205 @@ def _run_review_evidence(
     return 0
 
 
+def _decision_answer(prompt: str, *, input_fn: InputFunction) -> str:
+    answer = input_fn(prompt).strip()
+    if answer.lower() == "q":
+        raise DecisionSessionCancelled
+    return answer
+
+
+def _ask_role_numbers(
+    prompt: str,
+    *,
+    role_ids: tuple[str, ...],
+    input_fn: InputFunction,
+    output_fn: OutputFunction,
+    required: bool = False,
+    maximum: int | None = None,
+    excluded: frozenset[str] = frozenset(),
+) -> tuple[str, ...]:
+    while True:
+        answer = _decision_answer(prompt, input_fn=input_fn)
+        if not answer:
+            if required:
+                output_fn("Please choose one role, or enter q to cancel.")
+                continue
+            return ()
+        pieces = tuple(item.strip() for item in answer.split(",") if item.strip())
+        try:
+            indexes = tuple(int(item) for item in pieces)
+        except ValueError:
+            output_fn("Enter role numbers separated by commas.")
+            continue
+        if (
+            not indexes
+            or len(indexes) != len(set(indexes))
+            or any(index < 1 or index > len(role_ids) for index in indexes)
+        ):
+            output_fn("Choose each listed role at most once using its number.")
+            continue
+        selected = tuple(role_ids[index - 1] for index in indexes)
+        if maximum is not None and len(selected) > maximum:
+            output_fn(f"Choose at most {maximum} role(s).")
+            continue
+        conflicts = set(selected) & set(excluded)
+        if conflicts:
+            output_fn(
+                "A role cannot appear in more than one decision category: "
+                + ", ".join(sorted(conflicts))
+            )
+            continue
+        return selected
+
+
+def _run_decide(
+    arguments,
+    *,
+    input_fn: InputFunction,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    profile = load_profile(arguments.profile)
+    catalog = production_role_catalog()
+    rubric = production_capability_rubric()
+    protected_inputs = {
+        arguments.profile,
+        arguments.recommendation,
+        *(() if arguments.supersede is None else (arguments.supersede,)),
+    }
+    if arguments.output in protected_inputs:
+        raise Phase2ValidationError("Decision output must not replace an input artifact")
+    _ensure_output_available(arguments.output, overwrite=False, label="Decision")
+
+    recommendation = RoleRecommendationArtifact.from_dict(
+        load_phase2_json(arguments.recommendation)
+    )
+    recommendation.validate_decision_source(
+        profile=profile, rubric=rubric, catalog=catalog
+    )
+    superseded = (
+        None
+        if arguments.supersede is None
+        else load_user_role_decision_revision_source(
+            arguments.supersede, catalog=catalog
+        )
+    )
+
+    output_fn("Career direction decision")
+    role_ids = tuple(item.role_id for item in recommendation.role_results)
+    for index, item in enumerate(recommendation.role_results, 1):
+        role = catalog.role(item.role_id)
+        rank = "Unranked" if item.rank is None else f"Rank {item.rank}"
+        tier = item.ranking_tier.value.replace("_", " ").title()
+        provisional = "Yes" if item.provisional else "No"
+        constraint = item.constraint.status.value.replace("_", " ").title()
+        confidence = item.recommendation_confidence.result.value.replace("_", " ").title()
+        output_fn(
+            f"{index}. {role.display_name} | {rank} | {tier} | "
+            f"Provisional: {provisional} | Constraints: {constraint} | "
+            f"Confidence: {confidence}"
+        )
+
+    while True:
+        mode = _decision_answer(
+            "Choose [c] confirm a direction, [d] defer, or [q] cancel: ",
+            input_fn=input_fn,
+        ).lower()
+        if mode in {"c", "d"}:
+            break
+        output_fn("Enter c, d, or q.")
+
+    status = DecisionStatus.CONFIRMED if mode == "c" else DecisionStatus.DEFERRED
+    primary_id: str | None = None
+    secondary_ids: tuple[str, ...] = ()
+    if status == DecisionStatus.CONFIRMED:
+        primary_id = _ask_role_numbers(
+            "Primary role number: ",
+            role_ids=role_ids,
+            input_fn=input_fn,
+            output_fn=output_fn,
+            required=True,
+            maximum=1,
+        )[0]
+        secondary_ids = _ask_role_numbers(
+            "Secondary role numbers (up to 2, comma-separated; blank for none): ",
+            role_ids=role_ids,
+            input_fn=input_fn,
+            output_fn=output_fn,
+            maximum=2,
+            excluded=frozenset({primary_id}),
+        )
+    selected_ids = frozenset(
+        (*(() if primary_id is None else (primary_id,)), *secondary_ids)
+    )
+    rejected_ids = _ask_role_numbers(
+        "Role numbers to reject (comma-separated; blank for none): ",
+        role_ids=role_ids,
+        input_fn=input_fn,
+        output_fn=output_fn,
+        excluded=selected_ids,
+    )
+    explore_ids = _ask_role_numbers(
+        "Role numbers to explore later (comma-separated; blank for none): ",
+        role_ids=role_ids,
+        input_fn=input_fn,
+        output_fn=output_fn,
+        excluded=frozenset((*selected_ids, *rejected_ids)),
+    )
+    reason = _decision_answer(
+        "Reason or note (optional): ", input_fn=input_fn
+    )
+    timestamp = now_fn()
+    decision = create_user_role_decision(
+        status=status,
+        catalog=catalog,
+        rubric=rubric,
+        profile=profile,
+        recommendation_set=recommendation,
+        primary_role=(None if primary_id is None else SelectedRole(primary_id)),
+        secondary_roles=tuple(SelectedRole(role_id) for role_id in secondary_ids),
+        rejected_role_ids=rejected_ids,
+        explore_later_role_ids=explore_ids,
+        user_reason=reason or None,
+        created_at=timestamp,
+        updated_at=timestamp,
+        superseded_decision=superseded,
+    )
+
+    def names(values: tuple[str, ...]) -> str:
+        return ", ".join(catalog.role(role_id).display_name for role_id in values) or "None"
+
+    output_fn("Decision summary")
+    output_fn(f"Status: {decision.status.value.title()}")
+    output_fn(
+        "Primary: "
+        + ("None" if decision.primary_role is None else catalog.role(decision.primary_role.role_id).display_name)
+    )
+    output_fn(f"Secondary: {names(tuple(item.role_id for item in decision.secondary_roles))}")
+    output_fn(f"Rejected: {names(decision.rejected_role_ids)}")
+    output_fn(f"Explore later: {names(decision.explore_later_role_ids)}")
+    output_fn(f"Reason: {decision.user_reason or 'Not provided'}")
+    if decision.supersedes_decision_id is not None:
+        output_fn(f"Supersedes: {decision.supersedes_decision_id}")
+    confirm = _decision_answer(
+        "Save this career direction decision? [y/N]: ", input_fn=input_fn
+    ).lower()
+    if confirm != "y":
+        output_fn("Decision not saved. No files were changed.")
+        return 0
+    save_user_role_decision(
+        decision,
+        arguments.output,
+        catalog=catalog,
+        recommendation_set=recommendation,
+        profile=profile,
+        rubric=rubric,
+        superseded_decision=superseded,
+    )
+    output_fn(f"Decision saved to: {arguments.output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -618,6 +845,18 @@ def main(
             )
         except (KeyboardInterrupt, EOFError):
             output_fn("Evidence review cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "decide":
+        try:
+            return _run_decide(
+                arguments, input_fn=input_fn, output_fn=output_fn
+            )
+        except (DecisionSessionCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Decision session cancelled. No files were changed.")
             return 130
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")

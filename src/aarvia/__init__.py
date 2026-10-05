@@ -24,10 +24,14 @@ from .catalog_build import (
     save_catalog_draft,
 )
 from .career_direction import (
+    DecisionStatus,
     ProfileReference,
     RecommendationSet,
     RoleGapAnalysis,
+    SelectedRole,
     UserRoleDecision,
+    create_user_role_decision,
+    generate_user_role_decision_id,
     load_recommendation_set,
     load_role_gap_analysis,
     load_user_role_decision,
@@ -171,6 +175,7 @@ from .capability_rubric import (
     EvidenceStatusCap,
     EvidenceSupportPolicy,
     MarketBasisStatus,
+    capability_rubric_fingerprint,
     generate_criterion_id,
     generate_dimension_id,
     load_capability_rubric,
@@ -257,7 +262,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 __all__ = [
     "AtomicEvidenceLocator",
@@ -332,6 +337,7 @@ __all__ = [
     "CandidateLogicGroupV7",
     "CareerPreferences",
     "CareerProfile",
+    "DecisionStatus",
     "Constraints",
     "CurationArtifact",
     "CurationArtifactV3",
@@ -389,8 +395,11 @@ __all__ = [
     "RoleReclassificationBlockerCode",
     "RoleReclassificationResult",
     "RoleSample",
+    "SelectedRole",
     "SourceTier",
     "UserRoleDecision",
+    "capability_rubric_fingerprint",
+    "create_user_role_decision",
     "create_profile",
     "capability_rubric_sha256",
     "create_evidence_binding_review_artifact",
@@ -416,6 +425,7 @@ __all__ = [
     "generate_binding_review_id",
     "generate_evidence_review_artifact_id",
     "generate_mapping_artifact_id",
+    "generate_user_role_decision_id",
     "generate_cluster_review_id",
     "generate_capture_id",
     "generate_source_id",

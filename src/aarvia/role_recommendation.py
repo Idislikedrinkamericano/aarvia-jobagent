@@ -447,6 +447,95 @@ class RoleRecommendationArtifact:
         allocation_id=data.get("allocation_review_artifact_id")
         return cls(recommendation_set_id=_stable_id(data.get("recommendation_set_id"),"recommendations.recommendation_set_id"),created_at=_iso_datetime(data.get("created_at"),"recommendations.created_at"),profile_fingerprint=_text(data.get("profile_fingerprint"),"recommendations.profile_fingerprint"),rubric_version=_version(data.get("rubric_version"),"recommendations.rubric_version"),catalog_version=_version(data.get("catalog_version"),"recommendations.catalog_version"),provider_name=_text(data.get("provider_name"),"recommendations.provider_name"),provider_model=_text(data.get("provider_model"),"recommendations.provider_model"),mapping_schema_version=mapping_version,profile_conflict_warnings=_string_tuple(data.get("profile_conflict_warnings"),"recommendations.profile_conflict_warnings"),role_results=tuple(RoleRecommendationResult.from_dict(x,f"recommendations.role_results[{i}]",schema_version=schema_version) for i,x in enumerate(_list(data.get("role_results"),"recommendations.role_results"))),follow_up_questions=tuple(FollowUpQuestion.from_dict(x,f"recommendations.follow_up_questions[{i}]") for i,x in enumerate(_list(data.get("follow_up_questions"),"recommendations.follow_up_questions"))),tie_groups=tuple(groups),blockers=_string_tuple(data.get("blockers"),"recommendations.blockers",ids=True),evidence_review_artifact_id=None if review_artifact_id is None else _stable_id(review_artifact_id,"recommendations.evidence_review_artifact_id"),allocation_review_artifact_id=None if allocation_id is None else _stable_id(allocation_id,"recommendations.allocation_review_artifact_id"),unresolved_evidence_group_ids=() if schema_version not in {6, 7} else _string_tuple(data.get("unresolved_evidence_group_ids"),"recommendations.unresolved_evidence_group_ids",ids=True),schema_version=schema_version)
 
+    def validate_decision_source(
+        self,
+        *,
+        profile: CareerProfile,
+        rubric: CapabilityRubric,
+        catalog: RoleCatalog,
+    ) -> None:
+        """Validate self-contained schema 7 identity used by a User Decision.
+
+        Full Recommendation evidence validation still requires Mapping and Review
+        artifacts. This boundary validates the immutable Recommendation identity,
+        context, ranking, and tie semantics that a Decision records as provenance.
+        """
+        rubric.validate(catalog)
+        if self.schema_version != 7 or self.mapping_schema_version != 5:
+            raise Phase2ValidationError(
+                "User Decision requires Recommendation schema 7 with Mapping schema 5"
+            )
+        if self.profile_fingerprint != profile_fingerprint(profile):
+            raise Phase2ValidationError("Recommendation Profile fingerprint mismatch")
+        if self.rubric_version != rubric.rubric_version:
+            raise Phase2ValidationError("Recommendation Rubric version mismatch")
+        if self.catalog_version != catalog.catalog_version:
+            raise Phase2ValidationError("Recommendation Catalog version mismatch")
+        if tuple(sorted(item.role_id for item in self.role_results)) != tuple(
+            sorted(MVP_ROLE_IDS)
+        ):
+            raise Phase2ValidationError(
+                "Recommendation must contain all three MVP roles exactly once"
+            )
+        expected_ranks, expected_tiers, expected_groups = _global_ranking_v7(
+            self.role_results
+        )
+        if any(
+            item.ranking_tier != expected_tiers[item.role_id]
+            or item.rank != expected_ranks[item.role_id]
+            for item in self.role_results
+        ):
+            raise Phase2ValidationError(
+                "Recommendation Decision provenance contains invalid rank or tier"
+            )
+        normalized_groups = tuple(
+            sorted(set(tuple(sorted(group)) for group in self.tie_groups))
+        )
+        if normalized_groups != expected_groups:
+            raise Phase2ValidationError(
+                "Recommendation Decision provenance contains invalid tie groups"
+            )
+        for result in self.role_results:
+            expected_tied = tuple(
+                sorted(
+                    role
+                    for group in expected_groups
+                    if result.role_id in group
+                    for role in group
+                    if role != result.role_id
+                )
+            )
+            if result.tied_role_ids != expected_tied:
+                raise Phase2ValidationError(
+                    "Recommendation Decision provenance contains invalid tied Roles"
+                )
+        expected_order = tuple(
+            item.role_id
+            for item in sorted(
+                self.role_results, key=lambda item: ((item.rank or 999), item.role_id)
+            )
+        )
+        if tuple(item.role_id for item in self.role_results) != expected_order:
+            raise Phase2ValidationError(
+                "Recommendation Decision provenance is not in deterministic rank order"
+            )
+        expected_id = generate_recommendation_id(
+            profile_fingerprint=self.profile_fingerprint,
+            rubric_version=self.rubric_version,
+            catalog_version=self.catalog_version,
+            provider_name=self.provider_name,
+            provider_model=self.provider_model,
+            role_results=self.role_results,
+            schema_version=self.schema_version,
+            evidence_review_artifact_id=self.evidence_review_artifact_id,
+            allocation_review_artifact_id=self.allocation_review_artifact_id,
+            unresolved_evidence_group_ids=self.unresolved_evidence_group_ids,
+        )
+        if self.recommendation_set_id != expected_id:
+            raise Phase2ValidationError(
+                "Recommendation ID is not deterministic"
+            )
+
     def validate(self, *, profile: CareerProfile, rubric: CapabilityRubric, catalog: RoleCatalog, mapping_candidates: ProfileDimensionMappingCandidateSet | None = None, evidence_reviews: EvidenceBindingReviewArtifact | None = None, allocation_reviews: EvidenceGroupAllocationReviewArtifact | None = None) -> None:
         rubric.validate(catalog)
         if self.schema_version in {5, 6, 7} and mapping_candidates is None:

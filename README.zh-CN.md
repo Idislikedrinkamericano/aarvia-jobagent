@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.11.0**
+**版本 0.12.0**
 
 现在能用：
 
@@ -18,12 +18,13 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 - 为 Applied AI Engineer、Machine Learning Engineer 和 Research Engineer 分别计算 Current Fit 与 Directional Fit
 - 保存可复用的 evidence Mapping，并独立审核模糊分配和语义证据
 - 单一全局职业排名：Core-supported 优先，其次是 Extended-only
+- 将确认或暂缓的职业方向决定独立保存，不与 Recommendation 混在一起
 - 支持 OpenAI-compatible Provider，包括阿里云百炼
 - 原子 JSON 保存、确定性验证和隐私安全的诊断信息
 
 还没实现：
 
-- 最终 User Decision 与 Gap Analysis
+- Gap Analysis
 - 实时岗位搜索和详细 JD Matching
 - Evidence Bank、简历定制和自动申请
 
@@ -76,6 +77,11 @@ aarvia recommend --profile profile.json \
   --allocation-review-artifact allocation-review.json \
   --review-artifact evidence-review.json \
   --output reviewed-recommendation.json
+
+# 选择职业方向；不会调用 Provider
+aarvia decide --profile profile.json \
+  --recommendation reviewed-recommendation.json \
+  --output career-decision.json
 ```
 
 职业方向推荐衡量的是证据覆盖情况，**不是获得面试或 Offer 的概率**。
@@ -118,8 +124,8 @@ API Key、endpoint 和模型需要属于同一地域。Aarvia 对百炼使用 Ch
 - **Phase 1：** Career Profile 与 Adaptive Discovery — 已完成
 - **Phase 2A：** 共享数据契约与 Role Catalog 基础 — 已完成
 - **Phase 2B：** 美国 early-career 市场证据与 curation 基础 — 已完成，正式发布数据集仍未完成
-- **Phase 2C：** 可解释职业推荐与证据审核 — 进行中
-- **Phase 2D–2G：** User Decision、Gap Analysis、实时岗位、匹配和端到端加固 — 尚未实现
+- **Phase 2C：** 可解释推荐、证据审核与 User Decision — 已完成
+- **Phase 2D–2G：** Gap Analysis、实时岗位、匹配和端到端加固 — 尚未实现
 
 ## 开发验证
 

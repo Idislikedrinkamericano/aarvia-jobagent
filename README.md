@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.11.0**
+**Version 0.12.0**
 
 Ready today:
 
@@ -18,12 +18,13 @@ Ready today:
 - Current Fit and Directional Fit for Applied AI Engineer, Machine Learning Engineer, and Research Engineer
 - Reusable evidence Mapping plus separate allocation and evidence reviews
 - One global role ranking: Core-supported roles first, then Extended-only roles
+- A confirmed or deferred Career Direction Decision, saved separately from the recommendation
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 
 Not ready yet:
 
-- Final User Decision and Gap Analysis
+- Gap Analysis
 - Live job discovery and detailed JD matching
 - Evidence Bank, resume tailoring, or application automation
 
@@ -76,6 +77,11 @@ aarvia recommend --profile profile.json \
   --allocation-review-artifact allocation-review.json \
   --review-artifact evidence-review.json \
   --output reviewed-recommendation.json
+
+# Choose a direction without calling the Provider
+aarvia decide --profile profile.json \
+  --recommendation reviewed-recommendation.json \
+  --output career-decision.json
 ```
 
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
@@ -118,8 +124,8 @@ Keep personal Profiles and diagnostics under ignored local paths such as `local_
 - **Phase 1:** Career Profile and adaptive discovery — complete
 - **Phase 2A:** shared contracts and Role Catalog foundation — complete
 - **Phase 2B:** US early-career market evidence and curation foundation — complete, publication dataset still unfinished
-- **Phase 2C:** explainable role recommendation and evidence review — in progress
-- **Phase 2D–2G:** decision, gap analysis, live jobs, matching, and end-to-end hardening — not implemented
+- **Phase 2C:** explainable recommendation, evidence review, and User Decision — complete
+- **Phase 2D–2G:** gap analysis, live jobs, matching, and end-to-end hardening — not implemented
 
 ## Development
 

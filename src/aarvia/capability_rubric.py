@@ -7,6 +7,7 @@ from datetime import date
 from enum import Enum
 import hashlib
 from importlib import resources
+import json
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -714,6 +715,19 @@ class CapabilityRubric:
             "source_analysis_hashes": list(self.source_analysis_hashes),
             "provenance_summary": self.provenance_summary,
         }
+
+
+def capability_rubric_fingerprint(rubric: CapabilityRubric) -> str:
+    """Return a deterministic fingerprint of a validated Rubric artifact."""
+    if not isinstance(rubric, CapabilityRubric):
+        raise TypeError("rubric must be a CapabilityRubric")
+    payload = json.dumps(
+        CapabilityRubric.from_dict(rubric.to_dict()).to_dict(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 def load_capability_rubric(
