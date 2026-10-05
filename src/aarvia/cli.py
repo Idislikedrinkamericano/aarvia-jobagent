@@ -16,13 +16,20 @@ from .llm_client import LLMConfigurationError, LLMRequestError
 from .narrative_extraction import ExtractionDebugError, NarrativeExtractor, OpenAINarrativeExtractor
 from .profile import ProfileValidationError
 from .role_catalog import Phase2ValidationError, production_role_catalog
-from .capability_rubric import production_capability_rubric
+from .capability_rubric import CapabilityRubric, production_capability_rubric
 from .career_direction import (
     DecisionStatus,
     SelectedRole,
     create_user_role_decision,
+    load_user_role_decision,
     load_user_role_decision_revision_source,
     save_user_role_decision,
+)
+from .career_gap_analysis import (
+    CareerGapAnalysis,
+    GapClassification,
+    build_career_gap_analysis,
+    save_career_gap_analysis,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -51,6 +58,7 @@ from .profile_dimension_mapping import (
 from .role_recommendation import (
     RoleRecommendationArtifact,
     build_role_recommendation,
+    load_role_recommendation,
     save_role_recommendation,
 )
 from .storage import load_profile
@@ -65,6 +73,10 @@ class NarrativeFileError(ValueError):
 
 class DecisionSessionCancelled(Exception):
     """Raised when the user cancels before a Decision artifact is written."""
+
+
+class GapAnalysisSessionCancelled(Exception):
+    """Raised when the user cancels before a Gap Analysis artifact is written."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -189,6 +201,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--supersede", type=Path,
         help="confirmed User Decision schema 2 to replace with an explicit new revision",
     )
+    gaps = subparsers.add_parser(
+        "analyze-gaps",
+        help="derive a deterministic Dimension-level Gap Analysis from confirmed artifacts",
+    )
+    gaps.add_argument("--profile", type=Path, required=True, help="Career Profile JSON path")
+    gaps.add_argument("--mapping", type=Path, required=True, help="Mapping schema 5 JSON path")
+    gaps.add_argument(
+        "--recommendation", type=Path, required=True,
+        help="Recommendation schema 7 JSON path",
+    )
+    gaps.add_argument("--decision", type=Path, required=True, help="confirmed Decision schema 2 JSON path")
+    gaps.add_argument(
+        "--review-artifact", type=Path,
+        help="Evidence Binding Review referenced by the Recommendation",
+    )
+    gaps.add_argument(
+        "--allocation-review-artifact", type=Path,
+        help="Evidence Group Allocation Review referenced by the Recommendation",
+    )
+    gaps.add_argument(
+        "--superseded-decision", type=Path,
+        help="prior confirmed Decision required when the current Decision is a revision",
+    )
+    gaps.add_argument("--output", type=Path, required=True, help="new Career Gap Analysis JSON path")
     return parser
 
 
@@ -812,6 +848,172 @@ def _run_decide(
     return 0
 
 
+def _gap_answer(prompt: str, *, input_fn: InputFunction) -> str:
+    answer = input_fn(prompt).strip()
+    if answer.lower() == "q":
+        raise GapAnalysisSessionCancelled
+    return answer
+
+
+def _print_gap_analysis(
+    artifact: CareerGapAnalysis,
+    *,
+    rubric: CapabilityRubric,
+    output_fn: OutputFunction,
+) -> None:
+    output_fn("Career gap analysis")
+    analyses = (artifact.primary_role_analysis, *artifact.secondary_role_analyses)
+    labels = {
+        GapClassification.CONFIRMED_STRENGTH: "Confirmed strengths",
+        GapClassification.DEVELOPING_CAPABILITY: "Development areas",
+        GapClassification.TRANSFERABLE_FOUNDATION: "Transferable foundations",
+        GapClassification.UNKNOWN_EVIDENCE: "Unknown evidence",
+        GapClassification.CAPABILITY_GAP: "Capability gaps",
+    }
+    dimension_names = {
+        item.dimension_id: item.name for item in rubric.dimensions
+    }
+    for role in analyses:
+        output_fn(
+            f"{role.selection_type.value.title()}: {role.role_id.replace('_', ' ').title()}"
+        )
+        for classification, label in labels.items():
+            names = tuple(
+                dimension_names[item.dimension_id]
+                for item in role.dimensions
+                if item.gap_classification == classification
+            )
+            output_fn(
+                f"  {label}: "
+                + (", ".join(names) or "None")
+            )
+    summary = artifact.summary
+    output_fn(
+        "Summary: "
+        f"{summary.confirmed_strength_count} strengths, "
+        f"{summary.development_area_count} development areas, "
+        f"{summary.transferable_foundation_count} transferable foundations, "
+        f"{summary.unknown_evidence_count} unknowns, "
+        f"{summary.capability_gap_count} explicit gaps."
+    )
+
+
+def _run_analyze_gaps(
+    arguments,
+    *,
+    input_fn: InputFunction,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    protected_inputs = {
+        arguments.profile,
+        arguments.mapping,
+        arguments.recommendation,
+        arguments.decision,
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(
+            ()
+            if arguments.allocation_review_artifact is None
+            else (arguments.allocation_review_artifact,)
+        ),
+        *(
+            ()
+            if arguments.superseded_decision is None
+            else (arguments.superseded_decision,)
+        ),
+    }
+    if arguments.output in protected_inputs:
+        raise Phase2ValidationError("Gap Analysis output must not replace an input artifact")
+    _ensure_output_available(arguments.output, overwrite=False, label="Gap Analysis")
+
+    profile = load_profile(arguments.profile)
+    rubric = production_capability_rubric()
+    catalog = production_role_catalog()
+    mapping = load_mapping_candidates(
+        arguments.mapping, profile=profile, rubric=rubric, catalog=catalog
+    )
+    evidence_reviews = (
+        None
+        if arguments.review_artifact is None
+        else load_evidence_binding_reviews(
+            arguments.review_artifact,
+            profile=profile,
+            rubric=rubric,
+            mapping=mapping,
+            catalog=catalog,
+        )
+    )
+    allocation_reviews = (
+        None
+        if arguments.allocation_review_artifact is None
+        else load_evidence_group_allocation_reviews(
+            arguments.allocation_review_artifact,
+            profile=profile,
+            rubric=rubric,
+            mapping=mapping,
+            catalog=catalog,
+        )
+    )
+    recommendation = load_role_recommendation(
+        arguments.recommendation,
+        profile=profile,
+        rubric=rubric,
+        catalog=catalog,
+        mapping_candidates=mapping,
+        evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+    )
+    superseded = (
+        None
+        if arguments.superseded_decision is None
+        else load_user_role_decision_revision_source(
+            arguments.superseded_decision, catalog=catalog
+        )
+    )
+    decision = load_user_role_decision(
+        arguments.decision,
+        catalog=catalog,
+        recommendation_set=recommendation,
+        profile=profile,
+        rubric=rubric,
+        superseded_decision=superseded,
+    )
+    artifact = build_career_gap_analysis(
+        profile=profile,
+        rubric=rubric,
+        catalog=catalog,
+        mapping=mapping,
+        recommendation=recommendation,
+        decision=decision,
+        evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+        superseded_decision=superseded,
+        created_at=now_fn(),
+    )
+    _print_gap_analysis(artifact, rubric=rubric, output_fn=output_fn)
+    confirmation = _gap_answer(
+        "Save this Career Gap Analysis? [y/N]: ", input_fn=input_fn
+    ).lower()
+    if confirmation != "y":
+        output_fn("Gap Analysis not saved. No files were changed.")
+        return 0
+    save_career_gap_analysis(
+        artifact,
+        arguments.output,
+        profile=profile,
+        rubric=rubric,
+        catalog=catalog,
+        mapping=mapping,
+        recommendation=recommendation,
+        decision=decision,
+        evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+        superseded_decision=superseded,
+    )
+    output_fn(f"Gap Analysis saved to: {arguments.output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -857,6 +1059,18 @@ def main(
             )
         except (DecisionSessionCancelled, KeyboardInterrupt, EOFError):
             output_fn("Decision session cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "analyze-gaps":
+        try:
+            return _run_analyze_gaps(
+                arguments, input_fn=input_fn, output_fn=output_fn
+            )
+        except (GapAnalysisSessionCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Gap Analysis cancelled. No files were changed.")
             return 130
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")
