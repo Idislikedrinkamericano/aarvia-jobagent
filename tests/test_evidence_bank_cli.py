@@ -163,4 +163,3 @@ def test_cli_requires_review_context_referenced_by_recommendation(tmp_path):
     del args[index:index + 2]
     assert main(args, input_fn=lambda _: "y", output_fn=lambda _: None) == 1
     assert not output.exists()
-
