@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.14.0**
+**Version 0.15.0**
 
 Ready today:
 
@@ -21,6 +21,7 @@ Ready today:
 - A confirmed or deferred Career Direction Decision, saved separately from the recommendation
 - Deterministic Gap Analysis for the confirmed Primary and Secondary directions
 - A deterministic Evidence Bank that separates verified facts, capability links, and open needs
+- User-confirmed Evidence Enrichment that preserves exact wording and never rewrites the Evidence Bank
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 
@@ -102,6 +103,17 @@ aarvia build-evidence-bank --profile profile.json \
   --decision career-decision.json \
   --gap-analysis gap-analysis.json \
   --output evidence-bank.json
+
+# Add and review your own missing details; no Provider call
+aarvia enrich-evidence --profile profile.json \
+  --mapping mapping.json \
+  --allocation-review-artifact allocation-review.json \
+  --review-artifact evidence-review.json \
+  --recommendation reviewed-recommendation.json \
+  --decision career-decision.json \
+  --gap-analysis gap-analysis.json \
+  --evidence-bank evidence-bank.json \
+  --output evidence-enrichment.json
 ```
 
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
@@ -145,7 +157,7 @@ Keep personal Profiles and diagnostics under ignored local paths such as `local_
 - **Phase 2A:** shared contracts and Role Catalog foundation — complete
 - **Phase 2B:** US early-career market evidence and curation foundation — complete, publication dataset still unfinished
 - **Phase 2C:** explainable recommendation, evidence review, and User Decision — complete
-- **Phase 2D:** deterministic Gap Analysis and Evidence Bank foundation — complete
+- **Phase 2D:** deterministic Gap Analysis, Evidence Bank, and user-confirmed enrichment — complete
 - **Phase 2E–2G:** live jobs, detailed matching, resume work, and end-to-end hardening — not implemented
 
 ## Development

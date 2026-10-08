@@ -35,8 +35,22 @@ from .career_gap_analysis import (
 from .evidence_bank import (
     EvidenceBank,
     build_evidence_bank,
+    load_evidence_bank,
     load_evidence_bank_revision_source,
     save_evidence_bank,
+)
+from .evidence_enrichment import (
+    ClaimReviewDecision,
+    EnrichmentClaimType,
+    EnrichmentRelationship,
+    EnrichmentScope,
+    EnrichmentTemporality,
+    EvidenceEnrichmentArtifact,
+    build_evidence_enrichment,
+    create_claim_review,
+    create_enrichment_claim,
+    load_evidence_enrichment_revision_source,
+    save_evidence_enrichment,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -88,6 +102,10 @@ class GapAnalysisSessionCancelled(Exception):
 
 class EvidenceBankSessionCancelled(Exception):
     """Raised when the user cancels before an Evidence Bank is written."""
+
+
+class EvidenceEnrichmentSessionCancelled(Exception):
+    """Raised when the user cancels before an Enrichment artifact is written."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -265,6 +283,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="immutable Evidence Bank schema 1 to replace with an explicit new revision",
     )
     bank.add_argument("--output", type=Path, required=True, help="new Evidence Bank JSON path")
+    enrichment = subparsers.add_parser(
+        "enrich-evidence",
+        help="add user-confirmed details to an immutable Evidence Bank",
+    )
+    enrichment.add_argument("--profile", type=Path, required=True, help="Career Profile JSON path")
+    enrichment.add_argument("--mapping", type=Path, required=True, help="Mapping schema 5 JSON path")
+    enrichment.add_argument("--recommendation", type=Path, required=True, help="Recommendation schema 7 JSON path")
+    enrichment.add_argument("--decision", type=Path, required=True, help="confirmed Decision schema 2 JSON path")
+    enrichment.add_argument("--gap-analysis", type=Path, required=True, help="Career Gap Analysis schema 2 JSON path")
+    enrichment.add_argument("--evidence-bank", type=Path, required=True, help="Evidence Bank schema 1 JSON path")
+    enrichment.add_argument("--review-artifact", type=Path, help="Binding Review referenced by the Recommendation")
+    enrichment.add_argument("--allocation-review-artifact", type=Path, help="Allocation Review referenced by the Recommendation")
+    enrichment.add_argument("--superseded-decision", type=Path, help="prior confirmed Decision required by a Decision revision")
+    enrichment.add_argument("--supersede", type=Path, help="prior Enrichment artifact for an explicit immutable revision")
+    enrichment.add_argument("--output", type=Path, required=True, help="new Evidence Enrichment JSON path")
     return parser
 
 
@@ -1235,6 +1268,230 @@ def _run_build_evidence_bank(
     return 0
 
 
+def _enrichment_answer(prompt: str, *, input_fn: InputFunction) -> str:
+    answer = input_fn(prompt)
+    if answer.strip().lower() == "q":
+        raise EvidenceEnrichmentSessionCancelled
+    return answer
+
+
+def _source_label(source) -> str:
+    values = [value for _, value in source.identity if value]
+    return " - ".join(values) if values else source.record_type.value.replace("_", " ").title()
+
+
+def _enum_choice(prompt, choices, *, input_fn):
+    by_value = {item.value: item for item in choices}
+    while True:
+        answer = _enrichment_answer(prompt, input_fn=input_fn).strip().lower()
+        if answer in by_value:
+            return by_value[answer]
+
+
+def _collect_enrichment_claims(
+    bank: EvidenceBank,
+    *, input_fn: InputFunction, output_fn: OutputFunction, reviewed_at: str,
+    previous: EvidenceEnrichmentArtifact | None,
+):
+    claims = list(() if previous is None else previous.claims)
+    reviews_by_claim = {
+        item.claim_id: item for item in (() if previous is None else previous.claim_reviews)
+    }
+    if previous is not None:
+        output_fn("Reviewing decisions from the prior Enrichment revision")
+        for claim in previous.claims:
+            old = reviews_by_claim[claim.claim_id]
+            output_fn(f"Statement: {claim.user_supplied_statement}")
+            answer = _enrichment_answer(
+                f"Decision [{old.decision.value}; Enter to keep, confirmed/rejected/deferred]: ",
+                input_fn=input_fn,
+            ).strip().lower()
+            if answer:
+                try:
+                    decision = ClaimReviewDecision(answer)
+                except ValueError as error:
+                    raise Phase2ValidationError("invalid Enrichment review decision") from error
+                reviews_by_claim[claim.claim_id] = create_claim_review(
+                    claim, decision=decision, reviewed_at=reviewed_at,
+                )
+
+    items_by_source = {
+        source.source_record_id: tuple(
+            item for item in bank.items if item.source_record_id == source.source_record_id
+        )
+        for source in bank.sources
+    }
+    for source in bank.sources:
+        output_fn("")
+        output_fn(_source_label(source))
+        source_items = items_by_source[source.source_record_id]
+        for index, item in enumerate(source_items, 1):
+            output_fn(f"  {index}. {item.exact_excerpt}")
+        output_fn(
+            "You may clarify contribution, challenge, action, responsibility, result, "
+            "metric/scale, technology, ownership, completion, timeline, or context."
+        )
+        while True:
+            add = _enrichment_answer(
+                "Add a confirmed detail for this source? [y/N/q]: ", input_fn=input_fn
+            ).strip().lower()
+            if add != "y":
+                break
+            claim_type = _enum_choice(
+                "Detail type [challenge/action/responsibility/result/metric/scale/technology/ownership/completion_status/timeline/context]: ",
+                EnrichmentClaimType, input_fn=input_fn,
+            )
+            statement = _enrichment_answer(
+                "Enter only a completed or ongoing fact in your own words: ", input_fn=input_fn
+            )
+            if not statement.strip():
+                output_fn("Blank detail skipped.")
+                continue
+            references = _enrichment_answer(
+                "Evidence numbers (comma-separated; blank for source-level context): ",
+                input_fn=input_fn,
+            ).strip()
+            selected_items = []
+            if references:
+                try:
+                    indices = sorted({int(value.strip()) for value in references.split(",")})
+                except ValueError as error:
+                    raise Phase2ValidationError("evidence numbers must be integers") from error
+                if any(index < 1 or index > len(source_items) for index in indices):
+                    raise Phase2ValidationError("evidence number is out of range")
+                selected_items = [source_items[index - 1] for index in indices]
+            relationship = _enum_choice(
+                "Relationship [confirms/clarifies/supplements]: ",
+                EnrichmentRelationship, input_fn=input_fn,
+            )
+            temporality = _enum_choice(
+                "Temporality [completed/ongoing]: ", EnrichmentTemporality,
+                input_fn=input_fn,
+            )
+            scope = _enum_choice(
+                "Scope [personal_contribution/team_context/project_context]: ",
+                EnrichmentScope, input_fn=input_fn,
+            )
+            structured = None
+            if claim_type in {
+                EnrichmentClaimType.METRIC, EnrichmentClaimType.SCALE,
+                EnrichmentClaimType.TECHNOLOGY, EnrichmentClaimType.COMPLETION_STATUS,
+                EnrichmentClaimType.TIMELINE,
+            }:
+                structured = _enrichment_answer(
+                    "Optional structured value (blank to omit): ", input_fn=input_fn
+                )
+                structured = structured if structured.strip() else None
+            claim = create_enrichment_claim(
+                evidence_bank_id=bank.evidence_bank_id,
+                source_record_id=source.source_record_id,
+                evidence_item_ids=[item.evidence_item_id for item in selected_items],
+                claim_type=claim_type, relationship=relationship,
+                user_supplied_statement=statement, temporality=temporality,
+                scope=scope, structured_value=structured,
+            )
+            output_fn(f"Statement: {claim.user_supplied_statement}")
+            decision = _enum_choice(
+                "Review decision [confirmed/rejected/deferred/q]: ",
+                ClaimReviewDecision, input_fn=input_fn,
+            )
+            if claim.claim_id in reviews_by_claim:
+                raise Phase2ValidationError("this Enrichment Claim already exists")
+            claims.append(claim)
+            reviews_by_claim[claim.claim_id] = create_claim_review(
+                claim, decision=decision, reviewed_at=reviewed_at,
+            )
+    return claims, list(reviews_by_claim.values())
+
+
+def _run_enrich_evidence(
+    arguments, *, input_fn: InputFunction, output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    protected_inputs = {
+        arguments.profile, arguments.mapping, arguments.recommendation,
+        arguments.decision, arguments.gap_analysis, arguments.evidence_bank,
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(() if arguments.allocation_review_artifact is None else (arguments.allocation_review_artifact,)),
+        *(() if arguments.superseded_decision is None else (arguments.superseded_decision,)),
+        *(() if arguments.supersede is None else (arguments.supersede,)),
+    }
+    if arguments.output in protected_inputs:
+        raise Phase2ValidationError("Evidence Enrichment output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(
+            f"Evidence Enrichment output already exists: {arguments.output}. Choose a new path."
+        )
+    profile = load_profile(arguments.profile)
+    rubric = production_capability_rubric()
+    catalog = production_role_catalog()
+    mapping = load_mapping_candidates(arguments.mapping, profile=profile, rubric=rubric, catalog=catalog)
+    evidence_reviews = None if arguments.review_artifact is None else load_evidence_binding_reviews(
+        arguments.review_artifact, profile=profile, rubric=rubric, mapping=mapping, catalog=catalog
+    )
+    allocation_reviews = None if arguments.allocation_review_artifact is None else load_evidence_group_allocation_reviews(
+        arguments.allocation_review_artifact, profile=profile, rubric=rubric, mapping=mapping, catalog=catalog
+    )
+    recommendation = load_role_recommendation(
+        arguments.recommendation, profile=profile, rubric=rubric, catalog=catalog,
+        mapping_candidates=mapping, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+    )
+    superseded_decision = None if arguments.superseded_decision is None else load_user_role_decision_revision_source(
+        arguments.superseded_decision, catalog=catalog
+    )
+    decision = load_user_role_decision(
+        arguments.decision, catalog=catalog, recommendation_set=recommendation,
+        profile=profile, rubric=rubric, superseded_decision=superseded_decision,
+    )
+    gap = load_career_gap_analysis(
+        arguments.gap_analysis, profile=profile, rubric=rubric, catalog=catalog,
+        mapping=mapping, recommendation=recommendation, decision=decision,
+        evidence_reviews=evidence_reviews, allocation_reviews=allocation_reviews,
+        superseded_decision=superseded_decision,
+    )
+    bank = load_evidence_bank(
+        arguments.evidence_bank, profile=profile, rubric=rubric, catalog=catalog,
+        mapping=mapping, recommendation=recommendation, decision=decision,
+        gap_analysis=gap, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews, superseded_decision=superseded_decision,
+    )
+    context = dict(
+        profile=profile, rubric=rubric, catalog=catalog, mapping=mapping,
+        recommendation=recommendation, decision=decision, gap_analysis=gap,
+        evidence_bank=bank, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews, superseded_decision=superseded_decision,
+    )
+    previous = None if arguments.supersede is None else load_evidence_enrichment_revision_source(
+        arguments.supersede, **context
+    )
+    now = now_fn()
+    claims, reviews = _collect_enrichment_claims(
+        bank, input_fn=input_fn, output_fn=output_fn, reviewed_at=now, previous=previous
+    )
+    artifact = build_evidence_enrichment(
+        **context, claims=claims, claim_reviews=reviews, created_at=now,
+        superseded_enrichment=previous,
+    )
+    summary = artifact.summary
+    output_fn("Evidence Enrichment summary")
+    output_fn(f"Confirmed: {summary.confirmed_count}")
+    output_fn(f"Rejected: {summary.rejected_count}")
+    output_fn(f"Deferred: {summary.deferred_count}")
+    output_fn(f"Conservative Resume inputs: {summary.resume_selectable_count}")
+    confirmation = _enrichment_answer(
+        "Save this Evidence Enrichment artifact? [y/N/q]: ", input_fn=input_fn
+    ).strip().lower()
+    if confirmation != "y":
+        output_fn("Evidence Enrichment not saved. No files were changed.")
+        return 0
+    save_evidence_enrichment(
+        artifact, arguments.output, **context, superseded_enrichment=previous
+    )
+    output_fn(f"Evidence Enrichment saved to: {arguments.output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -1304,6 +1561,18 @@ def main(
             )
         except (EvidenceBankSessionCancelled, KeyboardInterrupt, EOFError):
             output_fn("Evidence Bank cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "enrich-evidence":
+        try:
+            return _run_enrich_evidence(
+                arguments, input_fn=input_fn, output_fn=output_fn
+            )
+        except (EvidenceEnrichmentSessionCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Evidence Enrichment cancelled. No files were changed.")
             return 130
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")

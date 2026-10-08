@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.14.0**
+**版本 0.15.0**
 
 现在能用：
 
@@ -21,6 +21,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 - 将确认或暂缓的职业方向决定独立保存，不与 Recommendation 混在一起
 - 对已确认的 Primary 和 Secondary 方向生成确定性的 Gap Analysis
 - 建立确定性的 Evidence Bank，严格分开真实事实、能力链接和待确认需求
+- 用户可原样补充并审核 Evidence Enrichment，且不会改写 Evidence Bank
 - 支持 OpenAI-compatible Provider，包括阿里云百炼
 - 原子 JSON 保存、确定性验证和隐私安全的诊断信息
 
@@ -102,6 +103,17 @@ aarvia build-evidence-bank --profile profile.json \
   --decision career-decision.json \
   --gap-analysis gap-analysis.json \
   --output evidence-bank.json
+
+# 用自己的原话补充并审核细节；不调用 Provider
+aarvia enrich-evidence --profile profile.json \
+  --mapping mapping.json \
+  --allocation-review-artifact allocation-review.json \
+  --review-artifact evidence-review.json \
+  --recommendation reviewed-recommendation.json \
+  --decision career-decision.json \
+  --gap-analysis gap-analysis.json \
+  --evidence-bank evidence-bank.json \
+  --output evidence-enrichment.json
 ```
 
 职业方向推荐衡量的是证据覆盖情况，**不是获得面试或 Offer 的概率**。
@@ -145,7 +157,7 @@ API Key、endpoint 和模型需要属于同一地域。Aarvia 对百炼使用 Ch
 - **Phase 2A：** 共享数据契约与 Role Catalog 基础 — 已完成
 - **Phase 2B：** 美国 early-career 市场证据与 curation 基础 — 已完成，正式发布数据集仍未完成
 - **Phase 2C：** 可解释推荐、证据审核与 User Decision — 已完成
-- **Phase 2D：** 确定性 Gap Analysis 与 Evidence Bank 基础 — 已完成
+- **Phase 2D：** 确定性 Gap Analysis、Evidence Bank 与用户确认式补充 — 已完成
 - **Phase 2E–2G：** 实时岗位、详细匹配、简历工作和端到端加固 — 尚未实现
 
 ## 开发验证

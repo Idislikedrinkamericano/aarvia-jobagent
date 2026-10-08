@@ -80,6 +80,31 @@ from .evidence_bank import (
     save_evidence_bank,
     select_resume_evidence_items,
 )
+from .evidence_enrichment import (
+    ClaimReviewDecision,
+    ClaimReviewRecord,
+    ClaimReviewerType,
+    EnrichmentClaim,
+    EnrichmentClaimType,
+    EnrichmentOrigin,
+    EnrichmentRelationship,
+    EnrichmentScope,
+    EnrichmentTemporality,
+    EvidenceEnrichmentArtifact,
+    EvidenceEnrichmentSummary,
+    ResumeEnrichmentMaterial,
+    ResumeEnrichmentUse,
+    build_evidence_enrichment,
+    create_claim_review,
+    create_enrichment_claim,
+    generate_claim_review_id,
+    generate_enrichment_artifact_id,
+    generate_enrichment_claim_id,
+    load_evidence_enrichment,
+    load_evidence_enrichment_revision_source,
+    save_evidence_enrichment,
+    select_resume_enrichment_materials,
+)
 from .live_jobs import (
     ApplicationURLStatus,
     LiveJobCollection,
@@ -303,7 +328,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 __all__ = [
     "AtomicEvidenceLocator",
@@ -575,4 +600,27 @@ __all__ = [
     "merge_proposed_clusters",
     "quarantine_candidate_logic_group",
     "validate_role_direction_context",
+    "ClaimReviewDecision",
+    "ClaimReviewRecord",
+    "ClaimReviewerType",
+    "EnrichmentClaim",
+    "EnrichmentClaimType",
+    "EnrichmentOrigin",
+    "EnrichmentRelationship",
+    "EnrichmentScope",
+    "EnrichmentTemporality",
+    "EvidenceEnrichmentArtifact",
+    "EvidenceEnrichmentSummary",
+    "ResumeEnrichmentMaterial",
+    "ResumeEnrichmentUse",
+    "build_evidence_enrichment",
+    "create_claim_review",
+    "create_enrichment_claim",
+    "generate_claim_review_id",
+    "generate_enrichment_artifact_id",
+    "generate_enrichment_claim_id",
+    "load_evidence_enrichment",
+    "load_evidence_enrichment_revision_source",
+    "save_evidence_enrichment",
+    "select_resume_enrichment_materials",
 ]
