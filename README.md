@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.15.1**
+**Version 0.15.2**
 
 Ready today:
 
@@ -117,6 +117,7 @@ aarvia enrich-evidence --profile profile.json \
 ```
 
 Evidence references accept one or more comma-separated numbers, such as `1, 2`.
+During enrichment, use `b` to go back; Claims can be edited or deleted before the final save.
 
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
 

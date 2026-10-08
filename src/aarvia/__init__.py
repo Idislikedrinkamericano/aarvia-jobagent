@@ -328,7 +328,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.15.1"
+__version__ = "0.15.2"
 
 __all__ = [
     "AtomicEvidenceLocator",

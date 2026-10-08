@@ -1280,12 +1280,23 @@ def _source_label(source) -> str:
     return " - ".join(values) if values else source.record_type.value.replace("_", " ").title()
 
 
-def _enum_choice(prompt, choices, *, input_fn):
-    by_value = {item.value: item for item in choices}
+def _enrichment_choice(
+    prompt: str, allowed: set[str], *, input_fn: InputFunction,
+    output_fn: OutputFunction,
+) -> str:
     while True:
         answer = _enrichment_answer(prompt, input_fn=input_fn).strip().lower()
-        if answer in by_value:
-            return by_value[answer]
+        if answer in allowed:
+            return answer
+        output_fn("Please enter one of: " + ", ".join(sorted(allowed)) + ", or q")
+
+
+def _enrichment_yes_no(
+    prompt: str, *, input_fn: InputFunction, output_fn: OutputFunction
+) -> bool:
+    return _enrichment_choice(
+        prompt, {"y", "n"}, input_fn=input_fn, output_fn=output_fn
+    ) == "y"
 
 
 def _parse_evidence_numbers(value: str, *, item_count: int) -> tuple[int, ...]:
@@ -1309,32 +1320,357 @@ def _parse_evidence_numbers(value: str, *, item_count: int) -> tuple[int, ...]:
     return tuple(sorted(indices))
 
 
+_ENRICHMENT_STRUCTURED_TYPES = {
+    EnrichmentClaimType.METRIC,
+    EnrichmentClaimType.SCALE,
+    EnrichmentClaimType.TECHNOLOGY,
+    EnrichmentClaimType.COMPLETION_STATUS,
+    EnrichmentClaimType.TIMELINE,
+}
+_CLAIM_FIELDS = (
+    "claim_type", "statement", "evidence_numbers", "relationship",
+    "temporality", "scope", "structured_value",
+)
+
+
+def _claim_draft(claim=None, *, source_items=()):
+    if claim is None:
+        return {
+            "claim_type": None, "statement": None, "evidence_numbers": None,
+            "relationship": None, "temporality": None, "scope": None,
+            "structured_value": None, "_completed_fields": set(),
+        }
+    item_numbers = {
+        item.evidence_item_id: index for index, item in enumerate(source_items, 1)
+    }
+    return {
+        "claim_type": claim.claim_type,
+        "statement": claim.user_supplied_statement,
+        "evidence_numbers": tuple(item_numbers[item_id] for item_id in claim.evidence_item_ids),
+        "relationship": claim.relationship,
+        "temporality": claim.temporality,
+        "scope": claim.scope,
+        "structured_value": claim.structured_value,
+        "_completed_fields": set(_CLAIM_FIELDS),
+    }
+
+
+def _claim_field_order(draft) -> tuple[str, ...]:
+    fields = _CLAIM_FIELDS[:-1]
+    if draft["claim_type"] in _ENRICHMENT_STRUCTURED_TYPES:
+        fields += ("structured_value",)
+    return fields
+
+
+def _edit_claim_field(
+    field: str, draft, *, source_items, input_fn: InputFunction,
+    output_fn: OutputFunction,
+) -> bool:
+    """Edit one draft field. Return False when the user requests back."""
+    if field == "claim_type":
+        values = "/".join(item.value for item in EnrichmentClaimType)
+        while True:
+            answer = _enrichment_answer(
+                f"Detail type [{values}/b/q]: ", input_fn=input_fn
+            ).strip().lower()
+            if answer == "b":
+                return False
+            try:
+                draft[field] = EnrichmentClaimType(answer)
+            except ValueError:
+                output_fn("Invalid detail type. Please try again.")
+                continue
+            if draft[field] not in _ENRICHMENT_STRUCTURED_TYPES:
+                draft["structured_value"] = None
+                draft["_completed_fields"].discard("structured_value")
+            return True
+    if field == "statement":
+        while True:
+            answer = _enrichment_answer(
+                "Completed or ongoing fact in your own words [b/q]: ", input_fn=input_fn
+            )
+            if answer.strip().lower() == "b":
+                return False
+            if not answer.strip():
+                output_fn("Statement cannot be blank.")
+                continue
+            draft[field] = answer
+            return True
+    if field == "evidence_numbers":
+        while True:
+            answer = _enrichment_answer(
+                "Evidence numbers (comma-separated; blank for source-level context; b/q): ",
+                input_fn=input_fn,
+            )
+            if answer.strip().lower() == "b":
+                return False
+            try:
+                draft[field] = _parse_evidence_numbers(
+                    answer, item_count=len(source_items)
+                )
+            except Phase2ValidationError as error:
+                output_fn(f"Invalid evidence numbers: {error}")
+                continue
+            return True
+    enum_fields = {
+        "relationship": EnrichmentRelationship,
+        "temporality": EnrichmentTemporality,
+        "scope": EnrichmentScope,
+    }
+    if field in enum_fields:
+        enum_type = enum_fields[field]
+        values = "/".join(item.value for item in enum_type)
+        while True:
+            answer = _enrichment_answer(
+                f"{field.replace('_', ' ').title()} [{values}/b/q]: ",
+                input_fn=input_fn,
+            ).strip().lower()
+            if answer == "b":
+                return False
+            try:
+                draft[field] = enum_type(answer)
+            except ValueError:
+                output_fn(f"Invalid {field.replace('_', ' ')}. Please try again.")
+                continue
+            return True
+    if field == "structured_value":
+        answer = _enrichment_answer(
+            "Optional structured value (blank to omit; b/q): ", input_fn=input_fn
+        )
+        if answer.strip().lower() == "b":
+            return False
+        draft[field] = answer if answer.strip() else None
+        return True
+    raise AssertionError(f"unsupported Claim field: {field}")
+
+
+def _fill_claim_draft(
+    draft, *, source_items, input_fn: InputFunction, output_fn: OutputFunction,
+    start_index: int = 0,
+) -> bool:
+    index = start_index
+    force_prompt = True
+    while True:
+        fields = _claim_field_order(draft)
+        if index >= len(fields):
+            return True
+        if fields[index] in draft["_completed_fields"] and not force_prompt:
+            index += 1
+            continue
+        if _edit_claim_field(
+            fields[index], draft, source_items=source_items,
+            input_fn=input_fn, output_fn=output_fn,
+        ):
+            draft["_completed_fields"].add(fields[index])
+            index += 1
+            force_prompt = False
+        elif index == 0:
+            return False
+        else:
+            index -= 1
+            force_prompt = True
+
+
+def _print_claim(draft, *, source_items, output_fn: OutputFunction) -> None:
+    evidence = (
+        "Source-level context"
+        if not draft["evidence_numbers"]
+        else "; ".join(
+            source_items[index - 1].exact_excerpt
+            for index in draft["evidence_numbers"]
+        )
+    )
+    output_fn("Claim preview")
+    output_fn(f"Type: {draft['claim_type'].value}")
+    output_fn(f"Statement: {draft['statement']}")
+    output_fn(f"Evidence: {evidence}")
+    output_fn(f"Relationship: {draft['relationship'].value}")
+    output_fn(f"Temporality: {draft['temporality'].value}")
+    output_fn(f"Scope: {draft['scope'].value}")
+    if draft["claim_type"] in _ENRICHMENT_STRUCTURED_TYPES:
+        output_fn(f"Structured value: {draft['structured_value'] or 'Not provided'}")
+
+
+def _edit_claim_menu(
+    draft, *, source_items, input_fn: InputFunction, output_fn: OutputFunction
+) -> None:
+    while True:
+        fields = _claim_field_order(draft)
+        output_fn("Edit fields:")
+        for index, field in enumerate(fields, 1):
+            output_fn(f"  {index}. {field.replace('_', ' ')}")
+        answer = _enrichment_answer(
+            "Choose a field number, or [b]ack/[q]uit: ", input_fn=input_fn
+        ).strip().lower()
+        if answer == "b":
+            return
+        try:
+            index = int(answer)
+        except ValueError:
+            output_fn("Please enter a listed field number, b, or q.")
+            continue
+        if index < 1 or index > len(fields):
+            output_fn("Field number is out of range.")
+            continue
+        if _edit_claim_field(
+            fields[index - 1], draft, source_items=source_items,
+            input_fn=input_fn, output_fn=output_fn,
+        ):
+            draft["_completed_fields"].add(fields[index - 1])
+
+
+def _review_claim_draft(
+    draft, *, source_items, input_fn: InputFunction, output_fn: OutputFunction,
+    existing_decision: ClaimReviewDecision | None = None,
+):
+    while True:
+        _print_claim(draft, source_items=source_items, output_fn=output_fn)
+        answer = _enrichment_choice(
+            "[c]onfirmed/[r]ejected/[d]eferred/[e]dit/[b]ack/[q]uit: ",
+            {"c", "r", "d", "e", "b"}, input_fn=input_fn, output_fn=output_fn,
+        )
+        if answer == "e":
+            _edit_claim_menu(
+                draft, source_items=source_items, input_fn=input_fn,
+                output_fn=output_fn,
+            )
+            continue
+        if answer == "b":
+            return None
+        return {
+            "c": ClaimReviewDecision.CONFIRMED,
+            "r": ClaimReviewDecision.REJECTED,
+            "d": ClaimReviewDecision.DEFERRED,
+        }[answer]
+
+
+def _materialize_claim(bank, source, source_items, draft):
+    return create_enrichment_claim(
+        evidence_bank_id=bank.evidence_bank_id,
+        source_record_id=source.source_record_id,
+        evidence_item_ids=[
+            source_items[index - 1].evidence_item_id
+            for index in draft["evidence_numbers"]
+        ],
+        claim_type=draft["claim_type"], relationship=draft["relationship"],
+        user_supplied_statement=draft["statement"],
+        temporality=draft["temporality"], scope=draft["scope"],
+        structured_value=draft["structured_value"],
+    )
+
+
+def _create_claim_interactively(
+    bank, source, source_items, *, input_fn, output_fn, reviewed_at,
+):
+    draft = _claim_draft(source_items=source_items)
+    if not _fill_claim_draft(
+        draft, source_items=source_items, input_fn=input_fn, output_fn=output_fn
+    ):
+        return None
+    while True:
+        decision = _review_claim_draft(
+            draft, source_items=source_items, input_fn=input_fn, output_fn=output_fn
+        )
+        if decision is not None:
+            claim = _materialize_claim(bank, source, source_items, draft)
+            return claim, create_claim_review(
+                claim, decision=decision, reviewed_at=reviewed_at
+            )
+        fields = _claim_field_order(draft)
+        if not _fill_claim_draft(
+            draft, source_items=source_items, input_fn=input_fn,
+            output_fn=output_fn, start_index=len(fields) - 1,
+        ):
+            return None
+
+
+def _select_claim(
+    source_claims, *, prompt: str, input_fn: InputFunction,
+    output_fn: OutputFunction,
+):
+    while True:
+        answer = _enrichment_answer(prompt, input_fn=input_fn).strip().lower()
+        if answer == "b":
+            return None
+        try:
+            index = int(answer)
+        except ValueError:
+            output_fn("Please enter a Claim number, b, or q.")
+            continue
+        if index < 1 or index > len(source_claims):
+            output_fn("Claim number is out of range.")
+            continue
+        return source_claims[index - 1]
+
+
+def _source_claims(source_id, claims_by_id):
+    return sorted(
+        (item for item in claims_by_id.values() if item.source_record_id == source_id),
+        key=lambda item: item.claim_id,
+    )
+
+
+def _print_source_claims(
+    source, claims_by_id, reviews_by_claim, *, locked_claim_ids, output_fn
+):
+    source_claims = _source_claims(source.source_record_id, claims_by_id)
+    output_fn(f"Claims for {_source_label(source)}:")
+    if not source_claims:
+        output_fn("  None")
+    for index, claim in enumerate(source_claims, 1):
+        locked = " (saved revision)" if claim.claim_id in locked_claim_ids else ""
+        output_fn(
+            f"  {index}. [{reviews_by_claim[claim.claim_id].decision.value}] "
+            f"{claim.user_supplied_statement}{locked}"
+        )
+    return source_claims
+
+
+def _edit_existing_claim(
+    bank, source, source_items, claim, review, *, locked: bool,
+    input_fn: InputFunction, output_fn: OutputFunction, reviewed_at: str,
+):
+    if locked:
+        output_fn(f"Statement: {claim.user_supplied_statement}")
+        answer = _enrichment_choice(
+            "Saved Claim: [c]onfirmed/[r]ejected/[d]eferred/[b]ack/[q]uit: ",
+            {"c", "r", "d", "b"}, input_fn=input_fn, output_fn=output_fn,
+        )
+        if answer == "b":
+            return claim, review
+        decision = {
+            "c": ClaimReviewDecision.CONFIRMED,
+            "r": ClaimReviewDecision.REJECTED,
+            "d": ClaimReviewDecision.DEFERRED,
+        }[answer]
+        return claim, create_claim_review(
+            claim, decision=decision, reviewed_at=reviewed_at
+        )
+    draft = _claim_draft(claim, source_items=source_items)
+    decision = _review_claim_draft(
+        draft, source_items=source_items, input_fn=input_fn,
+        output_fn=output_fn, existing_decision=review.decision,
+    )
+    if decision is None:
+        return claim, review
+    updated = _materialize_claim(bank, source, source_items, draft)
+    return updated, create_claim_review(
+        updated, decision=decision, reviewed_at=reviewed_at
+    )
+
+
 def _collect_enrichment_claims(
     bank: EvidenceBank,
     *, input_fn: InputFunction, output_fn: OutputFunction, reviewed_at: str,
     previous: EvidenceEnrichmentArtifact | None,
 ):
-    claims = list(() if previous is None else previous.claims)
+    claims_by_id = {
+        item.claim_id: item for item in (() if previous is None else previous.claims)
+    }
     reviews_by_claim = {
         item.claim_id: item for item in (() if previous is None else previous.claim_reviews)
     }
-    if previous is not None:
-        output_fn("Reviewing decisions from the prior Enrichment revision")
-        for claim in previous.claims:
-            old = reviews_by_claim[claim.claim_id]
-            output_fn(f"Statement: {claim.user_supplied_statement}")
-            answer = _enrichment_answer(
-                f"Decision [{old.decision.value}; Enter to keep, confirmed/rejected/deferred]: ",
-                input_fn=input_fn,
-            ).strip().lower()
-            if answer:
-                try:
-                    decision = ClaimReviewDecision(answer)
-                except ValueError as error:
-                    raise Phase2ValidationError("invalid Enrichment review decision") from error
-                reviews_by_claim[claim.claim_id] = create_claim_review(
-                    claim, decision=decision, reviewed_at=reviewed_at,
-                )
+    locked_claim_ids = set(claims_by_id)
 
     items_by_source = {
         source.source_record_id: tuple(
@@ -1353,77 +1689,146 @@ def _collect_enrichment_claims(
             "metric/scale, technology, ownership, completion, timeline, or context."
         )
         while True:
-            add = _enrichment_answer(
-                "Add a confirmed detail for this source? [y/N/q]: ", input_fn=input_fn
-            ).strip().lower()
-            if add != "y":
+            source_claims = _print_source_claims(
+                source, claims_by_id, reviews_by_claim,
+                locked_claim_ids=locked_claim_ids, output_fn=output_fn,
+            )
+            action = _enrichment_choice(
+                "[a]dd/[e]dit/[d]elete/[n]ext/[q]uit: ",
+                {"a", "e", "d", "n"}, input_fn=input_fn, output_fn=output_fn,
+            )
+            if action == "n":
                 break
-            claim_type = _enum_choice(
-                "Detail type [challenge/action/responsibility/result/metric/scale/technology/ownership/completion_status/timeline/context]: ",
-                EnrichmentClaimType, input_fn=input_fn,
-            )
-            statement = _enrichment_answer(
-                "Enter only a completed or ongoing fact in your own words: ", input_fn=input_fn
-            )
-            if not statement.strip():
-                output_fn("Blank detail skipped.")
-                continue
-            while True:
-                references = _enrichment_answer(
-                    "Evidence numbers (comma-separated; blank for source-level context): ",
-                    input_fn=input_fn,
+            if action == "a":
+                result = _create_claim_interactively(
+                    bank, source, source_items, input_fn=input_fn,
+                    output_fn=output_fn, reviewed_at=reviewed_at,
                 )
-                try:
-                    indices = _parse_evidence_numbers(
-                        references, item_count=len(source_items)
-                    )
-                except Phase2ValidationError as error:
-                    output_fn(f"Invalid evidence numbers: {error}")
+                if result is None:
                     continue
-                break
-            selected_items = [source_items[index - 1] for index in indices]
-            relationship = _enum_choice(
-                "Relationship [confirms/clarifies/supplements]: ",
-                EnrichmentRelationship, input_fn=input_fn,
+                claim, review = result
+                if claim.claim_id in claims_by_id:
+                    output_fn("That Claim already exists; edit the existing Claim instead.")
+                    continue
+                claims_by_id[claim.claim_id] = claim
+                reviews_by_claim[claim.claim_id] = review
+                continue
+            if not source_claims:
+                output_fn("There are no Claims to edit or delete for this Source.")
+                continue
+            selected = _select_claim(
+                source_claims, prompt="Claim number [b/q]: ",
+                input_fn=input_fn, output_fn=output_fn,
             )
-            temporality = _enum_choice(
-                "Temporality [completed/ongoing]: ", EnrichmentTemporality,
-                input_fn=input_fn,
+            if selected is None:
+                continue
+            if action == "d":
+                if selected.claim_id in locked_claim_ids:
+                    output_fn("Saved revision Claims are immutable and cannot be deleted.")
+                    continue
+                if _enrichment_yes_no(
+                    "Delete this Claim? [y/n/q]: ", input_fn=input_fn,
+                    output_fn=output_fn,
+                ):
+                    claims_by_id.pop(selected.claim_id)
+                    reviews_by_claim.pop(selected.claim_id)
+                continue
+            updated, review = _edit_existing_claim(
+                bank, source, source_items, selected,
+                reviews_by_claim[selected.claim_id],
+                locked=selected.claim_id in locked_claim_ids,
+                input_fn=input_fn, output_fn=output_fn, reviewed_at=reviewed_at,
             )
-            scope = _enum_choice(
-                "Scope [personal_contribution/team_context/project_context]: ",
-                EnrichmentScope, input_fn=input_fn,
+            if updated.claim_id != selected.claim_id:
+                if updated.claim_id in claims_by_id:
+                    output_fn("The edited Claim duplicates an existing Claim; no change was made.")
+                    continue
+                claims_by_id.pop(selected.claim_id)
+                reviews_by_claim.pop(selected.claim_id)
+            claims_by_id[updated.claim_id] = updated
+            reviews_by_claim[updated.claim_id] = review
+    return claims_by_id, reviews_by_claim, locked_claim_ids, items_by_source
+
+
+def _print_all_enrichment_claims(
+    bank, claims_by_id, reviews_by_claim, items_by_source, *,
+    locked_claim_ids, output_fn
+) -> None:
+    output_fn("Evidence Enrichment final summary")
+    for source in bank.sources:
+        source_claims = _source_claims(source.source_record_id, claims_by_id)
+        output_fn(_source_label(source))
+        if not source_claims:
+            output_fn("  None")
+            continue
+        for index, claim in enumerate(source_claims, 1):
+            locked = " (saved revision)" if claim.claim_id in locked_claim_ids else ""
+            output_fn(
+                f"  {index}. Review: {reviews_by_claim[claim.claim_id].decision.value}{locked}"
             )
-            structured = None
-            if claim_type in {
-                EnrichmentClaimType.METRIC, EnrichmentClaimType.SCALE,
-                EnrichmentClaimType.TECHNOLOGY, EnrichmentClaimType.COMPLETION_STATUS,
-                EnrichmentClaimType.TIMELINE,
-            }:
-                structured = _enrichment_answer(
-                    "Optional structured value (blank to omit): ", input_fn=input_fn
-                )
-                structured = structured if structured.strip() else None
-            claim = create_enrichment_claim(
-                evidence_bank_id=bank.evidence_bank_id,
-                source_record_id=source.source_record_id,
-                evidence_item_ids=[item.evidence_item_id for item in selected_items],
-                claim_type=claim_type, relationship=relationship,
-                user_supplied_statement=statement, temporality=temporality,
-                scope=scope, structured_value=structured,
+            _print_claim(
+                _claim_draft(
+                    claim, source_items=items_by_source[source.source_record_id]
+                ),
+                source_items=items_by_source[source.source_record_id],
+                output_fn=output_fn,
             )
-            output_fn(f"Statement: {claim.user_supplied_statement}")
-            decision = _enum_choice(
-                "Review decision [confirmed/rejected/deferred/q]: ",
-                ClaimReviewDecision, input_fn=input_fn,
-            )
-            if claim.claim_id in reviews_by_claim:
-                raise Phase2ValidationError("this Enrichment Claim already exists")
-            claims.append(claim)
-            reviews_by_claim[claim.claim_id] = create_claim_review(
-                claim, decision=decision, reviewed_at=reviewed_at,
-            )
-    return claims, list(reviews_by_claim.values())
+
+
+def _final_edit_enrichment_claim(
+    bank, claims_by_id, reviews_by_claim, locked_claim_ids, items_by_source,
+    *, input_fn: InputFunction, output_fn: OutputFunction, reviewed_at: str,
+) -> None:
+    sources = [
+        source for source in bank.sources
+        if _source_claims(source.source_record_id, claims_by_id)
+    ]
+    if not sources:
+        output_fn("There are no Claims to edit.")
+        return
+    output_fn("Sources with Claims:")
+    for index, source in enumerate(sources, 1):
+        output_fn(f"  {index}. {_source_label(source)}")
+    while True:
+        answer = _enrichment_answer(
+            "Source number [b/q]: ", input_fn=input_fn
+        ).strip().lower()
+        if answer == "b":
+            return
+        try:
+            source_index = int(answer)
+        except ValueError:
+            output_fn("Please enter a Source number, b, or q.")
+            continue
+        if source_index < 1 or source_index > len(sources):
+            output_fn("Source number is out of range.")
+            continue
+        break
+    source = sources[source_index - 1]
+    source_claims = _print_source_claims(
+        source, claims_by_id, reviews_by_claim,
+        locked_claim_ids=locked_claim_ids, output_fn=output_fn,
+    )
+    selected = _select_claim(
+        source_claims, prompt="Claim number [b/q]: ",
+        input_fn=input_fn, output_fn=output_fn,
+    )
+    if selected is None:
+        return
+    updated, review = _edit_existing_claim(
+        bank, source, items_by_source[source.source_record_id], selected,
+        reviews_by_claim[selected.claim_id],
+        locked=selected.claim_id in locked_claim_ids,
+        input_fn=input_fn, output_fn=output_fn, reviewed_at=reviewed_at,
+    )
+    if updated.claim_id != selected.claim_id:
+        if updated.claim_id in claims_by_id:
+            output_fn("The edited Claim duplicates an existing Claim; no change was made.")
+            return
+        claims_by_id.pop(selected.claim_id)
+        reviews_by_claim.pop(selected.claim_id)
+    claims_by_id[updated.claim_id] = updated
+    reviews_by_claim[updated.claim_id] = review
 
 
 def _run_enrich_evidence(
@@ -1488,11 +1893,28 @@ def _run_enrich_evidence(
         arguments.supersede, **context
     )
     now = now_fn()
-    claims, reviews = _collect_enrichment_claims(
+    claims_by_id, reviews_by_claim, locked_claim_ids, items_by_source = _collect_enrichment_claims(
         bank, input_fn=input_fn, output_fn=output_fn, reviewed_at=now, previous=previous
     )
+    while True:
+        _print_all_enrichment_claims(
+            bank, claims_by_id, reviews_by_claim, items_by_source,
+            locked_claim_ids=locked_claim_ids, output_fn=output_fn,
+        )
+        final_action = _enrichment_choice(
+            "[s]ave/[e]dit/[q]uit: ", {"s", "e"},
+            input_fn=input_fn, output_fn=output_fn,
+        )
+        if final_action == "s":
+            break
+        _final_edit_enrichment_claim(
+            bank, claims_by_id, reviews_by_claim, locked_claim_ids,
+            items_by_source, input_fn=input_fn, output_fn=output_fn,
+            reviewed_at=now,
+        )
     artifact = build_evidence_enrichment(
-        **context, claims=claims, claim_reviews=reviews, created_at=now,
+        **context, claims=list(claims_by_id.values()),
+        claim_reviews=list(reviews_by_claim.values()), created_at=now,
         superseded_enrichment=previous,
     )
     summary = artifact.summary
@@ -1501,12 +1923,6 @@ def _run_enrich_evidence(
     output_fn(f"Rejected: {summary.rejected_count}")
     output_fn(f"Deferred: {summary.deferred_count}")
     output_fn(f"Conservative Resume inputs: {summary.resume_selectable_count}")
-    confirmation = _enrichment_answer(
-        "Save this Evidence Enrichment artifact? [y/N/q]: ", input_fn=input_fn
-    ).strip().lower()
-    if confirmation != "y":
-        output_fn("Evidence Enrichment not saved. No files were changed.")
-        return 0
     save_evidence_enrichment(
         artifact, arguments.output, **context, superseded_enrichment=previous
     )
