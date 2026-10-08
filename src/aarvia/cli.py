@@ -29,7 +29,14 @@ from .career_gap_analysis import (
     CareerGapAnalysis,
     GapClassification,
     build_career_gap_analysis,
+    load_career_gap_analysis,
     save_career_gap_analysis,
+)
+from .evidence_bank import (
+    EvidenceBank,
+    build_evidence_bank,
+    load_evidence_bank_revision_source,
+    save_evidence_bank,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -77,6 +84,10 @@ class DecisionSessionCancelled(Exception):
 
 class GapAnalysisSessionCancelled(Exception):
     """Raised when the user cancels before a Gap Analysis artifact is written."""
+
+
+class EvidenceBankSessionCancelled(Exception):
+    """Raised when the user cancels before an Evidence Bank is written."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -225,6 +236,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="prior confirmed Decision required when the current Decision is a revision",
     )
     gaps.add_argument("--output", type=Path, required=True, help="new Career Gap Analysis JSON path")
+    bank = subparsers.add_parser(
+        "build-evidence-bank",
+        help="build a deterministic fact and capability evidence bank from confirmed artifacts",
+    )
+    bank.add_argument("--profile", type=Path, required=True, help="Career Profile JSON path")
+    bank.add_argument("--mapping", type=Path, required=True, help="Mapping schema 5 JSON path")
+    bank.add_argument(
+        "--recommendation", type=Path, required=True,
+        help="Recommendation schema 7 JSON path",
+    )
+    bank.add_argument("--decision", type=Path, required=True, help="confirmed Decision schema 2 JSON path")
+    bank.add_argument("--gap-analysis", type=Path, required=True, help="Career Gap Analysis schema 2 JSON path")
+    bank.add_argument(
+        "--review-artifact", type=Path,
+        help="Evidence Binding Review referenced by the Recommendation",
+    )
+    bank.add_argument(
+        "--allocation-review-artifact", type=Path,
+        help="Evidence Group Allocation Review referenced by the Recommendation",
+    )
+    bank.add_argument(
+        "--superseded-decision", type=Path,
+        help="prior confirmed Decision required when the current Decision is a revision",
+    )
+    bank.add_argument(
+        "--supersede", type=Path,
+        help="immutable Evidence Bank schema 1 to replace with an explicit new revision",
+    )
+    bank.add_argument("--output", type=Path, required=True, help="new Evidence Bank JSON path")
     return parser
 
 
@@ -1014,6 +1054,187 @@ def _run_analyze_gaps(
     return 0
 
 
+def _evidence_bank_answer(prompt: str, *, input_fn: InputFunction) -> str:
+    answer = input_fn(prompt).strip()
+    if answer.lower() == "q":
+        raise EvidenceBankSessionCancelled
+    return answer
+
+
+def _print_evidence_bank(
+    artifact: EvidenceBank, *, output_fn: OutputFunction
+) -> None:
+    summary = artifact.summary
+    output_fn("Evidence Bank")
+    output_fn(f"Confirmed profile facts: {summary.confirmed_profile_fact_count}")
+    output_fn(
+        "Confirmed capability support: "
+        f"{summary.confirmed_capability_support_count}"
+    )
+    output_fn(f"Developing evidence: {summary.developing_support_count}")
+    output_fn(f"Transferable foundations: {summary.transferable_support_count}")
+    output_fn(f"Unknown evidence needs: {summary.unknown_evidence_need_count}")
+    output_fn(
+        "Explicit development needs: "
+        f"{summary.explicit_development_need_count}"
+    )
+
+
+def _run_build_evidence_bank(
+    arguments,
+    *,
+    input_fn: InputFunction,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    protected_inputs = {
+        arguments.profile,
+        arguments.mapping,
+        arguments.recommendation,
+        arguments.decision,
+        arguments.gap_analysis,
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(
+            ()
+            if arguments.allocation_review_artifact is None
+            else (arguments.allocation_review_artifact,)
+        ),
+        *(
+            ()
+            if arguments.superseded_decision is None
+            else (arguments.superseded_decision,)
+        ),
+        *(() if arguments.supersede is None else (arguments.supersede,)),
+    }
+    if arguments.output in protected_inputs:
+        raise Phase2ValidationError("Evidence Bank output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(
+            f"Evidence Bank output already exists: {arguments.output}. "
+            "Choose a new output path."
+        )
+
+    profile = load_profile(arguments.profile)
+    rubric = production_capability_rubric()
+    catalog = production_role_catalog()
+    mapping = load_mapping_candidates(
+        arguments.mapping, profile=profile, rubric=rubric, catalog=catalog
+    )
+    evidence_reviews = (
+        None
+        if arguments.review_artifact is None
+        else load_evidence_binding_reviews(
+            arguments.review_artifact,
+            profile=profile,
+            rubric=rubric,
+            mapping=mapping,
+            catalog=catalog,
+        )
+    )
+    allocation_reviews = (
+        None
+        if arguments.allocation_review_artifact is None
+        else load_evidence_group_allocation_reviews(
+            arguments.allocation_review_artifact,
+            profile=profile,
+            rubric=rubric,
+            mapping=mapping,
+            catalog=catalog,
+        )
+    )
+    recommendation = load_role_recommendation(
+        arguments.recommendation,
+        profile=profile,
+        rubric=rubric,
+        catalog=catalog,
+        mapping_candidates=mapping,
+        evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+    )
+    superseded_decision = (
+        None
+        if arguments.superseded_decision is None
+        else load_user_role_decision_revision_source(
+            arguments.superseded_decision, catalog=catalog
+        )
+    )
+    decision = load_user_role_decision(
+        arguments.decision,
+        catalog=catalog,
+        recommendation_set=recommendation,
+        profile=profile,
+        rubric=rubric,
+        superseded_decision=superseded_decision,
+    )
+    gap_analysis = load_career_gap_analysis(
+        arguments.gap_analysis,
+        profile=profile,
+        rubric=rubric,
+        catalog=catalog,
+        mapping=mapping,
+        recommendation=recommendation,
+        decision=decision,
+        evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+        superseded_decision=superseded_decision,
+    )
+    superseded_bank = (
+        None
+        if arguments.supersede is None
+        else load_evidence_bank_revision_source(
+            arguments.supersede,
+            profile=profile,
+            rubric=rubric,
+            catalog=catalog,
+            mapping=mapping,
+            recommendation=recommendation,
+            decision=decision,
+            gap_analysis=gap_analysis,
+            evidence_reviews=evidence_reviews,
+            allocation_reviews=allocation_reviews,
+            superseded_decision=superseded_decision,
+        )
+    )
+    artifact = build_evidence_bank(
+        profile=profile,
+        rubric=rubric,
+        catalog=catalog,
+        mapping=mapping,
+        recommendation=recommendation,
+        decision=decision,
+        gap_analysis=gap_analysis,
+        evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+        superseded_bank=superseded_bank,
+        superseded_decision=superseded_decision,
+        created_at=now_fn(),
+    )
+    _print_evidence_bank(artifact, output_fn=output_fn)
+    confirmation = _evidence_bank_answer(
+        "Save this Evidence Bank? [y/N]: ", input_fn=input_fn
+    ).lower()
+    if confirmation != "y":
+        output_fn("Evidence Bank not saved. No files were changed.")
+        return 0
+    save_evidence_bank(
+        artifact,
+        arguments.output,
+        profile=profile,
+        rubric=rubric,
+        catalog=catalog,
+        mapping=mapping,
+        recommendation=recommendation,
+        decision=decision,
+        gap_analysis=gap_analysis,
+        evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+        superseded_bank=superseded_bank,
+        superseded_decision=superseded_decision,
+    )
+    output_fn(f"Evidence Bank saved to: {arguments.output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -1071,6 +1292,18 @@ def main(
             )
         except (GapAnalysisSessionCancelled, KeyboardInterrupt, EOFError):
             output_fn("Gap Analysis cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "build-evidence-bank":
+        try:
+            return _run_build_evidence_bank(
+                arguments, input_fn=input_fn, output_fn=output_fn
+            )
+        except (EvidenceBankSessionCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Evidence Bank cancelled. No files were changed.")
             return 130
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")

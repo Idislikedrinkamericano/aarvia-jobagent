@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.13.0**
+**Version 0.14.0**
 
 Ready today:
 
@@ -20,13 +20,14 @@ Ready today:
 - One global role ranking: Core-supported roles first, then Extended-only roles
 - A confirmed or deferred Career Direction Decision, saved separately from the recommendation
 - Deterministic Gap Analysis for the confirmed Primary and Secondary directions
+- A deterministic Evidence Bank that separates verified facts, capability links, and open needs
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 
 Not ready yet:
 
 - Live job discovery and detailed JD matching
-- Evidence Bank, resume tailoring, or application automation
+- Resume tailoring or application automation
 
 The production Role Catalog still contains **8 role families, 0 published requirements, and 0 sources**. Aarvia has a real recommendation rubric, but it does not pretend an unfinished market dataset is complete.
 
@@ -91,6 +92,16 @@ aarvia analyze-gaps --profile profile.json \
   --allocation-review-artifact allocation-review.json \
   --review-artifact evidence-review.json \
   --output gap-analysis.json
+
+# Build a reusable fact bank from the validated chain; no Provider call
+aarvia build-evidence-bank --profile profile.json \
+  --mapping mapping.json \
+  --allocation-review-artifact allocation-review.json \
+  --review-artifact evidence-review.json \
+  --recommendation reviewed-recommendation.json \
+  --decision career-decision.json \
+  --gap-analysis gap-analysis.json \
+  --output evidence-bank.json
 ```
 
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
@@ -134,8 +145,8 @@ Keep personal Profiles and diagnostics under ignored local paths such as `local_
 - **Phase 2A:** shared contracts and Role Catalog foundation — complete
 - **Phase 2B:** US early-career market evidence and curation foundation — complete, publication dataset still unfinished
 - **Phase 2C:** explainable recommendation, evidence review, and User Decision — complete
-- **Phase 2D:** deterministic role-level Gap Analysis — complete
-- **Phase 2E–2G:** live jobs, matching, Evidence Bank, and end-to-end hardening — not implemented
+- **Phase 2D:** deterministic Gap Analysis and Evidence Bank foundation — complete
+- **Phase 2E–2G:** live jobs, detailed matching, resume work, and end-to-end hardening — not implemented
 
 ## Development
 
