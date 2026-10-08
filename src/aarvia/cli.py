@@ -1288,6 +1288,27 @@ def _enum_choice(prompt, choices, *, input_fn):
             return by_value[answer]
 
 
+def _parse_evidence_numbers(value: str, *, item_count: int) -> tuple[int, ...]:
+    """Parse one-based Evidence choices without normalizing invalid input away."""
+    if not value.strip():
+        return ()
+    tokens = value.split(",")
+    stripped = [token.strip() for token in tokens]
+    if any(not token for token in stripped):
+        raise Phase2ValidationError("empty evidence number entries are not allowed")
+    try:
+        indices = tuple(int(token) for token in stripped)
+    except ValueError as error:
+        raise Phase2ValidationError("each evidence number must be an integer") from error
+    if len(indices) != len(set(indices)):
+        raise Phase2ValidationError("duplicate evidence numbers are not allowed")
+    if any(index < 1 or index > item_count for index in indices):
+        raise Phase2ValidationError(
+            f"evidence numbers must be between 1 and {item_count}"
+        )
+    return tuple(sorted(indices))
+
+
 def _collect_enrichment_claims(
     bank: EvidenceBank,
     *, input_fn: InputFunction, output_fn: OutputFunction, reviewed_at: str,
@@ -1347,19 +1368,20 @@ def _collect_enrichment_claims(
             if not statement.strip():
                 output_fn("Blank detail skipped.")
                 continue
-            references = _enrichment_answer(
-                "Evidence numbers (comma-separated; blank for source-level context): ",
-                input_fn=input_fn,
-            ).strip()
-            selected_items = []
-            if references:
+            while True:
+                references = _enrichment_answer(
+                    "Evidence numbers (comma-separated; blank for source-level context): ",
+                    input_fn=input_fn,
+                )
                 try:
-                    indices = sorted({int(value.strip()) for value in references.split(",")})
-                except ValueError as error:
-                    raise Phase2ValidationError("evidence numbers must be integers") from error
-                if any(index < 1 or index > len(source_items) for index in indices):
-                    raise Phase2ValidationError("evidence number is out of range")
-                selected_items = [source_items[index - 1] for index in indices]
+                    indices = _parse_evidence_numbers(
+                        references, item_count=len(source_items)
+                    )
+                except Phase2ValidationError as error:
+                    output_fn(f"Invalid evidence numbers: {error}")
+                    continue
+                break
+            selected_items = [source_items[index - 1] for index in indices]
             relationship = _enum_choice(
                 "Relationship [confirms/clarifies/supplements]: ",
                 EnrichmentRelationship, input_fn=input_fn,

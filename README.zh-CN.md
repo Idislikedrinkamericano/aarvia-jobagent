@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.15.0**
+**版本 0.15.1**
 
 现在能用：
 
@@ -115,6 +115,8 @@ aarvia enrich-evidence --profile profile.json \
   --evidence-bank evidence-bank.json \
   --output evidence-enrichment.json
 ```
+
+证据编号支持单个或逗号分隔输入，例如 `1, 2`。
 
 职业方向推荐衡量的是证据覆盖情况，**不是获得面试或 Offer 的概率**。
 

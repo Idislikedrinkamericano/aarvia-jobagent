@@ -2,13 +2,38 @@ from __future__ import annotations
 
 import pytest
 
-from aarvia.cli import main
+from aarvia.cli import _parse_evidence_numbers, main
 from aarvia.evidence_bank import build_evidence_bank, save_evidence_bank
 from aarvia.evidence_enrichment import load_evidence_enrichment
+from aarvia.role_catalog import Phase2ValidationError
 from test_evidence_bank_cli import _cli_context
 
 
 NOW = "2026-10-07T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("1,2", (1, 2)),
+        ("1, 2", (1, 2)),
+        ("1 , 2", (1, 2)),
+        ("1", (1,)),
+        ("", ()),
+        ("   ", ()),
+    ],
+)
+def test_evidence_number_parser_accepts_equivalent_formats(value, expected):
+    assert _parse_evidence_numbers(value, item_count=2) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["one", "1,,2", "1,1", "0", "-1", "3"],
+)
+def test_evidence_number_parser_rejects_invalid_or_unsafe_values(value):
+    with pytest.raises(Phase2ValidationError):
+        _parse_evidence_numbers(value, item_count=2)
 
 
 def _context(tmp_path):
@@ -93,6 +118,55 @@ def test_cli_saves_exact_user_statement_without_provider(tmp_path):
     assert artifact.claims[0].user_supplied_statement == "I implemented the workflow exactly as stated."
     assert artifact.summary.confirmed_count == 1
     assert any("Statement: I implemented" in item for item in messages)
+
+
+def test_invalid_evidence_number_reprompts_and_preserves_prior_claim(tmp_path):
+    context = _context(tmp_path)
+    output = tmp_path / "enrichment.json"
+    answers = iter([
+        "y", "action", "First confirmed statement.", "1", "supplements",
+        "completed", "personal_contribution", "confirmed",
+        "y", "context", "Second confirmed statement.", "not-a-number", "1",
+        "clarifies", "ongoing", "project_context", "confirmed", "n",
+        *("n" for _ in context["bank_object"].sources[1:]), "y",
+    ])
+    messages: list[str] = []
+    assert main(
+        _args(context, output), input_fn=lambda _: next(answers),
+        output_fn=messages.append,
+    ) == 0
+    artifact = _load(output, context)
+    assert {claim.user_supplied_statement for claim in artifact.claims} == {
+        "First confirmed statement.", "Second confirmed statement."
+    }
+    assert artifact.summary.confirmed_count == 2
+    assert any("Invalid evidence numbers" in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        lambda: (_ for _ in ()).throw(EOFError),
+        lambda: (_ for _ in ()).throw(KeyboardInterrupt),
+    ],
+)
+def test_evidence_number_prompt_eof_or_interrupt_writes_nothing(tmp_path, failure):
+    context = _context(tmp_path)
+    output = tmp_path / "enrichment.json"
+    answers = iter(["y", "action", "Unfinished statement."])
+    calls = 0
+
+    def input_fn(_):
+        nonlocal calls
+        calls += 1
+        if calls <= 3:
+            return next(answers)
+        return failure()
+
+    assert main(
+        _args(context, output), input_fn=input_fn, output_fn=lambda _: None
+    ) == 130
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(

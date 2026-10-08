@@ -595,3 +595,11 @@ Development records are appended to this file as the project evolves.
 - **Safety:** Only `completed` or `ongoing` temporality is representable. Unknown Needs cannot be cited as facts, cross-source item references are rejected, Provider fields are unknown-field failures, and rejected or deferred Claims never enter the conservative future Resume selector. Structural evidence remains structural even after confirmation; source-level context is retained but is not Resume-selectable without an Evidence Item. The Evidence Bank, Profile, scoring, Gap Analysis, and reviews are never rewritten.
 - **Validation / Test Results:** Added 36 contract and CLI regressions. The complete synthetic suite passed all 951 tests without network access, Provider calls, private-data writes, or `local_data` mutation. `git diff --check` passed during release validation.
 - **Not Implemented:** EvidencePlan, Provider rewriting, Base Resume, JD matching, application automation, and later resume workflows remain separate future stages.
+
+## 2026-10-08 - Evidence Number Input Recovery
+
+- **Phase:** Evidence Bank, stage 2 patch
+- **User Request:** Repair `enrich-evidence` comma-separated Evidence number parsing and keep an invalid entry from cancelling the whole unsaved session.
+- **Root Cause / Fix:** The parser lived inline in the session loop, discarded duplicates through a `set`, and allowed parse/range errors to escape to the command-level handler. Version `0.15.1` introduces a deterministic parser that trims each comma-delimited token, rejects empty, duplicate, non-integer, zero, negative, and out-of-range entries, and returns a sorted tuple. The CLI catches only these validation failures at the Evidence prompt, explains the problem, and retries that prompt without discarding completed in-memory Claims or restarting the current Claim.
+- **Compatibility:** Evidence Enrichment remains schema 1. Claim IDs, wire format, provenance, revision behavior, Resume selection, cancellation, atomic writes, and Provider-free operation are unchanged.
+- **Validation / Test Results:** Added 15 parser and recovery regressions. The complete suite passed all 966 tests; `git diff --check` passed, and `local_data` remained byte-for-byte unchanged.
