@@ -49,8 +49,15 @@ from .evidence_enrichment import (
     build_evidence_enrichment,
     create_claim_review,
     create_enrichment_claim,
+    load_evidence_enrichment,
     load_evidence_enrichment_revision_source,
     save_evidence_enrichment,
+)
+from .resume_material import (
+    ResumeMaterialArtifact,
+    build_resume_material,
+    load_resume_material_revision_source,
+    save_resume_material,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -106,6 +113,10 @@ class EvidenceBankSessionCancelled(Exception):
 
 class EvidenceEnrichmentSessionCancelled(Exception):
     """Raised when the user cancels before an Enrichment artifact is written."""
+
+
+class ResumeMaterialSessionCancelled(Exception):
+    """Raised when the user cancels before Resume Material is written."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -298,6 +309,23 @@ def build_parser() -> argparse.ArgumentParser:
     enrichment.add_argument("--superseded-decision", type=Path, help="prior confirmed Decision required by a Decision revision")
     enrichment.add_argument("--supersede", type=Path, help="prior Enrichment artifact for an explicit immutable revision")
     enrichment.add_argument("--output", type=Path, required=True, help="new Evidence Enrichment JSON path")
+    materials = subparsers.add_parser(
+        "prepare-resume-materials",
+        help="prepare deterministic role-neutral Resume material from confirmed evidence",
+    )
+    materials.add_argument("--profile", type=Path, required=True, help="Career Profile JSON path")
+    materials.add_argument("--mapping", type=Path, required=True, help="Mapping schema 5 JSON path")
+    materials.add_argument("--recommendation", type=Path, required=True, help="Recommendation schema 7 JSON path")
+    materials.add_argument("--decision", type=Path, required=True, help="confirmed Decision schema 2 JSON path")
+    materials.add_argument("--gap-analysis", type=Path, required=True, help="Career Gap Analysis schema 2 JSON path")
+    materials.add_argument("--evidence-bank", type=Path, required=True, help="Evidence Bank schema 1 JSON path")
+    materials.add_argument("--evidence-enrichment", type=Path, required=True, help="Evidence Enrichment schema 1 JSON path")
+    materials.add_argument("--review-artifact", type=Path, help="Binding Review referenced by the Recommendation")
+    materials.add_argument("--allocation-review-artifact", type=Path, help="Allocation Review referenced by the Recommendation")
+    materials.add_argument("--superseded-decision", type=Path, help="prior confirmed Decision required by a Decision revision")
+    materials.add_argument("--superseded-enrichment", type=Path, help="prior Enrichment required by an Enrichment revision")
+    materials.add_argument("--supersede", type=Path, help="prior Resume Material artifact for an explicit immutable revision")
+    materials.add_argument("--output", type=Path, required=True, help="new Resume Material JSON path")
     return parser
 
 
@@ -1930,6 +1958,134 @@ def _run_enrich_evidence(
     return 0
 
 
+def _print_resume_material(
+    artifact: ResumeMaterialArtifact, *, output_fn: OutputFunction,
+) -> None:
+    output_fn("Resume Material")
+    for material in sorted(
+        artifact.materials, key=lambda item: (item.section.value, item.material_id)
+    ):
+        output_fn(
+            f"[{material.section.value}] {material.eligibility.value}: "
+            f"{material.exact_text}"
+        )
+    coverage = artifact.coverage
+    output_fn("Coverage")
+    output_fn(
+        f"Education: {coverage.covered_education_count}/"
+        f"{coverage.profile_education_count}"
+    )
+    output_fn(
+        f"Experience / projects: {coverage.covered_experience_count}/"
+        f"{coverage.profile_experience_count}"
+    )
+    output_fn(f"Skills: {coverage.covered_skill_count}/{coverage.profile_skill_count}")
+    output_fn(
+        "Missing contact fields: "
+        + (", ".join(coverage.missing_contact_fields) or "None")
+    )
+    for issue in coverage.issues:
+        output_fn(f"- {issue.reason.value}: {issue.profile_path}")
+    output_fn(f"Partial coverage: {'yes' if coverage.partial_coverage else 'no'}")
+
+
+def _run_prepare_resume_materials(
+    arguments, *, input_fn: InputFunction, output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    protected_inputs = {
+        arguments.profile, arguments.mapping, arguments.recommendation,
+        arguments.decision, arguments.gap_analysis, arguments.evidence_bank,
+        arguments.evidence_enrichment,
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(() if arguments.allocation_review_artifact is None else (arguments.allocation_review_artifact,)),
+        *(() if arguments.superseded_decision is None else (arguments.superseded_decision,)),
+        *(() if arguments.superseded_enrichment is None else (arguments.superseded_enrichment,)),
+        *(() if arguments.supersede is None else (arguments.supersede,)),
+    }
+    if arguments.output in protected_inputs:
+        raise Phase2ValidationError("Resume Material output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(
+            f"Resume Material output already exists: {arguments.output}. Choose a new path."
+        )
+    profile = load_profile(arguments.profile)
+    rubric = production_capability_rubric()
+    catalog = production_role_catalog()
+    mapping = load_mapping_candidates(
+        arguments.mapping, profile=profile, rubric=rubric, catalog=catalog
+    )
+    evidence_reviews = None if arguments.review_artifact is None else load_evidence_binding_reviews(
+        arguments.review_artifact, profile=profile, rubric=rubric,
+        mapping=mapping, catalog=catalog,
+    )
+    allocation_reviews = None if arguments.allocation_review_artifact is None else load_evidence_group_allocation_reviews(
+        arguments.allocation_review_artifact, profile=profile, rubric=rubric,
+        mapping=mapping, catalog=catalog,
+    )
+    recommendation = load_role_recommendation(
+        arguments.recommendation, profile=profile, rubric=rubric, catalog=catalog,
+        mapping_candidates=mapping, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+    )
+    superseded_decision = None if arguments.superseded_decision is None else load_user_role_decision_revision_source(
+        arguments.superseded_decision, catalog=catalog
+    )
+    decision = load_user_role_decision(
+        arguments.decision, catalog=catalog, recommendation_set=recommendation,
+        profile=profile, rubric=rubric, superseded_decision=superseded_decision,
+    )
+    gap = load_career_gap_analysis(
+        arguments.gap_analysis, profile=profile, rubric=rubric, catalog=catalog,
+        mapping=mapping, recommendation=recommendation, decision=decision,
+        evidence_reviews=evidence_reviews, allocation_reviews=allocation_reviews,
+        superseded_decision=superseded_decision,
+    )
+    bank = load_evidence_bank(
+        arguments.evidence_bank, profile=profile, rubric=rubric, catalog=catalog,
+        mapping=mapping, recommendation=recommendation, decision=decision,
+        gap_analysis=gap, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews, superseded_decision=superseded_decision,
+    )
+    enrichment_context = dict(
+        profile=profile, rubric=rubric, catalog=catalog, mapping=mapping,
+        recommendation=recommendation, decision=decision, gap_analysis=gap,
+        evidence_bank=bank, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews, superseded_decision=superseded_decision,
+    )
+    superseded_enrichment = None if arguments.superseded_enrichment is None else load_evidence_enrichment_revision_source(
+        arguments.superseded_enrichment, **enrichment_context
+    )
+    enrichment = load_evidence_enrichment(
+        arguments.evidence_enrichment, **enrichment_context,
+        superseded_enrichment=superseded_enrichment,
+    )
+    material_context = dict(
+        **enrichment_context, evidence_enrichment=enrichment,
+        superseded_enrichment=superseded_enrichment,
+    )
+    previous = None if arguments.supersede is None else load_resume_material_revision_source(
+        arguments.supersede, **material_context
+    )
+    artifact = build_resume_material(
+        **material_context, created_at=now_fn(), superseded_resume_material=previous
+    )
+    _print_resume_material(artifact, output_fn=output_fn)
+    while True:
+        answer = input_fn("[s]ave/[q]uit: ").strip().lower()
+        if answer == "q":
+            raise ResumeMaterialSessionCancelled
+        if answer == "s":
+            break
+        output_fn("Please enter s or q.")
+    save_resume_material(
+        artifact, arguments.output, **material_context,
+        superseded_resume_material=previous,
+    )
+    output_fn(f"Resume Material saved to: {arguments.output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -2011,6 +2167,18 @@ def main(
             )
         except (EvidenceEnrichmentSessionCancelled, KeyboardInterrupt, EOFError):
             output_fn("Evidence Enrichment cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "prepare-resume-materials":
+        try:
+            return _run_prepare_resume_materials(
+                arguments, input_fn=input_fn, output_fn=output_fn
+            )
+        except (ResumeMaterialSessionCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Resume Material preparation cancelled. No files were changed.")
             return 130
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")

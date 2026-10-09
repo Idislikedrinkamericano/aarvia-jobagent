@@ -105,6 +105,26 @@ from .evidence_enrichment import (
     save_evidence_enrichment,
     select_resume_enrichment_materials,
 )
+from .resume_material import (
+    ResumeCoverageCategory,
+    ResumeCoverageIssue,
+    ResumeCoverageReason,
+    ResumeCoverageReport,
+    ResumeMaterial,
+    ResumeMaterialArtifact,
+    ResumeMaterialEligibility,
+    ResumeMaterialReason,
+    ResumeMaterialSummary,
+    ResumeMaterialType,
+    ResumeSectionType,
+    build_resume_material,
+    generate_coverage_issue_id,
+    generate_resume_material_artifact_id,
+    generate_resume_material_id,
+    load_resume_material,
+    load_resume_material_revision_source,
+    save_resume_material,
+)
 from .live_jobs import (
     ApplicationURLStatus,
     LiveJobCollection,
@@ -328,7 +348,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.15.2"
+__version__ = "0.16.0"
 
 __all__ = [
     "AtomicEvidenceLocator",
@@ -623,4 +643,22 @@ __all__ = [
     "load_evidence_enrichment_revision_source",
     "save_evidence_enrichment",
     "select_resume_enrichment_materials",
+    "ResumeCoverageCategory",
+    "ResumeCoverageIssue",
+    "ResumeCoverageReason",
+    "ResumeCoverageReport",
+    "ResumeMaterial",
+    "ResumeMaterialArtifact",
+    "ResumeMaterialEligibility",
+    "ResumeMaterialReason",
+    "ResumeMaterialSummary",
+    "ResumeMaterialType",
+    "ResumeSectionType",
+    "build_resume_material",
+    "generate_coverage_issue_id",
+    "generate_resume_material_artifact_id",
+    "generate_resume_material_id",
+    "load_resume_material",
+    "load_resume_material_revision_source",
+    "save_resume_material",
 ]
