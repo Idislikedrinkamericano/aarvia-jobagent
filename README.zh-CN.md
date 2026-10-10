@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.16.0**
+**版本 0.17.0**
 
 现在能用：
 
@@ -23,13 +23,14 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 - 建立确定性的 Evidence Bank，严格分开真实事实、能力链接和待确认需求
 - 用户可原样补充并审核 Evidence Enrichment，且不会改写 Evidence Bank
 - 生成确定性的 Resume Material，并如实报告尚未覆盖的内容
+- 用户可组合材料并审核自己编写的简历措辞，且每条措辞保留来源引用
 - 支持 OpenAI-compatible Provider，包括阿里云百炼
 - 原子 JSON 保存、确定性验证和隐私安全的诊断信息
 
 还没实现：
 
 - 实时岗位搜索和详细 JD Matching
-- 简历措辞、渲染、定制和自动申请
+- 简历渲染、定制和自动申请
 
 Production Role Catalog 目前仍是 **8 个 Role Family、0 条已发布 requirement、0 个 source**。推荐 Rubric 已经存在，但 Aarvia 不会把尚未完成的市场数据假装成事实。
 
@@ -123,6 +124,9 @@ aarvia enrich-evidence --profile profile.json \
 使用 `aarvia prepare-resume-materials --help` 准备可追踪、角色中立的 Resume Material。
 它不是成品简历；尚未覆盖的 Profile 记录和联系方式会明确保留。
 
+使用 `aarvia review-resume-wording --help` 将同一来源下的材料组合成用户自己编写并审核的措辞。
+该阶段不调用 Provider，也不会渲染成品简历。
+
 职业方向推荐衡量的是证据覆盖情况，**不是获得面试或 Offer 的概率**。
 
 ## Follow-up 输入命令
@@ -164,7 +168,7 @@ API Key、endpoint 和模型需要属于同一地域。Aarvia 对百炼使用 Ch
 - **Phase 2A：** 共享数据契约与 Role Catalog 基础 — 已完成
 - **Phase 2B：** 美国 early-career 市场证据与 curation 基础 — 已完成，正式发布数据集仍未完成
 - **Phase 2C：** 可解释推荐、证据审核与 User Decision — 已完成
-- **Phase 2D：** Gap Analysis、Evidence Bank、用户补充与 Resume Material 基础 — 已完成
+- **Phase 2D：** Gap Analysis、Evidence Bank、用户补充、Resume Material 与措辞审核基础 — 已完成
 - **Phase 2E–2G：** 实时岗位、详细匹配、简历工作和端到端加固 — 尚未实现
 
 ## 开发验证

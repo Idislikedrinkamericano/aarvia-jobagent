@@ -125,6 +125,26 @@ from .resume_material import (
     load_resume_material_revision_source,
     save_resume_material,
 )
+from .resume_wording import (
+    ResumeWordingReviewArtifact,
+    ResumeWordingSummary,
+    WordingCandidate,
+    WordingCandidateType,
+    WordingOrigin,
+    WordingReviewDecision,
+    WordingReviewerType,
+    WordingReviewRecord,
+    build_resume_wording_review,
+    create_wording_candidate,
+    create_wording_review,
+    generate_resume_wording_artifact_id,
+    generate_wording_candidate_id,
+    generate_wording_review_id,
+    load_resume_wording_review,
+    load_resume_wording_review_revision_source,
+    save_resume_wording_review,
+    select_confirmed_resume_wording,
+)
 from .live_jobs import (
     ApplicationURLStatus,
     LiveJobCollection,
@@ -348,7 +368,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 
 __all__ = [
     "AtomicEvidenceLocator",
@@ -661,4 +681,22 @@ __all__ = [
     "load_resume_material",
     "load_resume_material_revision_source",
     "save_resume_material",
+    "ResumeWordingReviewArtifact",
+    "ResumeWordingSummary",
+    "WordingCandidate",
+    "WordingCandidateType",
+    "WordingOrigin",
+    "WordingReviewDecision",
+    "WordingReviewerType",
+    "WordingReviewRecord",
+    "build_resume_wording_review",
+    "create_wording_candidate",
+    "create_wording_review",
+    "generate_resume_wording_artifact_id",
+    "generate_wording_candidate_id",
+    "generate_wording_review_id",
+    "load_resume_wording_review",
+    "load_resume_wording_review_revision_source",
+    "save_resume_wording_review",
+    "select_confirmed_resume_wording",
 ]

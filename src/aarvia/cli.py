@@ -56,8 +56,23 @@ from .evidence_enrichment import (
 from .resume_material import (
     ResumeMaterialArtifact,
     build_resume_material,
+    load_resume_material,
     load_resume_material_revision_source,
     save_resume_material,
+)
+from .resume_wording import (
+    ResumeWordingReviewArtifact,
+    WordingCandidate,
+    WordingCandidateType,
+    WordingOrigin,
+    WordingReviewDecision,
+    WordingReviewRecord,
+    _validate_candidate_materials,
+    build_resume_wording_review,
+    create_wording_candidate,
+    create_wording_review,
+    load_resume_wording_review_revision_source,
+    save_resume_wording_review,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -117,6 +132,10 @@ class EvidenceEnrichmentSessionCancelled(Exception):
 
 class ResumeMaterialSessionCancelled(Exception):
     """Raised when the user cancels before Resume Material is written."""
+
+
+class ResumeWordingSessionCancelled(Exception):
+    """Raised when the user cancels before Resume Wording is written."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -326,6 +345,25 @@ def build_parser() -> argparse.ArgumentParser:
     materials.add_argument("--superseded-enrichment", type=Path, help="prior Enrichment required by an Enrichment revision")
     materials.add_argument("--supersede", type=Path, help="prior Resume Material artifact for an explicit immutable revision")
     materials.add_argument("--output", type=Path, required=True, help="new Resume Material JSON path")
+    wording = subparsers.add_parser(
+        "review-resume-wording",
+        help="compose and review user-authored wording from verified Resume materials",
+    )
+    wording.add_argument("--profile", type=Path, required=True, help="Career Profile JSON path")
+    wording.add_argument("--mapping", type=Path, required=True, help="Mapping schema 5 JSON path")
+    wording.add_argument("--recommendation", type=Path, required=True, help="Recommendation schema 7 JSON path")
+    wording.add_argument("--decision", type=Path, required=True, help="confirmed Decision schema 2 JSON path")
+    wording.add_argument("--gap-analysis", type=Path, required=True, help="Career Gap Analysis schema 2 JSON path")
+    wording.add_argument("--evidence-bank", type=Path, required=True, help="Evidence Bank schema 1 JSON path")
+    wording.add_argument("--evidence-enrichment", type=Path, required=True, help="Evidence Enrichment schema 1 JSON path")
+    wording.add_argument("--resume-material", type=Path, required=True, help="Resume Material schema 1 JSON path")
+    wording.add_argument("--review-artifact", type=Path, help="Binding Review referenced by the Recommendation")
+    wording.add_argument("--allocation-review-artifact", type=Path, help="Allocation Review referenced by the Recommendation")
+    wording.add_argument("--superseded-decision", type=Path, help="prior Decision required by a Decision revision")
+    wording.add_argument("--superseded-enrichment", type=Path, help="prior Enrichment required by an Enrichment revision")
+    wording.add_argument("--superseded-resume-material", type=Path, help="prior Resume Material required by a material revision")
+    wording.add_argument("--supersede", type=Path, help="prior Wording Review for an immutable revision")
+    wording.add_argument("--output", type=Path, required=True, help="new Resume Wording Review JSON path")
     return parser
 
 
@@ -2086,6 +2124,479 @@ def _run_prepare_resume_materials(
     return 0
 
 
+def _wording_choice(
+    prompt: str, allowed: set[str], *, input_fn: InputFunction,
+    output_fn: OutputFunction,
+) -> str:
+    while True:
+        answer = input_fn(prompt).strip().lower()
+        if answer == "q":
+            raise ResumeWordingSessionCancelled
+        if answer in allowed:
+            return answer
+        output_fn("Please enter one of: " + ", ".join(sorted(allowed | {"q"})) + ".")
+
+
+def _wording_numbers(value: str, maximum: int) -> tuple[int, ...]:
+    tokens = value.split(",")
+    if any(not item.strip() for item in tokens):
+        raise ValueError("material numbers must not contain empty entries")
+    try:
+        numbers = tuple(int(item.strip()) for item in tokens)
+    except ValueError as error:
+        raise ValueError("material numbers must be integers") from error
+    if len(numbers) != len(set(numbers)):
+        raise ValueError("material numbers must not contain duplicates")
+    if any(item < 1 or item > maximum for item in numbers):
+        raise ValueError(f"material numbers must be between 1 and {maximum}")
+    return numbers
+
+
+def _print_wording_candidate(
+    candidate: WordingCandidate, review: WordingReviewRecord | None,
+    material_by_id: dict[str, object], *, output_fn: OutputFunction,
+) -> None:
+    output_fn(f"Section: {candidate.section_type.value}")
+    output_fn(f"Type: {candidate.candidate_type.value}")
+    output_fn("Materials:")
+    for material_id in candidate.material_ids:
+        material = material_by_id[material_id]
+        output_fn(f"- [{material.eligibility.value}] {material.exact_text}")
+    output_fn(f"Wording: {candidate.wording_text}")
+    if review is not None:
+        output_fn(f"Review: {review.decision.value}")
+
+
+def _compose_wording_candidate(
+    *, source_record_id: str, materials: list, created_at: str,
+    claims_by_id: dict[str, object],
+    input_fn: InputFunction, output_fn: OutputFunction,
+    initial: WordingCandidate | None = None,
+) -> tuple[WordingCandidate, WordingReviewRecord] | None:
+    selected_type = None if initial is None else initial.candidate_type
+    selected_ids = None if initial is None else initial.material_ids
+    wording_text = None if initial is None else initial.wording_text
+    origin = WordingOrigin.USER_AUTHORED if initial is None else initial.origin
+    step = 0
+    while True:
+        if step == 0:
+            raw = input_fn("Candidate type [u]bullet/[s]tructural_entry/[b]ack/[q]uit: ").strip().lower()
+            if raw == "q":
+                raise ResumeWordingSessionCancelled
+            if raw == "b":
+                return None
+            if raw not in {"u", "s"}:
+                output_fn("Please enter u, s, b, or q.")
+                continue
+            selected_type = (
+                WordingCandidateType.BULLET if raw == "u"
+                else WordingCandidateType.STRUCTURAL_ENTRY
+            )
+            step = 1
+        elif step == 1:
+            output_fn("Available materials")
+            for index, material in enumerate(materials, 1):
+                output_fn(f"{index}. [{material.eligibility.value}] {material.exact_text}")
+            raw = input_fn("Material numbers (comma-separated) [b]ack/[q]uit: ").strip()
+            if raw.lower() == "q":
+                raise ResumeWordingSessionCancelled
+            if raw.lower() == "b":
+                step = 0
+                continue
+            try:
+                numbers = _wording_numbers(raw, len(materials))
+            except ValueError as error:
+                output_fn(f"Invalid input: {error}")
+                continue
+            selected = [materials[index - 1] for index in numbers]
+            if selected_type == WordingCandidateType.BULLET:
+                if any(item.eligibility.value == "structural_only" for item in selected):
+                    output_fn("Invalid input: structural material cannot support a bullet.")
+                    continue
+                if not any(item.eligibility.value == "achievement_component" for item in selected):
+                    output_fn("Invalid input: a bullet requires an achievement component.")
+                    continue
+            elif any(item.eligibility.value != "structural_only" for item in selected):
+                output_fn("Invalid input: structural entries may use only structural material.")
+                continue
+            selected_ids = tuple(sorted(item.material_id for item in selected))
+            step = 2
+        elif step == 2:
+            raw = input_fn(
+                "Wording text (.exact for one material) [b]ack/[q]uit: "
+            )
+            if raw.strip().lower() == "q":
+                raise ResumeWordingSessionCancelled
+            if raw.strip().lower() == "b":
+                step = 1
+                continue
+            if raw == ".exact":
+                if selected_ids is None or len(selected_ids) != 1:
+                    output_fn("Invalid input: .exact requires exactly one material.")
+                    continue
+                wording_text = next(
+                    item.exact_text for item in materials
+                    if item.material_id == selected_ids[0]
+                )
+                origin = WordingOrigin.EXACT_MATERIAL
+            elif not raw.strip():
+                output_fn("Invalid input: wording must not be blank.")
+                continue
+            else:
+                wording_text = raw
+                origin = WordingOrigin.USER_AUTHORED
+            step = 3
+        else:
+            assert selected_type is not None and selected_ids is not None and wording_text is not None
+            candidate = create_wording_candidate(
+                section_type=next(
+                    item.section for item in materials if item.material_id == selected_ids[0]
+                ),
+                candidate_type=selected_type, source_record_id=source_record_id,
+                material_ids=selected_ids, wording_text=wording_text,
+                origin=origin, created_at=created_at,
+            )
+            try:
+                selected_materials = [
+                    item for item in materials if item.material_id in candidate.material_ids
+                ]
+                _validate_candidate_materials(
+                    candidate, selected_materials, claims_by_id
+                )
+            except Phase2ValidationError as error:
+                output_fn(f"Invalid input: {error}")
+                step = 2
+                continue
+            _print_wording_candidate(
+                candidate, None, {item.material_id: item for item in materials},
+                output_fn=output_fn,
+            )
+            raw = input_fn(
+                "[c]onfirmed/[r]ejected/[d]eferred/[e]dit/[b]ack/[q]uit: "
+            ).strip().lower()
+            if raw == "q":
+                raise ResumeWordingSessionCancelled
+            if raw == "b":
+                step = 2
+                continue
+            if raw == "e":
+                while True:
+                    field = input_fn(
+                        "Edit [t]ype/[m]aterials/[w]ording/[b]ack/[q]uit: "
+                    ).strip().lower()
+                    if field == "q":
+                        raise ResumeWordingSessionCancelled
+                    if field == "b":
+                        break
+                    if field in {"t", "m", "w"}:
+                        step = {"t": 0, "m": 1, "w": 2}[field]
+                        break
+                    output_fn("Please enter t, m, w, b, or q.")
+                continue
+            decisions = {
+                "c": WordingReviewDecision.CONFIRMED,
+                "r": WordingReviewDecision.REJECTED,
+                "d": WordingReviewDecision.DEFERRED,
+            }
+            if raw not in decisions:
+                output_fn("Please enter c, r, d, e, b, or q.")
+                continue
+            return candidate, create_wording_review(
+                candidate, decision=decisions[raw], reviewed_at=created_at
+            )
+
+
+def _source_candidates(
+    source_id: str, candidates: dict[str, WordingCandidate],
+) -> list[WordingCandidate]:
+    return sorted(
+        (item for item in candidates.values() if item.source_record_id == source_id),
+        key=lambda item: item.wording_candidate_id,
+    )
+
+
+def _print_source_wording(
+    source_id: str, candidates: dict[str, WordingCandidate],
+    reviews: dict[str, WordingReviewRecord], *, output_fn: OutputFunction,
+) -> None:
+    items = _source_candidates(source_id, candidates)
+    output_fn(f"Current wording candidates ({len(items)})")
+    for index, item in enumerate(items, 1):
+        output_fn(
+            f"{index}. [{reviews[item.wording_candidate_id].decision.value}] "
+            f"{item.wording_text}"
+        )
+
+
+def _manage_wording_source(
+    source_id: str, materials: list, candidates: dict[str, WordingCandidate],
+    reviews: dict[str, WordingReviewRecord], *, created_at: str,
+    claims_by_id: dict[str, object],
+    input_fn: InputFunction, output_fn: OutputFunction,
+) -> None:
+    while True:
+        _print_source_wording(source_id, candidates, reviews, output_fn=output_fn)
+        action = _wording_choice(
+            "[a]dd/[e]dit/[d]elete/[n]ext/[q]uit: ", {"a", "e", "d", "n"},
+            input_fn=input_fn, output_fn=output_fn,
+        )
+        if action == "n":
+            return
+        existing = _source_candidates(source_id, candidates)
+        if action in {"e", "d"} and not existing:
+            output_fn("No candidates are available for this action.")
+            continue
+        if action == "a":
+            composed = _compose_wording_candidate(
+                source_record_id=source_id, materials=materials,
+                claims_by_id=claims_by_id,
+                created_at=created_at, input_fn=input_fn, output_fn=output_fn,
+            )
+            if composed is None:
+                continue
+            candidate, review = composed
+            if review.decision == WordingReviewDecision.CONFIRMED:
+                confirmed_materials = {
+                    material_id
+                    for candidate_id, existing_review in reviews.items()
+                    if existing_review.decision == WordingReviewDecision.CONFIRMED
+                    for material_id in candidates[candidate_id].material_ids
+                }
+                if confirmed_materials.intersection(candidate.material_ids):
+                    output_fn("Invalid input: confirmed wording cannot consume material twice.")
+                    continue
+            candidates[candidate.wording_candidate_id] = candidate
+            reviews[candidate.wording_candidate_id] = review
+            continue
+        while True:
+            raw = input_fn("Candidate number [b]ack/[q]uit: ").strip().lower()
+            if raw == "q":
+                raise ResumeWordingSessionCancelled
+            if raw == "b":
+                break
+            try:
+                index = int(raw)
+                if index < 1 or index > len(existing):
+                    raise ValueError
+            except ValueError:
+                output_fn(f"Please enter a number from 1 to {len(existing)}, b, or q.")
+                continue
+            old = existing[index - 1]
+            if action == "d":
+                confirm = _wording_choice(
+                    "Delete this candidate? [y/n/q]: ", {"y", "n"},
+                    input_fn=input_fn, output_fn=output_fn,
+                )
+                if confirm == "y":
+                    candidates.pop(old.wording_candidate_id)
+                    reviews.pop(old.wording_candidate_id)
+                break
+            composed = _compose_wording_candidate(
+                source_record_id=source_id, materials=materials,
+                claims_by_id=claims_by_id,
+                created_at=created_at, input_fn=input_fn, output_fn=output_fn,
+                initial=old,
+            )
+            if composed is None:
+                break
+            candidate, review = composed
+            if review.decision == WordingReviewDecision.CONFIRMED:
+                confirmed_materials = {
+                    material_id
+                    for candidate_id, existing_review in reviews.items()
+                    if candidate_id != old.wording_candidate_id
+                    and existing_review.decision == WordingReviewDecision.CONFIRMED
+                    for material_id in candidates[candidate_id].material_ids
+                }
+                if confirmed_materials.intersection(candidate.material_ids):
+                    output_fn("Invalid input: confirmed wording cannot consume material twice.")
+                    continue
+            candidates.pop(old.wording_candidate_id)
+            reviews.pop(old.wording_candidate_id)
+            candidates[candidate.wording_candidate_id] = candidate
+            reviews[candidate.wording_candidate_id] = review
+            break
+
+
+def _print_wording_summary(
+    candidates: dict[str, WordingCandidate], reviews: dict[str, WordingReviewRecord],
+    material_by_id: dict[str, object], *, output_fn: OutputFunction,
+) -> None:
+    output_fn("Resume Wording final summary")
+    for index, candidate in enumerate(sorted(candidates.values(), key=lambda item: item.wording_candidate_id), 1):
+        output_fn(f"Candidate {index}")
+        _print_wording_candidate(
+            candidate, reviews[candidate.wording_candidate_id], material_by_id,
+            output_fn=output_fn,
+        )
+
+
+def _load_wording_chain(arguments):
+    profile = load_profile(arguments.profile)
+    rubric = production_capability_rubric()
+    catalog = production_role_catalog()
+    mapping = load_mapping_candidates(arguments.mapping, profile=profile, rubric=rubric, catalog=catalog)
+    evidence_reviews = None if arguments.review_artifact is None else load_evidence_binding_reviews(
+        arguments.review_artifact, profile=profile, rubric=rubric, mapping=mapping, catalog=catalog
+    )
+    allocation_reviews = None if arguments.allocation_review_artifact is None else load_evidence_group_allocation_reviews(
+        arguments.allocation_review_artifact, profile=profile, rubric=rubric, mapping=mapping, catalog=catalog
+    )
+    recommendation = load_role_recommendation(
+        arguments.recommendation, profile=profile, rubric=rubric, catalog=catalog,
+        mapping_candidates=mapping, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews,
+    )
+    superseded_decision = None if arguments.superseded_decision is None else load_user_role_decision_revision_source(
+        arguments.superseded_decision, catalog=catalog
+    )
+    decision = load_user_role_decision(
+        arguments.decision, catalog=catalog, recommendation_set=recommendation,
+        profile=profile, rubric=rubric, superseded_decision=superseded_decision,
+    )
+    gap = load_career_gap_analysis(
+        arguments.gap_analysis, profile=profile, rubric=rubric, catalog=catalog,
+        mapping=mapping, recommendation=recommendation, decision=decision,
+        evidence_reviews=evidence_reviews, allocation_reviews=allocation_reviews,
+        superseded_decision=superseded_decision,
+    )
+    bank = load_evidence_bank(
+        arguments.evidence_bank, profile=profile, rubric=rubric, catalog=catalog,
+        mapping=mapping, recommendation=recommendation, decision=decision,
+        gap_analysis=gap, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews, superseded_decision=superseded_decision,
+    )
+    enrichment_context = dict(
+        profile=profile, rubric=rubric, catalog=catalog, mapping=mapping,
+        recommendation=recommendation, decision=decision, gap_analysis=gap,
+        evidence_bank=bank, evidence_reviews=evidence_reviews,
+        allocation_reviews=allocation_reviews, superseded_decision=superseded_decision,
+    )
+    superseded_enrichment = None if arguments.superseded_enrichment is None else load_evidence_enrichment_revision_source(
+        arguments.superseded_enrichment, **enrichment_context
+    )
+    enrichment = load_evidence_enrichment(
+        arguments.evidence_enrichment, **enrichment_context,
+        superseded_enrichment=superseded_enrichment,
+    )
+    material_context = dict(
+        **enrichment_context, evidence_enrichment=enrichment,
+        superseded_enrichment=superseded_enrichment,
+    )
+    superseded_material = None if arguments.superseded_resume_material is None else load_resume_material_revision_source(
+        arguments.superseded_resume_material, **material_context
+    )
+    material = load_resume_material(
+        arguments.resume_material, **material_context,
+        superseded_resume_material=superseded_material,
+    )
+    return bank, material, dict(
+        **material_context, superseded_resume_material=superseded_material
+    )
+
+
+def _run_review_resume_wording(
+    arguments, *, input_fn: InputFunction, output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    protected = {
+        arguments.profile, arguments.mapping, arguments.recommendation,
+        arguments.decision, arguments.gap_analysis, arguments.evidence_bank,
+        arguments.evidence_enrichment, arguments.resume_material,
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(() if arguments.allocation_review_artifact is None else (arguments.allocation_review_artifact,)),
+        *(() if arguments.superseded_decision is None else (arguments.superseded_decision,)),
+        *(() if arguments.superseded_enrichment is None else (arguments.superseded_enrichment,)),
+        *(() if arguments.superseded_resume_material is None else (arguments.superseded_resume_material,)),
+        *(() if arguments.supersede is None else (arguments.supersede,)),
+    }
+    if arguments.output in protected:
+        raise Phase2ValidationError("Resume Wording output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(
+            f"Resume Wording output already exists: {arguments.output}. Choose a new path."
+        )
+    bank, material, context = _load_wording_chain(arguments)
+    if material.coverage.partial_coverage:
+        output_fn(
+            "Resume Material coverage is partial. This wording review is not a complete resume."
+        )
+    previous = None if arguments.supersede is None else load_resume_wording_review_revision_source(
+        arguments.supersede, resume_material=material, **context
+    )
+    candidates = {
+        item.wording_candidate_id: item
+        for item in (() if previous is None else previous.candidates)
+    }
+    reviews = {
+        item.wording_candidate_id: item
+        for item in (() if previous is None else previous.reviews)
+    }
+    material_by_id = {item.material_id: item for item in material.materials}
+    materials_by_source: dict[str, list] = {}
+    for item in material.materials:
+        materials_by_source.setdefault(item.source_record_id, []).append(item)
+    source_by_id = {item.source_record_id: item for item in bank.sources}
+    claims_by_id = {
+        item.claim_id: item for item in context["evidence_enrichment"].claims
+    }
+    now = now_fn()
+    source_ids = sorted(materials_by_source)
+    for source_id in source_ids:
+        source = source_by_id[source_id]
+        output_fn(
+            f"Source: {source.record_type.value} {dict(source.identity)}"
+        )
+        _manage_wording_source(
+            source_id, sorted(materials_by_source[source_id], key=lambda item: item.material_id),
+            candidates, reviews, created_at=now,
+            claims_by_id=claims_by_id,
+            input_fn=input_fn, output_fn=output_fn,
+        )
+    while True:
+        _print_wording_summary(candidates, reviews, material_by_id, output_fn=output_fn)
+        action = _wording_choice(
+            "[s]ave/[e]dit/[q]uit: ", {"s", "e"},
+            input_fn=input_fn, output_fn=output_fn,
+        )
+        if action == "s":
+            break
+        while True:
+            for index, source_id in enumerate(source_ids, 1):
+                output_fn(f"{index}. {source_by_id[source_id].record_type.value} {dict(source_by_id[source_id].identity)}")
+            raw = input_fn("Source number [b]ack/[q]uit: ").strip().lower()
+            if raw == "q":
+                raise ResumeWordingSessionCancelled
+            if raw == "b":
+                break
+            try:
+                index = int(raw)
+                if index < 1 or index > len(source_ids):
+                    raise ValueError
+            except ValueError:
+                output_fn(f"Please enter a number from 1 to {len(source_ids)}, b, or q.")
+                continue
+            source_id = source_ids[index - 1]
+            _manage_wording_source(
+                source_id, sorted(materials_by_source[source_id], key=lambda item: item.material_id),
+                candidates, reviews, created_at=now,
+                claims_by_id=claims_by_id,
+                input_fn=input_fn, output_fn=output_fn,
+            )
+            break
+    artifact = build_resume_wording_review(
+        resume_material=material, candidates=list(candidates.values()),
+        reviews=list(reviews.values()), created_at=now,
+        superseded_wording_review=previous, **context,
+    )
+    save_resume_wording_review(
+        artifact, arguments.output, resume_material=material,
+        superseded_wording_review=previous, **context,
+    )
+    output_fn(f"Resume Wording Review saved to: {arguments.output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -2179,6 +2690,18 @@ def main(
             )
         except (ResumeMaterialSessionCancelled, KeyboardInterrupt, EOFError):
             output_fn("Resume Material preparation cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "review-resume-wording":
+        try:
+            return _run_review_resume_wording(
+                arguments, input_fn=input_fn, output_fn=output_fn
+            )
+        except (ResumeWordingSessionCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Resume Wording review cancelled. No files were changed.")
             return 130
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")

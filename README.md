@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.16.0**
+**Version 0.17.0**
 
 Ready today:
 
@@ -23,13 +23,14 @@ Ready today:
 - A deterministic Evidence Bank that separates verified facts, capability links, and open needs
 - User-confirmed Evidence Enrichment that preserves exact wording and never rewrites the Evidence Bank
 - Deterministic Resume Material with an honest coverage report
+- User-authored Resume wording review with source-linked bullets and structural entries
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 
 Not ready yet:
 
 - Live job discovery and detailed JD matching
-- Resume wording, rendering, tailoring, or application automation
+- Resume rendering, tailoring, or application automation
 
 The production Role Catalog still contains **8 role families, 0 published requirements, and 0 sources**. Aarvia has a real recommendation rubric, but it does not pretend an unfinished market dataset is complete.
 
@@ -123,6 +124,10 @@ During enrichment, use `b` to go back; Claims can be edited or deleted before th
 Prepare source-linked, role-neutral Resume material with `aarvia prepare-resume-materials --help`.
 It is not a finished resume; uncovered Profile records and contact fields stay visible.
 
+Turn those materials into user-authored, reviewed wording with
+`aarvia review-resume-wording --help`. Materials may be combined only within one
+source, and this stage still does not render a finished resume or call a Provider.
+
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
 
 ## Follow-Up Controls
@@ -164,7 +169,7 @@ Keep personal Profiles and diagnostics under ignored local paths such as `local_
 - **Phase 2A:** shared contracts and Role Catalog foundation — complete
 - **Phase 2B:** US early-career market evidence and curation foundation — complete, publication dataset still unfinished
 - **Phase 2C:** explainable recommendation, evidence review, and User Decision — complete
-- **Phase 2D:** Gap Analysis, Evidence Bank, enrichment, and Resume Material foundation — complete
+- **Phase 2D:** Gap Analysis, Evidence Bank, enrichment, Resume Material, and wording review foundations — complete
 - **Phase 2E–2G:** live jobs, detailed matching, resume work, and end-to-end hardening — not implemented
 
 ## Development
