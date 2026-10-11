@@ -71,8 +71,24 @@ from .resume_wording import (
     build_resume_wording_review,
     create_wording_candidate,
     create_wording_review,
+    load_resume_wording_review,
     load_resume_wording_review_revision_source,
     save_resume_wording_review,
+)
+from .resume_profile_supplement import (
+    ContactField,
+    ContactFieldType,
+    ProfileStructuralSelection,
+    ResumeProfileSupplementArtifact,
+    StructuralRecordType,
+    SupplementInclusionReview,
+    SupplementReviewDecision,
+    build_resume_profile_supplement,
+    create_contact_field,
+    create_structural_selection,
+    create_supplement_review,
+    load_resume_profile_supplement_revision_source,
+    save_resume_profile_supplement,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -136,6 +152,10 @@ class ResumeMaterialSessionCancelled(Exception):
 
 class ResumeWordingSessionCancelled(Exception):
     """Raised when the user cancels before Resume Wording is written."""
+
+
+class ResumeProfileSupplementSessionCancelled(Exception):
+    """Raised when the user cancels before a private Supplement is written."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -364,6 +384,27 @@ def build_parser() -> argparse.ArgumentParser:
     wording.add_argument("--superseded-resume-material", type=Path, help="prior Resume Material required by a material revision")
     wording.add_argument("--supersede", type=Path, help="prior Wording Review for an immutable revision")
     wording.add_argument("--output", type=Path, required=True, help="new Resume Wording Review JSON path")
+    supplement = subparsers.add_parser(
+        "supplement-resume-profile",
+        help="review private contact and uncovered structural Profile facts for a future resume",
+    )
+    supplement.add_argument("--profile", type=Path, required=True, help="Career Profile JSON path")
+    supplement.add_argument("--mapping", type=Path, required=True, help="Mapping schema 5 JSON path")
+    supplement.add_argument("--recommendation", type=Path, required=True, help="Recommendation schema 7 JSON path")
+    supplement.add_argument("--decision", type=Path, required=True, help="confirmed Decision schema 2 JSON path")
+    supplement.add_argument("--gap-analysis", type=Path, required=True, help="Career Gap Analysis schema 2 JSON path")
+    supplement.add_argument("--evidence-bank", type=Path, required=True, help="Evidence Bank schema 1 JSON path")
+    supplement.add_argument("--evidence-enrichment", type=Path, required=True, help="Evidence Enrichment schema 1 JSON path")
+    supplement.add_argument("--resume-material", type=Path, required=True, help="Resume Material schema 1 JSON path")
+    supplement.add_argument("--resume-wording-review", type=Path, required=True, help="Resume Wording Review schema 1 JSON path")
+    supplement.add_argument("--review-artifact", type=Path, help="Binding Review referenced by the Recommendation")
+    supplement.add_argument("--allocation-review-artifact", type=Path, help="Allocation Review referenced by the Recommendation")
+    supplement.add_argument("--superseded-decision", type=Path, help="prior Decision required by a Decision revision")
+    supplement.add_argument("--superseded-enrichment", type=Path, help="prior Enrichment required by an Enrichment revision")
+    supplement.add_argument("--superseded-resume-material", type=Path, help="prior Resume Material required by a material revision")
+    supplement.add_argument("--superseded-wording-review", type=Path, help="prior Wording Review required by a wording revision")
+    supplement.add_argument("--supersede", type=Path, help="prior Supplement for an immutable revision")
+    supplement.add_argument("--output", type=Path, required=True, help="new private Resume Profile Supplement JSON path")
     return parser
 
 
@@ -2597,6 +2638,252 @@ def _run_review_resume_wording(
     return 0
 
 
+def _supplement_choice(prompt: str, allowed: set[str], *, input_fn: InputFunction,
+                       output_fn: OutputFunction) -> str:
+    while True:
+        answer = input_fn(prompt).strip().lower()
+        if answer == "q":
+            raise ResumeProfileSupplementSessionCancelled
+        if answer in allowed:
+            return answer
+        output_fn("Please enter one of: " + ", ".join(sorted(allowed | {"q"})) + ".")
+
+
+def _masked_contact(value: str) -> str:
+    if "@" in value:
+        local, domain = value.split("@", 1)
+        return (local[:1] + "***@" + domain) if local else "***@" + domain
+    if value.startswith("https://"):
+        parsed = value.split("/", 3)
+        return "/".join(parsed[:3]) + "/***"
+    digits = "".join(item for item in value if item.isdigit())
+    if digits:
+        return "***" + digits[-4:]
+    return value[:1] + "***"
+
+
+def _supplement_decision(*, input_fn: InputFunction, output_fn: OutputFunction) -> SupplementReviewDecision | None:
+    choice = _supplement_choice(
+        "Review [c]onfirmed/[r]ejected/[d]eferred/[b]ack/[q]uit: ",
+        {"c", "r", "d", "b"}, input_fn=input_fn, output_fn=output_fn,
+    )
+    if choice == "b":
+        return None
+    return {
+        "c": SupplementReviewDecision.CONFIRMED,
+        "r": SupplementReviewDecision.REJECTED,
+        "d": SupplementReviewDecision.DEFERRED,
+    }[choice]
+
+
+def _manage_supplement_contacts(
+    contacts: dict[ContactFieldType, ContactField],
+    reviews: dict[str, SupplementInclusionReview], *, now: str,
+    input_fn: InputFunction, output_fn: OutputFunction,
+) -> None:
+    field_types = list(ContactFieldType)
+    while True:
+        output_fn("Contact")
+        for index, field_type in enumerate(field_types, 1):
+            item = contacts.get(field_type)
+            state = "missing" if item is None else reviews[item.contact_field_id].decision.value
+            output_fn(f"{index}. {field_type.value}: {state}")
+        action = _supplement_choice(
+            "[a]dd/[e]dit/[d]elete/[b]ack/[n]ext/[q]uit: ",
+            {"a", "e", "d", "b", "n"}, input_fn=input_fn, output_fn=output_fn,
+        )
+        if action in {"b", "n"}:
+            return
+        while True:
+            raw = input_fn("Contact field number [b]ack/[q]uit: ").strip().lower()
+            if raw == "q": raise ResumeProfileSupplementSessionCancelled
+            if raw == "b": break
+            try:
+                field_type = field_types[int(raw) - 1]
+                if int(raw) < 1: raise IndexError
+            except (ValueError, IndexError):
+                output_fn(f"Please enter a number from 1 to {len(field_types)}, b, or q.")
+                continue
+            existing = contacts.get(field_type)
+            if action in {"e", "d"} and existing is None:
+                output_fn("That Contact field has not been added.")
+                continue
+            if action == "d":
+                if _supplement_choice("Delete this field? [y/n/q]: ", {"y", "n"}, input_fn=input_fn, output_fn=output_fn) == "y":
+                    contacts.pop(field_type); reviews.pop(existing.contact_field_id)
+                break
+            while True:
+                value = input_fn(f"{field_type.value} [b]ack/[q]uit: ")
+                if value.strip().lower() == "q": raise ResumeProfileSupplementSessionCancelled
+                if value.strip().lower() == "b": break
+                try:
+                    candidate = create_contact_field(field_type, value)
+                except Phase2ValidationError:
+                    output_fn("Invalid input for this Contact field.")
+                    continue
+                output_fn(f"Full value for confirmation: {candidate.value}")
+                decision = _supplement_decision(input_fn=input_fn, output_fn=output_fn)
+                if decision is None: continue
+                if existing is not None:
+                    contacts.pop(field_type); reviews.pop(existing.contact_field_id)
+                contacts[field_type] = candidate
+                review = create_supplement_review(candidate, decision=decision, reviewed_at=now)
+                reviews[candidate.contact_field_id] = review
+                break
+            break
+
+
+def _supplement_records(profile, prefix: str):
+    if prefix == "education": return profile.education
+    if prefix == "skills": return profile.skills
+    return profile.experience_overview
+
+
+def _record_label(record: object) -> str:
+    data = record.__dict__
+    return " | ".join(str(value) for value in data.values() if value is not None)[:240]
+
+
+def _manage_supplement_records(
+    *, title: str, prefix: str, profile, covered_paths: set[str],
+    selections: dict[str, ProfileStructuralSelection],
+    reviews: dict[str, SupplementInclusionReview], now: str,
+    input_fn: InputFunction, output_fn: OutputFunction,
+) -> None:
+    records = _supplement_records(profile, prefix)
+    paths = [f"{prefix}[{index}]" for index in range(len(records)) if f"{prefix}[{index}]" not in covered_paths]
+    while True:
+        output_fn(title)
+        for index, path in enumerate(paths, 1):
+            selection = selections.get(path)
+            state = "unresolved" if selection is None else reviews[selection.selection_id].decision.value
+            output_fn(f"{index}. [{state}] {_record_label(records[int(path.split('[')[1][:-1])])}")
+        action = _supplement_choice(
+            "[a]dd/[e]dit/[d]elete/[b]ack/[n]ext/[q]uit: ",
+            {"a", "e", "d", "b", "n"}, input_fn=input_fn, output_fn=output_fn,
+        )
+        if action in {"b", "n"}: return
+        if not paths:
+            output_fn("No uncovered Profile records are available."); continue
+        while True:
+            raw = input_fn("Record number [b]ack/[q]uit: ").strip().lower()
+            if raw == "q": raise ResumeProfileSupplementSessionCancelled
+            if raw == "b": break
+            try:
+                number = int(raw)
+                if number < 1 or number > len(paths): raise ValueError
+            except ValueError:
+                output_fn(f"Please enter a number from 1 to {len(paths)}, b, or q."); continue
+            path = paths[number - 1]; existing = selections.get(path)
+            if action in {"e", "d"} and existing is None:
+                output_fn("That record has not been reviewed."); continue
+            if action == "d":
+                if _supplement_choice("Delete this selection? [y/n/q]: ", {"y", "n"}, input_fn=input_fn, output_fn=output_fn) == "y":
+                    selections.pop(path); reviews.pop(existing.selection_id)
+                break
+            record = records[int(path.split("[")[1][:-1])]
+            available = [name for name, value in record.__dict__.items() if value is not None]
+            for field_index, name in enumerate(available, 1): output_fn(f"{field_index}. {name}")
+            while True:
+                raw_fields = input_fn("Display field numbers (comma-separated) [b]ack/[q]uit: ").strip()
+                if raw_fields.lower() == "q": raise ResumeProfileSupplementSessionCancelled
+                if raw_fields.lower() == "b": break
+                try:
+                    numbers = _wording_numbers(raw_fields, len(available))
+                    candidate = create_structural_selection(profile, path, [available[item - 1] for item in numbers])
+                except (ValueError, Phase2ValidationError) as error:
+                    output_fn(f"Invalid input: {error}"); continue
+                decision = _supplement_decision(input_fn=input_fn, output_fn=output_fn)
+                if decision is None: continue
+                if existing is not None:
+                    selections.pop(path); reviews.pop(existing.selection_id)
+                selections[path] = candidate
+                review = create_supplement_review(candidate, decision=decision, reviewed_at=now)
+                reviews[candidate.selection_id] = review
+                break
+            break
+
+
+def _print_supplement_summary(contacts, selections, reviews, *, output_fn: OutputFunction) -> None:
+    output_fn("Resume Profile Supplement final summary")
+    output_fn("Contact values are masked in this summary.")
+    for item in sorted(contacts.values(), key=lambda value: value.field_type.value):
+        output_fn(f"{item.field_type.value}: {_masked_contact(item.value)} [{reviews[item.contact_field_id].decision.value}]")
+    for item in sorted(selections.values(), key=lambda value: value.profile_reference.path):
+        output_fn(f"{item.profile_reference.path}: {', '.join(item.selected_fields)} [{reviews[item.selection_id].decision.value}]")
+
+
+def _run_supplement_resume_profile(
+    arguments, *, input_fn: InputFunction, output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    protected = {
+        arguments.profile, arguments.mapping, arguments.recommendation, arguments.decision,
+        arguments.gap_analysis, arguments.evidence_bank, arguments.evidence_enrichment,
+        arguments.resume_material, arguments.resume_wording_review,
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(() if arguments.allocation_review_artifact is None else (arguments.allocation_review_artifact,)),
+        *(() if arguments.supersede is None else (arguments.supersede,)),
+    }
+    if arguments.output in protected:
+        raise Phase2ValidationError("Supplement output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(f"Supplement output already exists: {arguments.output}. Choose a new path.")
+    bank, material, context = _load_wording_chain(arguments)
+    prior_wording = None if arguments.superseded_wording_review is None else load_resume_wording_review_revision_source(
+        arguments.superseded_wording_review, resume_material=material, **context
+    )
+    wording = load_resume_wording_review(
+        arguments.resume_wording_review, resume_material=material,
+        superseded_wording_review=prior_wording, **context,
+    )
+    supplement_context = dict(
+        context, profile=context["profile"], resume_material=material,
+        resume_wording_review=wording,
+    )
+    previous = None if arguments.supersede is None else load_resume_profile_supplement_revision_source(
+        arguments.supersede, **supplement_context
+    )
+    contacts = {item.field_type: item for item in (() if previous is None else previous.contact_fields)}
+    selections = {item.profile_reference.path: item for item in (() if previous is None else previous.structural_selections)}
+    reviews = {item.subject_id: item for item in (() if previous is None else previous.inclusion_reviews)}
+    source_ids = {item.source_record_id for item in material.materials}
+    covered_paths = {item.canonical_profile_path for item in bank.sources if item.source_record_id in source_ids}
+    now = now_fn()
+    managers = (
+        lambda: _manage_supplement_contacts(contacts, reviews, now=now, input_fn=input_fn, output_fn=output_fn),
+        lambda: _manage_supplement_records(title="Education", prefix="education", profile=context["profile"], covered_paths=covered_paths, selections=selections, reviews=reviews, now=now, input_fn=input_fn, output_fn=output_fn),
+        lambda: _manage_supplement_records(title="Skills", prefix="skills", profile=context["profile"], covered_paths=covered_paths, selections=selections, reviews=reviews, now=now, input_fn=input_fn, output_fn=output_fn),
+        lambda: _manage_supplement_records(title="Experience / Projects", prefix="experience_overview", profile=context["profile"], covered_paths=covered_paths, selections=selections, reviews=reviews, now=now, input_fn=input_fn, output_fn=output_fn),
+    )
+    for manager in managers: manager()
+    while True:
+        _print_supplement_summary(contacts, selections, reviews, output_fn=output_fn)
+        action = _supplement_choice("[s]ave/[e]dit/[q]uit: ", {"s", "e"}, input_fn=input_fn, output_fn=output_fn)
+        if action == "s": break
+        output_fn("1. Contact\n2. Education\n3. Skills\n4. Experience / Projects")
+        while True:
+            raw = input_fn("Section number [b]ack/[q]uit: ").strip().lower()
+            if raw == "q": raise ResumeProfileSupplementSessionCancelled
+            if raw == "b": break
+            try:
+                index = int(raw)
+                if index < 1 or index > len(managers): raise ValueError
+            except ValueError:
+                output_fn("Please enter a number from 1 to 4, b, or q."); continue
+            managers[index - 1](); break
+    artifact = build_resume_profile_supplement(
+        contact_fields=list(contacts.values()), structural_selections=list(selections.values()),
+        inclusion_reviews=list(reviews.values()), created_at=now,
+        superseded_supplement=previous, **supplement_context,
+    )
+    save_resume_profile_supplement(
+        artifact, arguments.output, superseded_supplement=previous, **supplement_context
+    )
+    output_fn(f"Private Resume Profile Supplement saved to: {arguments.output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -2702,6 +2989,18 @@ def main(
             )
         except (ResumeWordingSessionCancelled, KeyboardInterrupt, EOFError):
             output_fn("Resume Wording review cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "supplement-resume-profile":
+        try:
+            return _run_supplement_resume_profile(
+                arguments, input_fn=input_fn, output_fn=output_fn
+            )
+        except (ResumeProfileSupplementSessionCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Resume Profile Supplement cancelled. No files were changed.")
             return 130
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")

@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.17.0**
+**Version 0.18.0**
 
 Ready today:
 
@@ -24,6 +24,7 @@ Ready today:
 - User-confirmed Evidence Enrichment that preserves exact wording and never rewrites the Evidence Bank
 - Deterministic Resume Material with an honest coverage report
 - User-authored Resume wording review with source-linked bullets and structural entries
+- A private Resume Profile Supplement for confirmed contact and uncovered structural Profile facts
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 
@@ -31,6 +32,8 @@ Not ready yet:
 
 - Live job discovery and detailed JD matching
 - Resume rendering, tailoring, or application automation
+
+The Supplement is private local data: contact values and their content-derived IDs must not be committed to a public repository. It adds structure only; it cannot turn uncovered experience or skills into achievements.
 
 The production Role Catalog still contains **8 role families, 0 published requirements, and 0 sources**. Aarvia has a real recommendation rubric, but it does not pretend an unfinished market dataset is complete.
 
@@ -127,6 +130,9 @@ It is not a finished resume; uncovered Profile records and contact fields stay v
 Turn those materials into user-authored, reviewed wording with
 `aarvia review-resume-wording --help`. Materials may be combined only within one
 source, and this stage still does not render a finished resume or call a Provider.
+
+Use `aarvia supplement-resume-profile --help` to review private contact details and
+uncovered Education, Skills, and Experience context without changing the Career Profile.
 
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
 

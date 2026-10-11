@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.17.0**
+**版本 0.18.0**
 
 现在能用：
 
@@ -24,6 +24,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 - 用户可原样补充并审核 Evidence Enrichment，且不会改写 Evidence Bank
 - 生成确定性的 Resume Material，并如实报告尚未覆盖的内容
 - 用户可组合材料并审核自己编写的简历措辞，且每条措辞保留来源引用
+- 用私有 Resume Profile Supplement 补充已确认的联系方式和未覆盖结构事实
 - 支持 OpenAI-compatible Provider，包括阿里云百炼
 - 原子 JSON 保存、确定性验证和隐私安全的诊断信息
 
@@ -31,6 +32,8 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 - 实时岗位搜索和详细 JD Matching
 - 简历渲染、定制和自动申请
+
+Supplement 属于本地私密数据：联系方式及其内容派生 ID 不应提交到公开仓库。它只补结构信息，不能把未覆盖的经历或技能变成成就。
 
 Production Role Catalog 目前仍是 **8 个 Role Family、0 条已发布 requirement、0 个 source**。推荐 Rubric 已经存在，但 Aarvia 不会把尚未完成的市场数据假装成事实。
 
@@ -126,6 +129,9 @@ aarvia enrich-evidence --profile profile.json \
 
 使用 `aarvia review-resume-wording --help` 将同一来源下的材料组合成用户自己编写并审核的措辞。
 该阶段不调用 Provider，也不会渲染成品简历。
+
+使用 `aarvia supplement-resume-profile --help` 审核私密联系方式及尚未覆盖的 Education、Skills
+和 Experience 结构信息，不需要改写 Career Profile。
 
 职业方向推荐衡量的是证据覆盖情况，**不是获得面试或 Offer 的概率**。
 

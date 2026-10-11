@@ -145,6 +145,34 @@ from .resume_wording import (
     save_resume_wording_review,
     select_confirmed_resume_wording,
 )
+from .resume_profile_supplement import (
+    ContactField,
+    ContactFieldType,
+    ContactOrigin,
+    CoverageState,
+    ProfileStructuralSelection,
+    ResumeProfileSupplementArtifact,
+    ResumeProfileSupplementSummary,
+    StructuralRecordType,
+    StructuralUse,
+    SupplementCoverageSummary,
+    SupplementInclusionReview,
+    SupplementReviewDecision,
+    SupplementReviewerType,
+    SupplementSubjectType,
+    build_resume_profile_supplement,
+    create_contact_field,
+    create_structural_selection,
+    create_supplement_review,
+    generate_contact_field_id,
+    generate_resume_profile_supplement_id,
+    generate_structural_selection_id,
+    generate_supplement_review_id,
+    load_resume_profile_supplement,
+    load_resume_profile_supplement_revision_source,
+    save_resume_profile_supplement,
+    select_confirmed_resume_profile_supplement,
+)
 from .live_jobs import (
     ApplicationURLStatus,
     LiveJobCollection,
@@ -368,7 +396,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
 __all__ = [
     "AtomicEvidenceLocator",
