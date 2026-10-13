@@ -592,6 +592,7 @@ def build_resume_profile_supplement(*, profile: CareerProfile, resume_material: 
                                     contact_fields: Sequence[ContactField],
                                     structural_selections: Sequence[ProfileStructuralSelection],
                                     inclusion_reviews: Sequence[SupplementInclusionReview], created_at: str,
+                                    updated_at: str | None = None,
                                     superseded_supplement: ResumeProfileSupplementArtifact | None = None,
                                     **context: Any) -> ResumeProfileSupplementArtifact:
     resume_wording_review.validate(
@@ -601,11 +602,12 @@ def build_resume_profile_supplement(*, profile: CareerProfile, resume_material: 
     selections = tuple(sorted(structural_selections, key=lambda item: item.selection_id))
     reviews = tuple(sorted(inclusion_reviews, key=lambda item: item.review_id))
     timestamp = created_at if superseded_supplement is None else superseded_supplement.created_at
+    final_updated_at = created_at if updated_at is None else updated_at
     provisional = ResumeProfileSupplementArtifact(
         "resume_profile_supplement_pending", profile_fingerprint(profile), resume_material.resume_material_id, 1,
         resume_wording_review.wording_review_id, 1,
         None if superseded_supplement is None else superseded_supplement.supplement_id,
-        timestamp, created_at, contacts, selections, reviews,
+        timestamp, final_updated_at, contacts, selections, reviews,
         _coverage(profile, resume_material, context["evidence_bank"], contacts, selections, reviews),
         _summary(contacts, selections, reviews),
     )

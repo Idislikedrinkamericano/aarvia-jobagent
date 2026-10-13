@@ -638,3 +638,11 @@ Development records are appended to this file as the project evolves.
 - **Safety:** Contact values are masked in final CLI summaries and never sent to a Provider or diagnostics. Material-covered records cannot be selected twice. Skills remain structural-only, while uncovered Experience/Project records may provide exact context but cannot create bullets, achievements, metrics, results, or expanded responsibilities. Supplement artifacts contain private content and content-derived IDs and must remain outside public version control.
 - **Validation / Test Results:** Added 38 contract and CLI regressions. The complete synthetic suite passed all 1080 tests without network or Provider access. Existing schemas remain unchanged; `local_data` was not modified.
 - **Not Implemented:** Base Resume artifacts or rendering, Markdown/PDF/DOCX, Provider wording, JD matching, tailoring, fact checking, and application automation remain separate stages.
+
+## 2026-10-11 - Supplement Bulk Review and Private Sessions
+
+- **Phase:** Base Resume, structural supplement UX patch
+- **User Request:** Make large Education, Skills, and Experience reviews practical, and allow an explicit private checkpoint without changing Supplement schema 1.
+- **What Changed:** Version `0.18.1` adds deterministic `all`, list, and range selection; one-decision batch review with record-level editing; and automatic use of every present allowed display field. The CLI adds `p` checkpoints and `--resume-session`. A separate strict session schema stores the current section, in-memory choices, exact upstream provenance, revision source, and target output through atomic JSON replacement.
+- **Safety / Compatibility:** Only `p` writes a draft. Quit, EOF, interruption, and final cancellation still write nothing. Drafts cannot replace an upstream artifact or be silently overwritten, stale context is rejected, Contact values remain private and masked in summaries, and a successful formal save retains any user draft. Resume Profile Supplement schema 1 and its wire format are unchanged.
+- **Validation / Test Results:** Added parser, bulk-decision, edit/delete, pause/resume, stale-session, privacy, output-protection, deterministic typed round-trip, and atomic-failure regressions. The complete synthetic suite passed all 1112 tests without Provider or network access.

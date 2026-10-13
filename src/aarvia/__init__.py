@@ -173,6 +173,15 @@ from .resume_profile_supplement import (
     save_resume_profile_supplement,
     select_confirmed_resume_profile_supplement,
 )
+from .resume_profile_supplement_session import (
+    ResumeProfileSupplementSession,
+    SupplementSessionProvenance,
+    SupplementSessionSection,
+    build_resume_profile_supplement_session,
+    generate_resume_profile_supplement_session_id,
+    load_resume_profile_supplement_session,
+    save_resume_profile_supplement_session,
+)
 from .live_jobs import (
     ApplicationURLStatus,
     LiveJobCollection,
@@ -396,7 +405,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"
 
 __all__ = [
     "AtomicEvidenceLocator",
@@ -457,6 +466,13 @@ __all__ = [
     "RecommendationRankingTier",
     "RoleRecommendationArtifact",
     "RoleRecommendationResult",
+    "ResumeProfileSupplementSession",
+    "SupplementSessionProvenance",
+    "SupplementSessionSection",
+    "build_resume_profile_supplement_session",
+    "generate_resume_profile_supplement_session_id",
+    "load_resume_profile_supplement_session",
+    "save_resume_profile_supplement_session",
     "BasicProfile",
     "ApplicationURLStatus",
     "CatalogBuildResult",

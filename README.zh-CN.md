@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.18.0**
+**版本 0.18.1**
 
 现在能用：
 
@@ -132,6 +132,8 @@ aarvia enrich-evidence --profile profile.json \
 
 使用 `aarvia supplement-resume-profile --help` 审核私密联系方式及尚未覆盖的 Education、Skills
 和 Experience 结构信息，不需要改写 Career Profile。
+记录区支持 `all`、编号列表和范围批量审核。输入 `p` 可原子保存私密会话草稿，之后用
+`--resume-session` 显式恢复。
 
 职业方向推荐衡量的是证据覆盖情况，**不是获得面试或 Offer 的概率**。
 

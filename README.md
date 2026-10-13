@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.18.0**
+**Version 0.18.1**
 
 Ready today:
 
@@ -133,6 +133,8 @@ source, and this stage still does not render a finished resume or call a Provide
 
 Use `aarvia supplement-resume-profile --help` to review private contact details and
 uncovered Education, Skills, and Experience context without changing the Career Profile.
+Record sections accept `all`, lists, and ranges for one-step review. Use `p` to save a
+private session draft, then resume it explicitly with `--resume-session`.
 
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
 
