@@ -549,7 +549,10 @@ def _selection_entry(selection: ProfileStructuralSelection, review_id: str) -> B
         wording_candidate_id=None, wording_review_id=None,
         material_ids=(), evidence_item_ids=(), enrichment_claim_ids=(),
         fields=fields, bullet_ids=(), temporal_state=BaseResumeTemporalState.UNSPECIFIED,
-        skill_group=(str(snapshot.get("skill_category", "Other")) if item_type == BaseResumeItemType.SKILL else None),
+        skill_group=(
+            str(snapshot.get("category", snapshot.get("skill_category", "Other")))
+            if item_type == BaseResumeItemType.SKILL else None
+        ),
     )
 
 
@@ -565,8 +568,20 @@ def _contact_entry(contact: Any, review_id: str) -> BaseResumeEntry:
     )
 
 
-def _source_entry(source: Any, bullet_ids: Sequence[str], temporal: BaseResumeTemporalState) -> BaseResumeEntry:
-    kind = BaseResumeItemType.PROJECT if source.record_type.value == "project" else BaseResumeItemType.EXPERIENCE
+def _source_entry(
+    source: Any,
+    bullet_ids: Sequence[str],
+    temporal: BaseResumeTemporalState,
+    section_type: ResumeSectionType,
+) -> BaseResumeEntry:
+    kind = {
+        ResumeSectionType.EXPERIENCE: BaseResumeItemType.EXPERIENCE,
+        ResumeSectionType.PROJECTS: BaseResumeItemType.PROJECT,
+    }.get(section_type)
+    if kind is None:
+        raise Phase2ValidationError(
+            "a reviewed bullet must belong to Experience or Projects"
+        )
     return _make_entry(
         subject_id=None, item_type=kind, source_record_id=source.source_record_id,
         supplement_subject_id=None, supplement_review_id=None,
@@ -662,6 +677,7 @@ def build_base_resume(*, profile: CareerProfile, resume_material: ResumeMaterial
         resume_wording_review, profile=profile, resume_material=resume_material,
         **wording_context,
     )
+    candidates_by_id = {item.wording_candidate_id: item for item in candidates}
     contacts, selections = select_confirmed_resume_profile_supplement(
         resume_profile_supplement, profile=profile, resume_material=resume_material,
         resume_wording_review=resume_wording_review, **context,
@@ -683,13 +699,22 @@ def build_base_resume(*, profile: CareerProfile, resume_material: ResumeMaterial
             context["evidence_enrichment"],
         )
         source = source_by_id[source_id]
-        draft = _source_entry(source, default_ids, state)
+        section_types = {
+            candidates_by_id[item.wording_candidate_id].section_type
+            for item in values
+        }
+        if len(section_types) != 1:
+            raise Phase2ValidationError(
+                "reviewed bullets for one Source Record must use one section"
+            )
+        section_type = next(iter(section_types))
+        draft = _source_entry(source, default_ids, state, section_type)
         requested = None if bullet_order is None else bullet_order.get(draft.entry_id)
         if requested is not None:
             requested = tuple(requested)
             if set(requested) != set(default_ids) or len(requested) != len(default_ids):
                 raise Phase2ValidationError("Base Resume bullet order must contain every entry bullet once")
-            draft = _source_entry(source, requested, state)
+            draft = _source_entry(source, requested, state, section_type)
         entries.append(draft)
     for item in candidates:
         if item.candidate_type == WordingCandidateType.STRUCTURAL_ENTRY and _subject("wording", item.wording_candidate_id) not in omitted:
@@ -786,8 +811,9 @@ _MD_ESCAPE = re.compile(r"([\\`*_[\]<>#|])")
 
 
 def _escape(value: str) -> str:
-    escaped = _MD_ESCAPE.sub(r"\\\1", value.replace("\r\n", "\n").replace("\r", "\n"))
-    return re.sub(r"(?m)^([-+>])", r"\\\1", escaped)
+    return _MD_ESCAPE.sub(
+        r"\\\1", value.replace("\r\n", "\n").replace("\r", "\n")
+    )
 
 
 def _date(value: str, *, expected: bool = False) -> str:
@@ -834,17 +860,31 @@ def render_base_resume_markdown(value: BaseResumeArtifact, **context: Any) -> st
                 if text:
                     grouped.setdefault(item.skill_group or "Other", []).append(text)
             for group, values in grouped.items():
-                lines.append(f"**{_escape(group.replace('_', ' ').title())}:** {', '.join(_escape(item) for item in values)}")
+                lines.append(f"**{_escape(group)}:** {', '.join(_escape(item) for item in values)}")
             lines.append("")
             continue
         for item_id in section.entry_ids:
             item = entries[item_id]; fields = dict(item.fields)
-            title = fields.get("title") or fields.get("role_title") or fields.get("degree") or fields.get("field_of_study") or fields.get("institution") or "Entry"
-            organization = fields.get("organization") or fields.get("institution")
+            if item.item_type == BaseResumeItemType.PROJECT:
+                title = fields.get("organization_or_project_name") or fields.get("title_or_role")
+                organization = fields.get("title_or_role")
+            elif item.item_type == BaseResumeItemType.EXPERIENCE:
+                title = fields.get("title_or_role") or fields.get("organization_or_project_name")
+                organization = fields.get("organization_or_project_name")
+            else:
+                title = fields.get("degree") or fields.get("field_of_study") or fields.get("institution")
+                organization = fields.get("institution")
+            if not title:
+                raise Phase2ValidationError("Base Resume entry lacks a renderable title")
             heading = f"**{_escape(title)}**"
             if organization and organization != title:
                 heading += f", {_escape(organization)}"
             lines.append(heading)
+            if item.item_type == BaseResumeItemType.EDUCATION:
+                if fields.get("field_of_study") and fields["field_of_study"] != title:
+                    lines.append(_escape(fields["field_of_study"]))
+                if fields.get("gpa"):
+                    lines.append(f"GPA: {_escape(fields['gpa'])}")
             dates: list[str] = []
             if fields.get("start_date"):
                 dates.append(_date(fields["start_date"]))

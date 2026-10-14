@@ -432,7 +432,7 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.19.0"
+__version__ = "0.19.1"
 
 __all__ = [
     "BASE_RESUME_SCHEMA",

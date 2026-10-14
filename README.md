@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.19.0**
+**Version 0.19.1**
 
 Ready today:
 
@@ -25,7 +25,7 @@ Ready today:
 - Deterministic Resume Material with an honest coverage report
 - User-authored Resume wording review with source-linked bullets and structural entries
 - A private Resume Profile Supplement for confirmed contact and uncovered structural Profile facts
-- A role-neutral master Base Resume with explicit omissions, private layout sessions, and deterministic Markdown
+- A role-neutral master Base Resume with explicit omissions, private layout sessions, and fact-preserving deterministic Markdown
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 

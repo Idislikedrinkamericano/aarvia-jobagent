@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.19.0**
+**版本 0.19.1**
 
 现在能用：
 
@@ -25,7 +25,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 - 生成确定性的 Resume Material，并如实报告尚未覆盖的内容
 - 用户可组合材料并审核自己编写的简历措辞，且每条措辞保留来源引用
 - 用私有 Resume Profile Supplement 补充已确认的联系方式和未覆盖结构事实
-- 生成 role-neutral 的 Base Resume master，并支持明确 omission、私有布局 session 和确定性 Markdown
+- 生成 role-neutral 的 Base Resume master，并支持明确 omission、私有布局 session 和忠实保留事实的确定性 Markdown
 - 支持 OpenAI-compatible Provider，包括阿里云百炼
 - 原子 JSON 保存、确定性验证和隐私安全的诊断信息
 

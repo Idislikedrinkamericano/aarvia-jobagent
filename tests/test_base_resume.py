@@ -16,6 +16,15 @@ from aarvia.base_resume import (
     _date,
     _escape,
 )
+from aarvia.resume_material import ResumeSectionType
+from aarvia.resume_profile_supplement import (
+    ContactFieldType,
+    SupplementReviewDecision,
+    build_resume_profile_supplement,
+    create_contact_field,
+    create_structural_selection,
+    create_supplement_review,
+)
 from aarvia.role_catalog import Phase2ValidationError
 from test_resume_profile_supplement import _artifact, NOW
 
@@ -82,6 +91,102 @@ def test_renderer_is_deterministic_private_and_safe(tmp_path):
         save_base_resume_markdown(artifact, path, **context)
 
 
+def test_renderer_uses_project_identity_and_all_education_fields(tmp_path):
+    _, context, artifact = _base(tmp_path)
+    rendered = render_base_resume_markdown(artifact, **context)
+    project = next(
+        item for item in artifact.entries
+        if item.item_type == BaseResumeItemType.PROJECT
+    )
+    project_fields = dict(project.fields)
+    education = next(
+        item for item in artifact.entries
+        if item.item_type == BaseResumeItemType.EDUCATION
+    )
+    education_fields = dict(education.fields)
+
+    assert "**Entry**" not in rendered
+    assert project_fields["organization_or_project_name"] in rendered
+    assert project_fields["title_or_role"] in rendered
+    assert education_fields["degree"] in rendered
+    assert education_fields["institution"] in rendered
+    assert education_fields["field_of_study"] in rendered
+
+
+def test_supplement_skill_uses_exact_category_in_artifact_and_markdown(tmp_path):
+    source, context, _, education, supplement = _artifact(tmp_path)
+    profile = source["profile_object"]
+    selection = create_structural_selection(
+        profile, "skills[5]", ["category", "skill_name"],
+    )
+    review = create_supplement_review(
+        selection,
+        decision=SupplementReviewDecision.CONFIRMED,
+        reviewed_at=NOW,
+    )
+    phone = create_contact_field(ContactFieldType.PHONE, "+1 (555) 555-0100")
+    github = create_contact_field(
+        ContactFieldType.GITHUB_URL, "https://github.com/example",
+    )
+    revised = build_resume_profile_supplement(
+        contact_fields=(*supplement.contact_fields, phone, github),
+        structural_selections=(*supplement.structural_selections, selection),
+        inclusion_reviews=(
+            *supplement.inclusion_reviews,
+            review,
+            create_supplement_review(
+                phone,
+                decision=SupplementReviewDecision.CONFIRMED,
+                reviewed_at=NOW,
+            ),
+            create_supplement_review(
+                github,
+                decision=SupplementReviewDecision.CONFIRMED,
+                reviewed_at=NOW,
+            ),
+        ),
+        created_at=NOW,
+        **context,
+    )
+    base = build_base_resume(
+        created_at=NOW,
+        resume_profile_supplement=revised,
+        **context,
+    )
+    skill = next(
+        item for item in base.entries
+        if item.supplement_subject_id == selection.selection_id
+    )
+    expected = profile.skills[5].category
+
+    rendered = render_base_resume_markdown(
+        base, resume_profile_supplement=revised, **context,
+    )
+    assert skill.skill_group == expected
+    assert f"**{expected}:**" in rendered
+    assert "+1 (555) 555-0100" in rendered
+    assert r"\+1 (555) 555-0100" not in rendered
+    assert "[GitHub](<https://github.com/example>)" in rendered
+
+
+def test_builder_uses_reviewed_wording_section_for_source_entry(tmp_path, monkeypatch):
+    import aarvia.base_resume as module
+
+    observed = []
+    original = module._source_entry
+
+    def recording_source_entry(source, bullet_ids, temporal, section_type):
+        observed.append(section_type)
+        return original(source, bullet_ids, temporal, section_type)
+
+    monkeypatch.setattr(module, "_source_entry", recording_source_entry)
+    _, _, artifact = _base(tmp_path)
+
+    assert observed == [ResumeSectionType.PROJECTS]
+    assert artifact.coverage.project_count == 1
+    assert artifact.coverage.experience_count == 0
+
+
 def test_tampered_layout_and_stale_upstream_are_rejected(tmp_path):
     _, context, artifact = _base(tmp_path)
     if artifact.sections[0].entry_ids:
@@ -112,6 +217,10 @@ def test_fixed_english_dates_expected_marker_and_commonmark_escape():
     assert _date("2025-01") == "Jan 2025"
     assert _escape("Profile Owner(Preferred)") == "Profile Owner(Preferred)"
     assert _escape("A *verified* [fact]") == r"A \*verified\* \[fact\]"
+    assert _escape("+1 (555) 555-0100") == "+1 (555) 555-0100"
+    assert _escape("was learning-platform; Canvas platform; NumPy, Pydantic") == (
+        "was learning-platform; Canvas platform; NumPy, Pydantic"
+    )
 
 
 def test_input_subject_order_does_not_change_artifact(tmp_path):

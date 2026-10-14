@@ -655,3 +655,11 @@ Development records are appended to this file as the project evolves.
 - **Safety:** Each eligible confirmed subject appears exactly once in the body or once in an omission. Structural Experience remains non-bullet context, structural Skills never acquire proficiency, and ongoing or expected dates come only from confirmed provenance. Rendering typed-loads the complete chain, escapes Markdown deterministically, permits only HTTPS links, writes atomically, and does not print Resume content or its private hash.
 - **Validation / Test Results:** Added 16 Base Resume contract, renderer, CLI, session, privacy, revision, cancellation, and atomic-write regressions. The complete suite passed all 1128 tests; a private real-chain build and render wrote only to `/tmp` and retained 33 eligible subjects, four reviewed bullets, five bulletless structural contexts, and all 17 structural skills.
 - **Not Implemented:** PDF/DOCX, Provider wording, JD matching, tailoring, fact checking, and application automation remain separate stages.
+
+## 2026-10-14 - Base Resume Representation Correctness
+
+- **Phase:** Base Resume rendering patch
+- **User Request:** Correct real-output section placement, identity headings, Education detail, exact Skill grouping, and Markdown escaping without changing Base Resume schema 1 or private artifacts.
+- **What Changed:** Version `0.19.1` derives Experience versus Projects from confirmed Wording sections, renders the stored organization/project and title/role fields, includes confirmed Education detail, groups Skills by the exact stored category, and avoids unnecessary escaping of inline phone `+` characters. Factual text is not normalized or rewritten.
+- **Safety / Compatibility:** Base Resume schema 1 and its wire fields remain unchanged. The patch consumes only data and provenance already present in the typed artifact; it does not modify facts, wording, proficiency, ownership, temporality, or `local_data`.
+- **Validation / Test Results:** Added privacy-safe real-shape regressions for section derivation, identity headings, Education fields, exact Skill categories, spacing, phone escaping, and HTTPS Markdown. The complete suite passed all 1132 tests; a real-chain rebuild and two identical renders wrote only to `/tmp`.
