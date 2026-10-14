@@ -25,6 +25,7 @@ from .career_direction import (
     load_user_role_decision,
     load_user_role_decision_revision_source,
     save_user_role_decision,
+    profile_fingerprint,
 )
 from .career_gap_analysis import (
     CareerGapAnalysis,
@@ -56,6 +57,7 @@ from .evidence_enrichment import (
 )
 from .resume_material import (
     ResumeMaterialArtifact,
+    ResumeSectionType,
     build_resume_material,
     load_resume_material,
     load_resume_material_revision_source,
@@ -89,6 +91,7 @@ from .resume_profile_supplement import (
     create_structural_selection,
     create_supplement_review,
     load_resume_profile_supplement_revision_source,
+    load_resume_profile_supplement,
     save_resume_profile_supplement,
 )
 from .resume_profile_supplement_session import (
@@ -96,6 +99,20 @@ from .resume_profile_supplement_session import (
     build_resume_profile_supplement_session,
     load_resume_profile_supplement_session,
     save_resume_profile_supplement_session,
+)
+from .base_resume import (
+    BaseResumeArtifact,
+    BaseResumeItemType,
+    build_base_resume,
+    load_base_resume,
+    save_base_resume,
+    save_base_resume_markdown,
+)
+from .base_resume_session import (
+    BaseResumeSession,
+    build_base_resume_session,
+    load_base_resume_session,
+    save_base_resume_session,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -424,6 +441,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="session draft to resume; pause writes here (default: OUTPUT.session.json)",
     )
     supplement.add_argument("--output", type=Path, required=True, help="new private Resume Profile Supplement JSON path")
+    def add_base_chain(parser_):
+        parser_.add_argument("--profile", type=Path, required=True)
+        parser_.add_argument("--mapping", type=Path, required=True)
+        parser_.add_argument("--recommendation", type=Path, required=True)
+        parser_.add_argument("--decision", type=Path, required=True)
+        parser_.add_argument("--gap-analysis", type=Path, required=True)
+        parser_.add_argument("--evidence-bank", type=Path, required=True)
+        parser_.add_argument("--evidence-enrichment", type=Path, required=True)
+        parser_.add_argument("--resume-material", type=Path, required=True)
+        parser_.add_argument("--resume-wording-review", type=Path, required=True)
+        parser_.add_argument("--resume-profile-supplement", type=Path, required=True)
+        parser_.add_argument("--review-artifact", type=Path)
+        parser_.add_argument("--allocation-review-artifact", type=Path)
+        parser_.add_argument("--superseded-decision", type=Path)
+        parser_.add_argument("--superseded-enrichment", type=Path)
+        parser_.add_argument("--superseded-resume-material", type=Path)
+        parser_.add_argument("--superseded-wording-review", type=Path)
+        parser_.add_argument("--superseded-supplement", type=Path)
+        parser_.add_argument("--superseded-base-resume", type=Path)
+
+    base = subparsers.add_parser(
+        "build-base-resume",
+        help="assemble a private role-neutral master resume from reviewed facts",
+    )
+    add_base_chain(base)
+    base.add_argument("--supersede", type=Path, help="prior Base Resume for an immutable revision")
+    base.add_argument("--resume-session", type=Path, help="private layout session to resume")
+    base.add_argument("--output", type=Path, required=True, help="new Base Resume JSON path")
+    renderer = subparsers.add_parser(
+        "render-base-resume",
+        help="render a fully validated Base Resume as deterministic Markdown",
+    )
+    add_base_chain(renderer)
+    renderer.add_argument("--base-resume", type=Path, required=True)
+    renderer.add_argument("--output", type=Path, required=True, help="new Markdown path")
     return parser
 
 
@@ -2919,6 +2971,10 @@ def _run_supplement_resume_profile(
         *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
         *(() if arguments.allocation_review_artifact is None else (arguments.allocation_review_artifact,)),
         *(() if arguments.supersede is None else (arguments.supersede,)),
+        *(() if arguments.superseded_decision is None else (arguments.superseded_decision,)),
+        *(() if arguments.superseded_enrichment is None else (arguments.superseded_enrichment,)),
+        *(() if arguments.superseded_resume_material is None else (arguments.superseded_resume_material,)),
+        *(() if arguments.superseded_wording_review is None else (arguments.superseded_wording_review,)),
     }
     if arguments.output in protected:
         raise Phase2ValidationError("Supplement output must not replace an input artifact")
@@ -3070,6 +3126,327 @@ def _run_supplement_resume_profile(
     return 0
 
 
+class BaseResumeSessionCancelled(Exception):
+    pass
+
+
+class BaseResumeSessionPaused(Exception):
+    pass
+
+
+def _load_base_resume_chain(arguments):
+    bank, material, context = _load_wording_chain(arguments)
+    previous_wording = None if arguments.superseded_wording_review is None else load_resume_wording_review_revision_source(
+        arguments.superseded_wording_review, resume_material=material, **context
+    )
+    wording = load_resume_wording_review(
+        arguments.resume_wording_review, resume_material=material,
+        superseded_wording_review=previous_wording, **context,
+    )
+    supplement_context = dict(
+        context, profile=context["profile"], resume_material=material,
+        resume_wording_review=wording,
+    )
+    previous_supplement = None if arguments.superseded_supplement is None else load_resume_profile_supplement_revision_source(
+        arguments.superseded_supplement, **supplement_context
+    )
+    supplement = load_resume_profile_supplement(
+        arguments.resume_profile_supplement,
+        superseded_supplement=previous_supplement, **supplement_context,
+    )
+    return material, wording, supplement, dict(
+        supplement_context, resume_profile_supplement=supplement,
+        superseded_supplement=previous_supplement,
+    )
+
+
+def _base_resume_orders(artifact: BaseResumeArtifact):
+    entries = {item.entry_id: item for item in artifact.entries}
+    return (
+        tuple(item.section_type for item in artifact.sections),
+        {item.section_type: item.entry_ids for item in artifact.sections},
+        {item.entry_id: item.bullet_ids for item in artifact.entries if item.bullet_ids},
+        tuple(dict.fromkeys(
+            entries[entry_id].skill_group
+            for section in artifact.sections if section.section_type.value == "skills"
+            for entry_id in section.entry_ids
+            if entries[entry_id].skill_group is not None
+        )),
+    )
+
+
+def _move(values, source: int, target: int):
+    result = list(values)
+    value = result.pop(source - 1)
+    result.insert(target - 1, value)
+    return tuple(result)
+
+
+def _base_position(prompt, maximum, *, input_fn, output_fn):
+    while True:
+        raw = input_fn(prompt).strip().lower()
+        if raw == "q":
+            raise BaseResumeSessionCancelled
+        if raw == "b":
+            return None
+        try:
+            value = int(raw)
+            if 1 <= value <= maximum:
+                return value
+        except ValueError:
+            pass
+        output_fn(f"Please enter a number from 1 to {maximum}, b, or q.")
+
+
+def _base_choice(prompt, allowed, *, input_fn, output_fn):
+    while True:
+        raw = input_fn(prompt).strip().lower()
+        if raw == "q":
+            raise BaseResumeSessionCancelled
+        if raw in allowed:
+            return raw
+        output_fn("Please enter one of: " + ", ".join(sorted(allowed | {"q"})))
+
+
+def _print_base_resume_summary(artifact: BaseResumeArtifact, *, output_fn: OutputFunction) -> None:
+    output_fn("Base Resume master layout")
+    output_fn(
+        f"Included subjects: {artifact.coverage.included_subject_count}; "
+        f"omitted: {artifact.coverage.omitted_subject_count}"
+    )
+    output_fn(
+        f"Education {artifact.coverage.education_count}; Experience "
+        f"{artifact.coverage.experience_count}; Projects {artifact.coverage.project_count}; "
+        f"Skills {artifact.coverage.skill_count}; Bullets {artifact.coverage.bullet_count}"
+    )
+    output_fn("Contact values are private and are not displayed here.")
+    output_fn("Facts and wording are read-only. Edit them in Wording Review or Resume Profile Supplement.")
+
+
+def _run_build_base_resume(arguments, *, input_fn: InputFunction, output_fn: OutputFunction,
+                           now_fn=lambda: datetime.now(timezone.utc).isoformat()) -> int:
+    session_path = arguments.resume_session or Path(str(arguments.output) + ".session.json")
+    protected = {
+        arguments.profile, arguments.mapping, arguments.recommendation,
+        arguments.decision, arguments.gap_analysis, arguments.evidence_bank,
+        arguments.evidence_enrichment, arguments.resume_material,
+        arguments.resume_wording_review, arguments.resume_profile_supplement,
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(() if arguments.allocation_review_artifact is None else (arguments.allocation_review_artifact,)),
+        *(() if arguments.supersede is None else (arguments.supersede,)),
+        *(() if arguments.superseded_decision is None else (arguments.superseded_decision,)),
+        *(() if arguments.superseded_enrichment is None else (arguments.superseded_enrichment,)),
+        *(() if arguments.superseded_resume_material is None else (arguments.superseded_resume_material,)),
+        *(() if arguments.superseded_wording_review is None else (arguments.superseded_wording_review,)),
+        *(() if arguments.superseded_supplement is None else (arguments.superseded_supplement,)),
+    }
+    if arguments.output.resolve() in {item.resolve() for item in protected}:
+        raise Phase2ValidationError("Base Resume output must not replace an input artifact")
+    if session_path.resolve() in {item.resolve() for item in protected}:
+        raise Phase2ValidationError("Base Resume session must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(f"Base Resume output already exists: {arguments.output}")
+    if arguments.output.resolve() == session_path.resolve():
+        raise Phase2ValidationError("Base Resume output and session must use different paths")
+    if arguments.resume_session is None and session_path.exists():
+        raise FileExistsError(
+            f"Base Resume session already exists: {session_path}. Resume it explicitly."
+        )
+    material, wording, supplement, context = _load_base_resume_chain(arguments)
+    previous_path = arguments.supersede
+    if arguments.superseded_base_resume is not None and previous_path is not None:
+        raise Phase2ValidationError("use only --supersede for the Base Resume revision source")
+    previous = None
+    if previous_path is not None:
+        previous = load_base_resume(previous_path, **context)
+    now = now_fn()
+    session = None
+    if arguments.resume_session is not None and session_path.exists():
+        session = load_base_resume_session(
+            session_path, target_output=arguments.output,
+            superseded_base_resume=previous, **context,
+        )
+    omitted = set(session.omitted_subject_ids if session else ())
+    initial = build_base_resume(
+        omitted_subject_ids=omitted, created_at=now,
+        superseded_base_resume=previous, **context,
+    )
+    if session:
+        section_order = session.section_order
+        entry_order = {ResumeSectionType(key): value for key, value in session.entry_order}
+        bullet_order = dict(session.bullet_order)
+        skill_group_order = session.skill_group_order
+    else:
+        section_order, entry_order, bullet_order, skill_group_order = _base_resume_orders(initial)
+    def current():
+        return build_base_resume(
+            omitted_subject_ids=sorted(omitted), section_order=section_order,
+            entry_order=entry_order, bullet_order=bullet_order,
+            skill_group_order=skill_group_order, created_at=now,
+            superseded_base_resume=previous, **context,
+        )
+    try:
+        while True:
+            artifact = current()
+            _print_base_resume_summary(artifact, output_fn=output_fn)
+            action = _base_choice(
+                "[s]ave/[d]elete-exclude/[r]estore/[o]rder/[p]ause/[q]uit: ",
+                {"s", "d", "r", "o", "p"}, input_fn=input_fn, output_fn=output_fn,
+            )
+            if action == "s":
+                break
+            if action == "p":
+                raise BaseResumeSessionPaused
+            if action in {"d", "r"}:
+                eligible = sorted(
+                    ({item.subject_id for item in artifact.entries if item.subject_id}
+                     | {item.subject_id for item in artifact.bullets}
+                     | {item.subject_id for item in artifact.omissions})
+                )
+                choices = [item for item in eligible if (item not in omitted if action == "d" else item in omitted)]
+                if not choices:
+                    output_fn("No matching subjects."); continue
+                for index, item in enumerate(choices, 1):
+                    output_fn(f"{index}. {item}")
+                raw = input_fn("Subject number [b]ack/[q]uit: ").strip().lower()
+                if raw == "q": raise BaseResumeSessionCancelled
+                if raw == "b": continue
+                try:
+                    selected = choices[int(raw) - 1]
+                except (ValueError, IndexError):
+                    output_fn("Invalid subject number."); continue
+                (omitted.add if action == "d" else omitted.remove)(selected)
+                section_order, entry_order, bullet_order, skill_group_order = _base_resume_orders(
+                    build_base_resume(omitted_subject_ids=sorted(omitted), created_at=now,
+                                      superseded_base_resume=previous, **context)
+                )
+                continue
+            output_fn("1. Sections\n2. Entries in a section\n3. Bullets in an entry\n4. Skill groups")
+            kind = input_fn("Order type [b]ack/[q]uit: ").strip().lower()
+            if kind == "q": raise BaseResumeSessionCancelled
+            if kind == "b": continue
+            try:
+                number = int(kind)
+            except ValueError:
+                output_fn("Invalid order type."); continue
+            if number == 1:
+                values = section_order
+                for index, item in enumerate(values, 1): output_fn(f"{index}. {item.value}")
+                source = _base_position("Move number [b]ack/[q]uit: ", len(values), input_fn=input_fn, output_fn=output_fn)
+                if source is None: continue
+                target = _base_position("New position [b]ack/[q]uit: ", len(values), input_fn=input_fn, output_fn=output_fn)
+                if target is None: continue
+                section_order = _move(values, source, target)
+            elif number == 2:
+                for index, section in enumerate(section_order, 1):
+                    output_fn(f"{index}. {section.value}")
+                choice = _base_position("Section number [b]ack/[q]uit: ", len(section_order), input_fn=input_fn, output_fn=output_fn)
+                if choice is None: continue
+                section = section_order[choice - 1]
+                values = entry_order[section]
+                if len(values) < 2:
+                    output_fn("There are fewer than two entries in that section."); continue
+                for index, item in enumerate(values, 1): output_fn(f"{index}. {item}")
+                source = _base_position("Move number [b]ack/[q]uit: ", len(values), input_fn=input_fn, output_fn=output_fn)
+                if source is None: continue
+                target = _base_position("New position [b]ack/[q]uit: ", len(values), input_fn=input_fn, output_fn=output_fn)
+                if target is None: continue
+                entry_order[section] = _move(values, source, target)
+            elif number == 3:
+                available = sorted((key, value) for key, value in bullet_order.items() if value)
+                for index, (key, values) in enumerate(available, 1):
+                    output_fn(f"{index}. {key} ({len(values)} bullets)")
+                if not available:
+                    output_fn("There are no bullet entries."); continue
+                choice = _base_position("Entry number [b]ack/[q]uit: ", len(available), input_fn=input_fn, output_fn=output_fn)
+                if choice is None: continue
+                key, values = available[choice - 1]
+                if len(values) < 2:
+                    output_fn("There are fewer than two bullets in that entry."); continue
+                source = _base_position("Move bullet [b]ack/[q]uit: ", len(values), input_fn=input_fn, output_fn=output_fn)
+                if source is None: continue
+                target = _base_position("New position [b]ack/[q]uit: ", len(values), input_fn=input_fn, output_fn=output_fn)
+                if target is None: continue
+                bullet_order[key] = _move(values, source, target)
+            elif number == 4:
+                values = skill_group_order
+                for index, item in enumerate(values, 1): output_fn(f"{index}. {item}")
+                if len(values) < 2:
+                    output_fn("There are fewer than two skill groups."); continue
+                source = _base_position("Move number [b]ack/[q]uit: ", len(values), input_fn=input_fn, output_fn=output_fn)
+                if source is None: continue
+                target = _base_position("New position [b]ack/[q]uit: ", len(values), input_fn=input_fn, output_fn=output_fn)
+                if target is None: continue
+                skill_group_order = _move(values, source, target)
+                skill_section = next(key for key in entry_order if key.value == "skills")
+                entry_by_id = {item.entry_id: item for item in current().entries}
+                ranks = {name: index for index, name in enumerate(skill_group_order)}
+                entry_order[skill_section] = tuple(sorted(
+                    entry_order[skill_section],
+                    key=lambda item: (ranks[entry_by_id[item].skill_group], item),
+                ))
+            else:
+                output_fn("Invalid order type.")
+    except BaseResumeSessionPaused:
+        draft = build_base_resume_session(
+            target_output=arguments.output,
+            profile_fingerprint=profile_fingerprint(context["profile"]),
+            resume_material=material, resume_wording_review=wording,
+            resume_profile_supplement=supplement,
+            omitted_subject_ids=sorted(omitted), section_order=section_order,
+            entry_order={key.value: value for key, value in entry_order.items()},
+            bullet_order=bullet_order, skill_group_order=skill_group_order,
+            current_section="final_review", updated_at=now,
+            previous_session=session, superseded_base_resume=previous,
+        )
+        save_base_resume_session(
+            draft, session_path, target_output=arguments.output,
+            superseded_base_resume=previous, **context,
+        )
+        output_fn(f"Private Base Resume session paused at: {session_path}")
+        output_fn("No formal Base Resume artifact was written.")
+        return 0
+    artifact = current()
+    save_base_resume(artifact, arguments.output,
+                     superseded_base_resume=previous, **context)
+    output_fn(f"Private Base Resume saved to: {arguments.output}")
+    return 0
+
+
+def _run_render_base_resume(arguments, *, output_fn: OutputFunction) -> int:
+    protected = {
+        arguments.profile, arguments.mapping, arguments.recommendation,
+        arguments.decision, arguments.gap_analysis, arguments.evidence_bank,
+        arguments.evidence_enrichment, arguments.resume_material,
+        arguments.resume_wording_review, arguments.resume_profile_supplement,
+        arguments.base_resume,
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(() if arguments.allocation_review_artifact is None else (arguments.allocation_review_artifact,)),
+        *(() if arguments.superseded_base_resume is None else (arguments.superseded_base_resume,)),
+        *(() if arguments.superseded_decision is None else (arguments.superseded_decision,)),
+        *(() if arguments.superseded_enrichment is None else (arguments.superseded_enrichment,)),
+        *(() if arguments.superseded_resume_material is None else (arguments.superseded_resume_material,)),
+        *(() if arguments.superseded_wording_review is None else (arguments.superseded_wording_review,)),
+        *(() if arguments.superseded_supplement is None else (arguments.superseded_supplement,)),
+    }
+    if arguments.output.resolve() in {item.resolve() for item in protected}:
+        raise Phase2ValidationError("Markdown output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(f"Markdown output already exists: {arguments.output}")
+    material, wording, supplement, context = _load_base_resume_chain(arguments)
+    previous = None if arguments.superseded_base_resume is None else load_base_resume(
+        arguments.superseded_base_resume, **context,
+    )
+    artifact = load_base_resume(
+        arguments.base_resume, superseded_base_resume=previous, **context,
+    )
+    save_base_resume_markdown(
+        artifact, arguments.output, superseded_base_resume=previous, **context,
+    )
+    output_fn(f"Base Resume Markdown saved to: {arguments.output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -3188,6 +3565,25 @@ def main(
         except (ResumeProfileSupplementSessionCancelled, KeyboardInterrupt, EOFError):
             output_fn("Resume Profile Supplement cancelled. No files were changed.")
             return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "build-base-resume":
+        try:
+            return _run_build_base_resume(
+                arguments, input_fn=input_fn, output_fn=output_fn
+            )
+        except (BaseResumeSessionCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Base Resume session cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "render-base-resume":
+        try:
+            return _run_render_base_resume(arguments, output_fn=output_fn)
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")
             return 1

@@ -125,6 +125,33 @@ from .resume_material import (
     load_resume_material_revision_source,
     save_resume_material,
 )
+from .base_resume import (
+    BASE_RESUME_SCHEMA,
+    BASE_RESUME_SCHEMA_VERSION,
+    BaseResumeArtifact,
+    BaseResumeBullet,
+    BaseResumeCoverage,
+    BaseResumeEntry,
+    BaseResumeItemType,
+    BaseResumeOmission,
+    BaseResumeOmissionReason,
+    BaseResumeSection,
+    BaseResumeTemporalState,
+    build_base_resume,
+    generate_base_resume_id,
+    load_base_resume,
+    render_base_resume_markdown,
+    save_base_resume,
+    save_base_resume_markdown,
+)
+from .base_resume_session import (
+    BASE_RESUME_SESSION_SCHEMA,
+    BASE_RESUME_SESSION_SCHEMA_VERSION,
+    BaseResumeSession,
+    build_base_resume_session,
+    load_base_resume_session,
+    save_base_resume_session,
+)
 from .resume_wording import (
     ResumeWordingReviewArtifact,
     ResumeWordingSummary,
@@ -405,9 +432,32 @@ from .role_recommendation import (
     save_role_recommendation,
 )
 
-__version__ = "0.18.1"
+__version__ = "0.19.0"
 
 __all__ = [
+    "BASE_RESUME_SCHEMA",
+    "BASE_RESUME_SCHEMA_VERSION",
+    "BASE_RESUME_SESSION_SCHEMA",
+    "BASE_RESUME_SESSION_SCHEMA_VERSION",
+    "BaseResumeArtifact",
+    "BaseResumeBullet",
+    "BaseResumeCoverage",
+    "BaseResumeEntry",
+    "BaseResumeItemType",
+    "BaseResumeOmission",
+    "BaseResumeOmissionReason",
+    "BaseResumeSection",
+    "BaseResumeSession",
+    "BaseResumeTemporalState",
+    "build_base_resume",
+    "build_base_resume_session",
+    "generate_base_resume_id",
+    "load_base_resume",
+    "load_base_resume_session",
+    "render_base_resume_markdown",
+    "save_base_resume",
+    "save_base_resume_markdown",
+    "save_base_resume_session",
     "AtomicEvidenceLocator",
     "UnresolvedEvidenceGroup",
     "AllocationReviewDecision",

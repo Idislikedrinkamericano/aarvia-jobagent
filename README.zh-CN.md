@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.18.1**
+**版本 0.19.0**
 
 现在能用：
 
@@ -25,13 +25,14 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 - 生成确定性的 Resume Material，并如实报告尚未覆盖的内容
 - 用户可组合材料并审核自己编写的简历措辞，且每条措辞保留来源引用
 - 用私有 Resume Profile Supplement 补充已确认的联系方式和未覆盖结构事实
+- 生成 role-neutral 的 Base Resume master，并支持明确 omission、私有布局 session 和确定性 Markdown
 - 支持 OpenAI-compatible Provider，包括阿里云百炼
 - 原子 JSON 保存、确定性验证和隐私安全的诊断信息
 
 还没实现：
 
 - 实时岗位搜索和详细 JD Matching
-- 简历渲染、定制和自动申请
+- 简历定制和自动申请
 
 Supplement 属于本地私密数据：联系方式及其内容派生 ID 不应提交到公开仓库。它只补结构信息，不能把未覆盖的经历或技能变成成就。
 
@@ -134,6 +135,11 @@ aarvia enrich-evidence --profile profile.json \
 和 Experience 结构信息，不需要改写 Career Profile。
 记录区支持 `all`、编号列表和范围批量审核。输入 `p` 可原子保存私密会话草稿，之后用
 `--resume-session` 显式恢复。
+
+使用 `aarvia build-base-resume --help` 在不改写事实的前提下组装 master resume；
+它只允许纳入、排除、恢复和调整顺序，`p` 会保存独立的私有布局 session。
+随后用 `aarvia render-base-resume --help` 在重新验证完整 provenance 链后生成确定性
+Markdown。输出是 role-neutral 的完整 master，不强制一页，也不针对具体 JD 定制。
 
 职业方向推荐衡量的是证据覆盖情况，**不是获得面试或 Offer 的概率**。
 

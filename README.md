@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.18.1**
+**Version 0.19.0**
 
 Ready today:
 
@@ -25,13 +25,14 @@ Ready today:
 - Deterministic Resume Material with an honest coverage report
 - User-authored Resume wording review with source-linked bullets and structural entries
 - A private Resume Profile Supplement for confirmed contact and uncovered structural Profile facts
+- A role-neutral master Base Resume with explicit omissions, private layout sessions, and deterministic Markdown
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 
 Not ready yet:
 
 - Live job discovery and detailed JD matching
-- Resume rendering, tailoring, or application automation
+- Resume tailoring or application automation
 
 The Supplement is private local data: contact values and their content-derived IDs must not be committed to a public repository. It adds structure only; it cannot turn uncovered experience or skills into achievements.
 
@@ -135,6 +136,13 @@ Use `aarvia supplement-resume-profile --help` to review private contact details 
 uncovered Education, Skills, and Experience context without changing the Career Profile.
 Record sections accept `all`, lists, and ranges for one-step review. Use `p` to save a
 private session draft, then resume it explicitly with `--resume-session`.
+
+Assemble the reviewed facts without changing them using
+`aarvia build-base-resume --help`. The command can include, exclude, restore, and
+reorder content; `p` saves an explicit private session. Then use
+`aarvia render-base-resume --help` to render deterministic Markdown after the
+entire provenance chain is validated again. The result is a role-neutral master
+resume, not a one-page or job-tailored resume.
 
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
 
