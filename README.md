@@ -8,7 +8,7 @@ It builds a confirmed Career Profile, asks focused follow-up questions, and turn
 
 ## Where It Stands
 
-**Version 0.19.1**
+**Version 0.20.6**
 
 Ready today:
 
@@ -26,12 +26,14 @@ Ready today:
 - User-authored Resume wording review with source-linked bullets and structural entries
 - A private Resume Profile Supplement for confirmed contact and uncovered structural Profile facts
 - A role-neutral master Base Resume with explicit omissions, private layout sessions, and fact-preserving deterministic Markdown
+- Local UTF-8 JD decomposition and source-linked matching against confirmed Phase 2 facts
+- Conservative JD support semantics: illustrative examples are not extra requirements, and related background alone is not partial support
 - OpenAI-compatible Providers, including Alibaba Cloud Bailian
 - Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
 
 Not ready yet:
 
-- Live job discovery and detailed JD matching
+- Live job discovery
 - Resume tailoring or application automation
 
 The Supplement is private local data: contact values and their content-derived IDs must not be committed to a public repository. It adds structure only; it cannot turn uncovered experience or skills into achievements.
@@ -144,6 +146,38 @@ reorder content; `p` saves an explicit private session. Then use
 entire provenance chain is validated again. The result is a role-neutral master
 resume, not a one-page or job-tailored resume.
 
+Match a local UTF-8 job description without changing the Base Resume:
+
+```bash
+aarvia match-jd --help
+```
+
+`match-jd` saves the original JD analysis, a structured match artifact, and a
+readable report. It distinguishes verified support, partial support, missing
+evidence, and a fact-backed mismatch. Missing evidence is not treated as lack
+of ability, and the report is not an interview or offer probability. Fact IDs
+must come from the request inventory; one invalid Provider response may be
+corrected once before the command stops without writing outputs.
+
+Strict source and contract validation does not make unrestricted semantic
+judgment deterministic. Real-model use has shown that a model can still
+misread a condition, attribute a fact to the wrong source, or make an
+unsupported inference, so every match report requires human review. The local
+B/C instruction variants under `scripts/` are non-production experiments and
+have not replaced the production prompt.
+
+Pass `--analysis-date YYYY-MM-DD` explicitly. JD Analysis schema 3 keeps that
+date separate from internship dates and deadlines. Application deadlines and
+required documents remain procedural actions rather than capability gaps.
+The Provider classifies evaluation mode, AND/OR structure, and support scope;
+Python derives the final match status and rejects inconsistent combinations.
+Each fact also carries minimal, non-contact source context, while every JD
+requirement records its source section, logical operator, and exact condition
+clauses. Source context explains provenance and does not add capability evidence.
+Provider output must be a data instance with exactly one top-level
+`requirements` key; schema-shaped wrappers and overlapping condition clauses
+are rejected by the same contract used for production matching.
+
 Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
 
 ## Follow-Up Controls
@@ -186,7 +220,12 @@ Keep personal Profiles and diagnostics under ignored local paths such as `local_
 - **Phase 2B:** US early-career market evidence and curation foundation — complete, publication dataset still unfinished
 - **Phase 2C:** explainable recommendation, evidence review, and User Decision — complete
 - **Phase 2D:** Gap Analysis, Evidence Bank, enrichment, Resume Material, and wording review foundations — complete
-- **Phase 2E–2G:** live jobs, detailed matching, resume work, and end-to-end hardening — not implemented
+- **Phase 3A:** local JD decomposition and traceable matching — implemented; contract-tested and exercised on a private real JD, with human semantic review still required
+- **Phase 3B+:** the private real-JD workflow has completed one human-assisted proposal, confirmation, resume-output, and fact-check cycle; automated tailoring, automated semantic fact checking, a unified PDF export workflow, live discovery, and application automation are not implemented
+
+The next smallest product step is a typed, reviewable flow from tailoring
+proposal to user confirmation and resume output. The completed private cycle
+is usage evidence for that flow, not an automated Tailoring implementation.
 
 ## Development
 

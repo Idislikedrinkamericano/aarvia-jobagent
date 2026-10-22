@@ -8,7 +8,7 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 
 ## 现在做到哪了
 
-**版本 0.19.1**
+**版本 0.20.6**
 
 现在能用：
 
@@ -26,12 +26,14 @@ Aarvia 是一个职业导航 Agent。它会先认真了解真实的你，再讨�
 - 用户可组合材料并审核自己编写的简历措辞，且每条措辞保留来源引用
 - 用私有 Resume Profile Supplement 补充已确认的联系方式和未覆盖结构事实
 - 生成 role-neutral 的 Base Resume master，并支持明确 omission、私有布局 session 和忠实保留事实的确定性 Markdown
+- 拆解本地 UTF-8 JD，并用 Phase 2 已确认事实生成可追溯匹配报告
+- 保守的 JD 支持语义：非强制示例不是额外门槛，仅有相关背景也不算部分满足
 - 支持 OpenAI-compatible Provider，包括阿里云百炼
 - 原子 JSON 保存、确定性验证和隐私安全的诊断信息
 
 还没实现：
 
-- 实时岗位搜索和详细 JD Matching
+- 实时岗位搜索
 - 简历定制和自动申请
 
 Supplement 属于本地私密数据：联系方式及其内容派生 ID 不应提交到公开仓库。它只补结构信息，不能把未覆盖的经历或技能变成成就。
@@ -141,6 +143,31 @@ aarvia enrich-evidence --profile profile.json \
 随后用 `aarvia render-base-resume --help` 在重新验证完整 provenance 链后生成确定性
 Markdown。输出是 role-neutral 的完整 master，不强制一页，也不针对具体 JD 定制。
 
+使用本地 UTF-8 JD 进行匹配且不修改 Base Resume：
+
+```bash
+aarvia match-jd --help
+```
+
+`match-jd` 会分别保存 JD 分析、结构化匹配 artifact 和可读报告，并区分充分支持、
+部分支持、当前材料缺少证据及有事实支撑的明确不符。缺少证据不等于用户不会，
+报告也不是面试或 Offer 概率。事实 ID 必须逐字来自本次请求库存；Provider 首次返回
+无效引用时最多纠正一次，再次失败则停止且不写入输出。
+
+严格的来源与契约校验并不能让开放式语义判断变成确定性结果。真实模型使用已经表明，
+模型仍可能误解条件、归错事实或作无依据推断，因此每份匹配报告都需要人工审核。
+`scripts/` 下的 B/C instructions 只是非生产实验，并未替换生产 prompt。
+
+运行时必须显式提供 `--analysis-date YYYY-MM-DD`。JD Analysis schema 3 将分析日期与
+实习时间、毕业时间和申请截止日期分开保存；申请截止日期和材料要求属于程序性待办，
+不会被表述为能力缺口。
+Provider 只分类评估模式、AND/OR 结构和支持范围，最终匹配状态由 Python 派生；
+不一致的组合会被拒绝。
+每条事实同时携带最小化、无联系方式的来源背景；每项 JD 要求保存所属段落、逻辑关系
+和逐字条件片段。来源背景只解释 provenance，不会增加能力证据。
+Provider 输出必须是仅含顶层 `requirements` 的数据实例；schema 外壳和互相重叠的
+条件片段会由生产匹配与本地 Eval 共用的同一契约拒绝。
+
 职业方向推荐衡量的是证据覆盖情况，**不是获得面试或 Offer 的概率**。
 
 ## Follow-up 输入命令
@@ -183,7 +210,11 @@ API Key、endpoint 和模型需要属于同一地域。Aarvia 对百炼使用 Ch
 - **Phase 2B：** 美国 early-career 市场证据与 curation 基础 — 已完成，正式发布数据集仍未完成
 - **Phase 2C：** 可解释推荐、证据审核与 User Decision — 已完成
 - **Phase 2D：** Gap Analysis、Evidence Bank、用户补充、Resume Material 与措辞审核基础 — 已完成
-- **Phase 2E–2G：** 实时岗位、详细匹配、简历工作和端到端加固 — 尚未实现
+- **Phase 3A：** 本地 JD 拆解与可追溯匹配 — 已实现并通过契约测试，也完成了一次私有真实 JD 使用；语义结论仍须人工审核
+- **Phase 3B+：** 私有真实 JD 已走通一次人工辅助的建议、确认、简历输出与事实检查；自动 Tailoring、自动语义事实检查、统一 PDF 导出、实时搜索与申请自动化尚未实现
+
+下一步最小产品目标是把“调整建议 → 用户确认 → 简历输出”做成强类型、可审核的正式流程。
+已经完成的私有人工闭环只是使用验证，不代表自动 Tailoring 已实现。
 
 ## 开发验证
 

@@ -663,3 +663,67 @@ Development records are appended to this file as the project evolves.
 - **What Changed:** Version `0.19.1` derives Experience versus Projects from confirmed Wording sections, renders the stored organization/project and title/role fields, includes confirmed Education detail, groups Skills by the exact stored category, and avoids unnecessary escaping of inline phone `+` characters. Factual text is not normalized or rewritten.
 - **Safety / Compatibility:** Base Resume schema 1 and its wire fields remain unchanged. The patch consumes only data and provenance already present in the typed artifact; it does not modify facts, wording, proficiency, ownership, temporality, or `local_data`.
 - **Validation / Test Results:** Added privacy-safe real-shape regressions for section derivation, identity headings, Education fields, exact Skill categories, spacing, phone escaping, and HTTPS Markdown. The complete suite passed all 1132 tests; a real-chain rebuild and two identical renders wrote only to `/tmp`.
+
+## 2026-10-14 - Phase 3A Traceable JD Matching
+
+- **Phase:** Phase 3A - local JD decomposition and evidence matching
+- **User Request:** Reuse the fully validated Phase 2 chain to decompose a local UTF-8 JD and produce a source-linked match report without changing the Base Resume.
+- **What Changed:** Version `0.20.0` adds `ValidatedResumeContext`, `ResumeFactIndex`, JD Analysis schema 1, JD Match Report schema 1, and `aarvia match-jd`. Requirements retain exact JD offsets and Required/Preferred/Unspecified modality. Match evidence can reference only current confirmed facts, with explicit visibility for facts omitted from the Base Resume.
+- **Safety / Compatibility:** JD text is untrusted Provider input. Contact and non-confirmed material are excluded from the Provider inventory. Python validates every quote, fact ID, artifact identity, and upstream provenance; semantic judgments remain explicitly reviewable and are not presented as probabilities. Phase 2 schemas are unchanged.
+- **Validation Scope:** Automated tests use synthetic JDs and mock Providers. No paid Provider or real JD was used; real-JD acceptance remains pending.
+- **Not Implemented:** Minimal Tailoring, final Fact Checking, live job discovery, application automation, and Base Resume mutation remain outside this stage.
+
+## 2026-10-15 - JD Fact Reference Compatibility
+
+- **Phase:** Phase 3A Provider compatibility patch
+- **User Request:** Make a first real JD run recover safely when the Provider returns a material, wording, stale, or invented ID instead of an eligible `fact_id`.
+- **What Changed:** Version `0.20.1` uses one immutable `ResumeFactIndex` for the Provider inventory and deterministic validation, adds request-local `fact_id` enums to supported structured output, and permits one correction request for response-contract failures. Correction instructions require verbatim inventory IDs or `evidence_missing` with an empty list.
+- **Safety / Compatibility:** Invalid identifiers are bounded and sanitized before display. Network, authentication, quota, and other request failures are not correction-retried. A second invalid response fails the whole run before any JD Analysis, Match Report, or readable report is written. Phase 2 and Phase 3 artifact schemas are unchanged.
+- **Validation Scope:** Automated tests use synthetic fixtures and mock Providers; the original failed response was not retained, so its exact invalid ID cannot be reconstructed. No paid Provider was called.
+
+## 2026-10-15 - JD Semantic Matching Guardrails
+
+- **Phase:** Phase 3A semantic-quality patch
+- **User Request:** Correct temporal interpretation, compound-requirement status, employer-context transfer, skill evidence granularity, return-to-study conditions, deadlines, and application-material treatment observed in a private real-JD report.
+- **What Changed:** Version `0.20.2` adds backward-compatible JD Analysis schema 2 with an explicit `analysis_date`, plus `procedural_action_required` for deadlines and application materials. The shared Provider prompt now separates analysis, internship, education, and deadline dates; preserves AND/OR semantics; treats employer context as target work rather than prior-employer eligibility; distinguishes skill listing, learning, use, single-agent work, and multi-agent implementation; and prohibits graduation dates from proving authorization or availability.
+- **Deterministic Guarantees:** Python validates the explicit date, exact JD quotes, eligible fact IDs, status/reference relationships, and that procedural status is used only for application conditions. JD Analysis schema 1 remains readable with exact wire round-trip.
+- **Model-Dependent Boundary:** Python does not claim to understand general semantic entailment. Requirement completeness, transferable-capability judgment, and correct partial-support selection still require real-model acceptance. Synthetic mock cases validate the contract and control flow only. No Provider was called during implementation.
+
+## 2026-10-16 - Structured JD Semantic Decisions
+
+- **Phase:** Phase 3A semantic-quality patch
+- **User Request:** Fix remaining internal contradictions in a private real-JD v2 report without hard-coding the employer, person, school, project, or JD.
+- **Root Cause:** The Provider directly selected the final status. Python could validate fact IDs and status/reference shape but could not reject a response whose reasoning described a procedure or a satisfied OR branch while its status said missing or partial. The private artifact records `qwen-plus`; the Bailian capability path uses Chat Completions with JSON Object, not strict JSON Schema enforcement.
+- **What Changed:** Version `0.20.3` changes only the Provider transport. Each requirement now supplies `evaluation_mode`, `logic_operator`, and `support_scope`; Python deterministically derives the persisted status and rejects incompatible combinations. Five compact, fictional, human-annotated acceptance cases cover deadlines, a satisfied degree OR branch, return intent, learning versus multi-agent implementation, and transferable employer-context work.
+- **Deterministic Boundary:** Procedures, evidence matches, fact-reference requirements, and final status mapping are enforced by Python. Semantic selection of mode, operator, scope, relevant evidence, and complete requirement extraction remains model-dependent and requires a new private real-model run. Persisted JD Analysis and JD Match schemas and loaders are unchanged.
+- **Validation:** Phase 3A contract and CLI tests passed with mock Providers. No paid Provider was called, and existing private v1/v2 outputs were not modified.
+
+## 2026-10-16 - JD Source Context and Clause Coverage
+
+- **Phase:** Phase 3A semantic-quality patch
+- **User Request:** Preserve the minimum source background needed to interpret isolated verified facts, and make compound JD condition coverage auditable without hard-coding a private employer, person, or job description.
+- **What Changed:** Version `0.20.4` adds non-persistent `source_context` to the Provider fact inventory, derived only from the already validated evidence source or confirmed structural selection. JD Analysis schema 3 records each requirement's deterministically located source section, derived importance, logical operator, and exact-offset condition clauses. Schemas 1 and 2 remain explicit, strict, and byte-shape compatible.
+- **Safety Boundary:** Source context contains only source reference, record type, organization/project, title, dates, and an explicitly confirmed personal/team scope when available. Contact, full Profile data, rejected/deferred content, and inferred team scope are excluded. Context explains provenance but is not an additional capability fact. Exact clause validation proves that recorded text came from the JD; it cannot prove that a model found every semantic condition.
+- **Semantic Boundary:** Fictional acceptance cases prohibit treating return-to-study as proof of a prior interruption, tool/provider integration as customer production integration, or engineering integrity controls as production deployment or agentic-AI safety evaluation. Real-model semantic acceptance remains a separate private step; no Provider was called during implementation.
+
+## 2026-10-17 - JD Provider Instance Boundary and Eval Parity
+
+- **Phase:** Phase 3A format-correctness patch
+- **User Request:** Reject schema-shaped Provider envelopes, make the local model comparison use the production JD contract, and prepare a two-request format-only comparison without changing endpoint capabilities or semantic schemas.
+- **What Changed:** Version `0.20.5` clearly separates output rules, the JSON Schema, and semantic examples; requires a data instance whose only top-level key is `requirements`; and keeps strict rejection rather than unwrapping malformed output. A pure `validate_jd_provider_output()` function now powers both production construction and the local comparison, including exact quotes, fact references, enum relationships, duplicate clauses, and non-overlapping clause spans. The comparison script adds rubric v2 and single-case selection while retaining one request per model, no correction retry, and SDK retries disabled.
+- **Compatibility / Validation:** JD Analysis and Match Report schemas are unchanged. Focused JD and comparison tests passed all 30 cases, and the offline comparison check passed without Provider access. The earlier private comparison remains immutable; its reported 5/6 baseline contract count used the older partial checker and was at most 4/6 under the production overlap rule. Format and semantic quality still require a new private model run.
+
+## 2026-10-18 - JD Support-Scope Semantics
+
+- **Phase:** Phase 3A semantic-quality patch
+- **User Request:** Resolve two model-comparison failures where illustrative framework names became extra conditions and merely related agent background became partial support.
+- **What Changed:** Version `0.20.6` defines `complete`, `partial`, `none`, and `contradicted` consistently in the shared Provider instructions. `e.g.` and `such as` remain illustrative unless separate mandatory wording requires a named technology. Partial support now requires evidence for an identifiable part of the requested capability or condition; topical, learning-stage, or adjacent background alone is `none`. The conflicting multi-agent guidance example is corrected, and local-only human rubric v3 records the same boundary.
+- **Safety / Validation:** No schema, endpoint, protocol, retry, fact inventory, or persisted artifact changed. Production validation remains structural and source-based; it does not pretend to prove semantic entailment. Focused tests and the offline comparison check passed without Provider access. A new private four-request comparison is still required to observe real-model behavior.
+
+## 2026-10-21 - Phase 3A Pre-Commit Documentation Alignment
+
+- **Phase:** Phase 3A submission preparation
+- **What Changed:** Public documentation now distinguishes deterministic source/contract validation from model-dependent semantic judgment, identifies the B/C instruction variants as non-production experiments, and records that one private real-JD workflow completed a human-assisted proposal, confirmation, resume-output, and fact-review cycle.
+- **Boundary:** The private cycle does not constitute automated Tailoring, automated semantic fact checking, or a unified PDF export workflow. No private JD, career fact, resume content, Provider response, or contact information is copied into public documentation.
+- **Next Step:** The smallest follow-on product scope is a reviewable flow from adjustment proposal to explicit user confirmation and resume output.
+- **Validation:** The complete offline suite passed all 1176 tests. Both comparison-script offline checks passed with SDK retries disabled and no Provider calls. Source import, source CLI, and `match-jd --help` reported version `0.20.6`; `git diff --check` passed.

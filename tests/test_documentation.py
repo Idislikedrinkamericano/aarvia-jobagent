@@ -8,12 +8,13 @@ DOCS = ROOT / "docs"
 
 def test_conversation_index_links_to_each_phase_log() -> None:
     index = (DOCS / "conversation-log.md").read_text(encoding="utf-8")
-    links = re.findall(r"\[[^]]+\]\((conversation-log-phase-[012]\.md)\)", index)
+    links = re.findall(r"\[[^]]+\]\((conversation-log-phase-[0123]\.md)\)", index)
 
     assert links == [
         "conversation-log-phase-0.md",
         "conversation-log-phase-1.md",
         "conversation-log-phase-2.md",
+        "conversation-log-phase-3.md",
     ]
     assert all((DOCS / link).is_file() for link in links)
     assert "sanitized phase summaries" in index
