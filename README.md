@@ -1,197 +1,154 @@
-# Aarvia 🧭
+# Aarvia
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Aarvia is a career navigation agent that learns who you actually are before suggesting where to go next.
+Aarvia is a local-first career navigation tool. It helps you turn confirmed
+career facts into role recommendations, a reusable base resume, and a
+traceable job-description match report.
 
-It builds a confirmed Career Profile, asks focused follow-up questions, and turns your evidence into explainable role recommendations. A new job description should not magically create a new version of you. 🎰🚫
+**Current version: 0.20.6**
 
-## Where It Stands
+## What You Can Do
 
-**Version 0.20.6**
+1. **Build a Career Profile** from a conversation, a UTF-8 text file, or a
+   fully manual interview.
+2. **Compare career directions** for Applied AI Engineer, Machine Learning
+   Engineer, and Research Engineer. Every recommendation links back to your
+   evidence and can be reviewed before it affects the result.
+3. **Prepare a role-neutral base resume** from confirmed facts. Aarvia keeps
+   contact details, structural information, evidence, and resume wording
+   separate so that an unverified claim cannot quietly become a bullet.
+4. **Match a local JD** against the same confirmed facts. The report separates
+   supported requirements, partial support, missing evidence, explicit
+   conflicts, and application tasks.
 
-Ready today:
-
-- Career discovery from a narrative, a text file, or a guided interview
-- One-question-at-a-time follow-up for missing information
-- Strict confirmation and correction before Profile facts are saved
-- Current Fit and Directional Fit for Applied AI Engineer, Machine Learning Engineer, and Research Engineer
-- Reusable evidence Mapping plus separate allocation and evidence reviews
-- One global role ranking: Core-supported roles first, then Extended-only roles
-- A confirmed or deferred Career Direction Decision, saved separately from the recommendation
-- Deterministic Gap Analysis for the confirmed Primary and Secondary directions
-- A deterministic Evidence Bank that separates verified facts, capability links, and open needs
-- User-confirmed Evidence Enrichment that preserves exact wording and never rewrites the Evidence Bank
-- Deterministic Resume Material with an honest coverage report
-- User-authored Resume wording review with source-linked bullets and structural entries
-- A private Resume Profile Supplement for confirmed contact and uncovered structural Profile facts
-- A role-neutral master Base Resume with explicit omissions, private layout sessions, and fact-preserving deterministic Markdown
-- Local UTF-8 JD decomposition and source-linked matching against confirmed Phase 2 facts
-- Conservative JD support semantics: illustrative examples are not extra requirements, and related background alone is not partial support
-- OpenAI-compatible Providers, including Alibaba Cloud Bailian
-- Atomic JSON storage, deterministic validation, and privacy-safe diagnostics
-
-Not ready yet:
-
-- Live job discovery
-- Resume tailoring or application automation
-
-The Supplement is private local data: contact values and their content-derived IDs must not be committed to a public repository. It adds structure only; it cannot turn uncovered experience or skills into achievements.
-
-The production Role Catalog still contains **8 role families, 0 published requirements, and 0 sources**. Aarvia has a real recommendation rubric, but it does not pretend an unfinished market dataset is complete.
+Aarvia does not treat a recommendation as a hiring probability. Missing
+evidence also does not mean that you lack a skill.
 
 ## Quick Start
+
+Install the project and configure an OpenAI-compatible Provider:
 
 ```bash
 python -m pip install .
 
 export AARVIA_LLM_API_KEY="your-api-key"
 export AARVIA_LLM_MODEL="your-model"
-# Optional for OpenAI; required for another compatible Provider
+# Optional for OpenAI; required by many compatible Providers
 export AARVIA_LLM_BASE_URL="https://your-provider.example/v1"
 ```
 
-Create a Profile:
+### 1. Create your Profile
 
 ```bash
-# Tell your story interactively
+# Interactive narrative
 aarvia discover --narrative --profile profile.json
 
-# Use a longer UTF-8 text file
+# Or use a local UTF-8 file
 aarvia discover --narrative-file background.txt --profile profile.json
 
-# Continue an existing Profile, one missing topic at a time
-aarvia discover --follow-up --profile profile.json
-
-# Fully manual, no LLM
+# No LLM
 aarvia discover --manual --profile profile.json
 ```
 
-Generate and review role recommendations:
+Continue later with:
 
 ```bash
-# First run: Provider proposes evidence bindings; Python validates and scores them
+aarvia discover --follow-up --profile profile.json
+```
+
+### 2. Generate a recommendation
+
+```bash
 aarvia recommend --profile profile.json \
   --mapping-output mapping.json \
   --output recommendation.json
-
-# Review ambiguous allocation first, then provisional semantic evidence
-aarvia review-evidence --profile profile.json \
-  --mapping mapping.json \
-  --allocation-output allocation-review.json \
-  --output evidence-review.json
-
-# Recompute from saved artifacts; this does not call the Provider
-aarvia recommend --profile profile.json \
-  --mapping-artifact mapping.json \
-  --allocation-review-artifact allocation-review.json \
-  --review-artifact evidence-review.json \
-  --output reviewed-recommendation.json
-
-# Choose a direction without calling the Provider
-aarvia decide --profile profile.json \
-  --recommendation reviewed-recommendation.json \
-  --output career-decision.json
-
-# Analyze only the confirmed Primary and Secondary directions; no Provider call
-aarvia analyze-gaps --profile profile.json \
-  --mapping mapping.json \
-  --recommendation reviewed-recommendation.json \
-  --decision career-decision.json \
-  --allocation-review-artifact allocation-review.json \
-  --review-artifact evidence-review.json \
-  --output gap-analysis.json
-
-# Build a reusable fact bank from the validated chain; no Provider call
-aarvia build-evidence-bank --profile profile.json \
-  --mapping mapping.json \
-  --allocation-review-artifact allocation-review.json \
-  --review-artifact evidence-review.json \
-  --recommendation reviewed-recommendation.json \
-  --decision career-decision.json \
-  --gap-analysis gap-analysis.json \
-  --output evidence-bank.json
-
-# Add and review your own missing details; no Provider call
-aarvia enrich-evidence --profile profile.json \
-  --mapping mapping.json \
-  --allocation-review-artifact allocation-review.json \
-  --review-artifact evidence-review.json \
-  --recommendation reviewed-recommendation.json \
-  --decision career-decision.json \
-  --gap-analysis gap-analysis.json \
-  --evidence-bank evidence-bank.json \
-  --output evidence-enrichment.json
 ```
 
-Evidence references accept one or more comma-separated numbers, such as `1, 2`.
-During enrichment, use `b` to go back; Claims can be edited or deleted before the final save.
+The first run asks the Provider to propose evidence links. Python validates
+those links and owns the IDs, scoring, confidence, and ranking. Use
+`aarvia review-evidence --help` to review ambiguous or provisional evidence,
+then rerun `recommend` from the saved mapping without another Provider call.
 
-Prepare source-linked, role-neutral Resume material with `aarvia prepare-resume-materials --help`.
-It is not a finished resume; uncovered Profile records and contact fields stay visible.
-
-Turn those materials into user-authored, reviewed wording with
-`aarvia review-resume-wording --help`. Materials may be combined only within one
-source, and this stage still does not render a finished resume or call a Provider.
-
-Use `aarvia supplement-resume-profile --help` to review private contact details and
-uncovered Education, Skills, and Experience context without changing the Career Profile.
-Record sections accept `all`, lists, and ranges for one-step review. Use `p` to save a
-private session draft, then resume it explicitly with `--resume-session`.
-
-Assemble the reviewed facts without changing them using
-`aarvia build-base-resume --help`. The command can include, exclude, restore, and
-reorder content; `p` saves an explicit private session. Then use
-`aarvia render-base-resume --help` to render deterministic Markdown after the
-entire provenance chain is validated again. The result is a role-neutral master
-resume, not a one-page or job-tailored resume.
-
-Match a local UTF-8 job description without changing the Base Resume:
+### 3. Match a job description
 
 ```bash
 aarvia match-jd --help
 ```
 
-`match-jd` saves the original JD analysis, a structured match artifact, and a
-readable report. It distinguishes verified support, partial support, missing
-evidence, and a fact-backed mismatch. Missing evidence is not treated as lack
-of ability, and the report is not an interview or offer probability. Fact IDs
-must come from the request inventory; one invalid Provider response may be
-corrected once before the command stops without writing outputs.
+`match-jd` accepts a local UTF-8 JD, an explicit analysis date, and your saved
+career files. It writes a structured JD analysis, a structured match
+result, and a readable report without changing your base resume.
 
-Strict source and contract validation does not make unrestricted semantic
-judgment deterministic. Real-model use has shown that a model can still
-misread a condition, attribute a fact to the wrong source, or make an
-unsupported inference, so every match report requires human review. The local
-B/C instruction variants under `scripts/` are non-production experiments and
-have not replaced the production prompt.
+## Command Map
 
-Pass `--analysis-date YYYY-MM-DD` explicitly. JD Analysis schema 3 keeps that
-date separate from internship dates and deadlines. Application deadlines and
-required documents remain procedural actions rather than capability gaps.
-The Provider classifies evaluation mode, AND/OR structure, and support scope;
-Python derives the final match status and rejects inconsistent combinations.
-Each fact also carries minimal, non-contact source context, while every JD
-requirement records its source section, logical operator, and exact condition
-clauses. Source context explains provenance and does not add capability evidence.
-Provider output must be a data instance with exactly one top-level
-`requirements` key; schema-shaped wrappers and overlapping condition clauses
-are rejected by the same contract used for production matching.
+| Goal | Command | Provider used? |
+| --- | --- | --- |
+| Build or continue a Career Profile | `aarvia discover` | Optional |
+| Recommend career directions | `aarvia recommend` | First mapping only |
+| Review evidence | `aarvia review-evidence` | No |
+| Choose Primary and Secondary directions | `aarvia decide` | No |
+| Analyze strengths, gaps, and unknowns | `aarvia analyze-gaps` | No |
+| Build a reusable fact bank | `aarvia build-evidence-bank` | No |
+| Add user-confirmed evidence details | `aarvia enrich-evidence` | No |
+| Prepare resume-safe materials | `aarvia prepare-resume-materials` | No |
+| Review resume wording | `aarvia review-resume-wording` | No |
+| Add private contact and structural data | `aarvia supplement-resume-profile` | No |
+| Assemble a role-neutral master resume | `aarvia build-base-resume` | No |
+| Render the master resume as Markdown | `aarvia render-base-resume` | No |
+| Match a local JD | `aarvia match-jd` | Yes |
 
-Role recommendations are evidence coverage assessments, **not probabilities of getting an interview or offer**.
+Run any command with `--help` for its required input paths. The long chain
+is deliberate: each stage validates its inputs so stale or unreviewed facts do
+not silently enter later outputs.
 
-## Follow-Up Controls
+## How The Data Flows
 
-- `.done` submits a multiline answer.
-- `.cancel` discards the current answer and asks again.
-- `:none` means there is nothing to report.
-- `:skip` means ask again in a future session.
-- `:decline` means the user chose not to answer.
-- `:finish` reviews the session; `q` cancels it without saving.
+```text
+Career Profile
+  -> evidence mapping and review
+  -> role recommendation and user decision
+  -> gap analysis and evidence bank
+  -> reviewed resume material
+  -> role-neutral base resume
+  -> JD match report
+```
 
-If nothing is missing or changed, Aarvia exits without calling the Provider or rewriting files. Doing nothing is sometimes the correct feature.
+The files are separate on purpose. Model suggestions are not facts, a gap
+is not resume evidence, and resume wording cannot increase evidence strength.
 
-## Bailian
+## Important Limits
+
+- A real model can still misunderstand a JD condition, attribute a fact to the
+  wrong source, or make an unsupported inference. **Review every JD report.**
+- The instruction variants under `scripts/` are offline, non-production
+  experiments. They have not replaced the production prompt.
+- Aarvia does not yet provide live job discovery, automated tailoring,
+  automated semantic fact checking, a unified PDF export workflow, or
+  application automation.
+- One private real-JD workflow has completed a human-assisted proposal,
+  confirmation, resume-output, and fact-review cycle. That is usage validation,
+  not an automated Tailoring feature.
+- The production Role Catalog still has 8 role families and no published
+  requirements or sources. The recommendation rubric is usable, but the market
+  dataset is not presented as complete.
+
+## Privacy And Safety
+
+- Facts are saved only after confirmation.
+- Rejected evidence never affects scoring; ambiguous evidence contributes
+  nothing until reviewed.
+- Profile and review files are written atomically.
+- Diagnostics contain safe metadata, not API keys, raw Provider responses, or
+  Profile excerpts.
+- Keep personal data under an ignored path such as `local_data/`. Never commit
+  `.env`, Profiles, resumes, or Provider responses.
+
+Private contact data belongs in Resume Profile Supplement, not in the public
+Career Profile or logs. Supplement data can add structure, but it cannot turn
+an uncovered experience into an achievement.
+
+## Alibaba Cloud Bailian
 
 ```bash
 export AARVIA_LLM_API_KEY="your-dashscope-api-key"
@@ -199,33 +156,20 @@ export AARVIA_LLM_BASE_URL="https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/c
 export AARVIA_LLM_MODEL="qwen-plus"
 ```
 
-Use a key, endpoint, and model from the same region. Aarvia uses Chat Completions for Bailian and keeps Provider-specific parameters away from OpenAI endpoints.
+Use a key, endpoint, and model from the same region. Aarvia uses Chat
+Completions for Bailian and keeps Provider-specific parameters away from
+OpenAI endpoints.
 
-## Safety Promises 🔒
+## Project Status
 
-- Extracted facts remain temporary until the user confirms them.
-- The Provider may propose evidence links; Python owns IDs, validation, allocation, status, score, confidence, and rank.
-- Profile references must point to real fields and exact evidence in the current Profile snapshot.
-- Ambiguous evidence contributes nothing until reviewed; rejected evidence never influences scoring.
-- Corrections and reviews cannot silently overwrite unrelated facts.
-- Profile and review files are written atomically.
-- Opt-in diagnostics store safe metadata, not raw Provider responses, API keys, or Profile excerpts.
+- Career Profile and adaptive discovery: complete
+- Explainable role recommendation and evidence review: complete
+- Gap Analysis, Evidence Bank, and base-resume foundations: complete
+- Traceable local JD matching: implemented; human semantic review required
+- Automated tailoring and the application workflow: not implemented
 
-Keep personal Profiles and diagnostics under ignored local paths such as `local_data/`. Do not commit secrets.
-
-## Roadmap
-
-- **Phase 1:** Career Profile and adaptive discovery — complete
-- **Phase 2A:** shared contracts and Role Catalog foundation — complete
-- **Phase 2B:** US early-career market evidence and curation foundation — complete, publication dataset still unfinished
-- **Phase 2C:** explainable recommendation, evidence review, and User Decision — complete
-- **Phase 2D:** Gap Analysis, Evidence Bank, enrichment, Resume Material, and wording review foundations — complete
-- **Phase 3A:** local JD decomposition and traceable matching — implemented; contract-tested and exercised on a private real JD, with human semantic review still required
-- **Phase 3B+:** the private real-JD workflow has completed one human-assisted proposal, confirmation, resume-output, and fact-check cycle; automated tailoring, automated semantic fact checking, a unified PDF export workflow, live discovery, and application automation are not implemented
-
-The next smallest product step is a typed, reviewable flow from tailoring
-proposal to user confirmation and resume output. The completed private cycle
-is usage evidence for that flow, not an automated Tailoring implementation.
+The next product step is a reviewable flow from adjustment proposal to user
+confirmation and resume output.
 
 ## Development
 
@@ -235,4 +179,6 @@ python -m pytest
 git diff --check
 ```
 
-Engineering history lives in the [sanitized phase summaries](docs/conversation-log.md) and [development log](docs/codex-log.md). They are intentionally separate from this README so the front door stays readable.
+Engineering history lives in the
+[sanitized phase summaries](docs/conversation-log.md) and
+[development log](docs/codex-log.md).
