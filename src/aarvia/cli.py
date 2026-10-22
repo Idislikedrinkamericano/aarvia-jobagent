@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
+import tempfile
 from typing import Sequence
 
 from . import __version__
@@ -113,6 +115,14 @@ from .base_resume_session import (
     build_base_resume_session,
     load_base_resume_session,
     save_base_resume_session,
+)
+from .resume_context import ValidatedResumeContext
+from .jd_matching import (
+    OpenAIJDMatchingProvider,
+    build_jd_match_with_retry,
+    load_jd_analysis,
+    load_jd_match_report,
+    render_jd_match_report,
 )
 from .evidence_binding_review import (
     BindingReviewDecision,
@@ -476,6 +486,22 @@ def build_parser() -> argparse.ArgumentParser:
     add_base_chain(renderer)
     renderer.add_argument("--base-resume", type=Path, required=True)
     renderer.add_argument("--output", type=Path, required=True, help="new Markdown path")
+    matching = subparsers.add_parser(
+        "match-jd",
+        help="decompose a local JD and match it against verified Phase 2 facts",
+    )
+    add_base_chain(matching)
+    matching.add_argument("--base-resume", type=Path, required=True)
+    matching.add_argument("--jd", type=Path, required=True, help="local UTF-8 JD text file")
+    matching.add_argument(
+        "--analysis-date", required=True,
+        help="explicit analysis date in YYYY-MM-DD format",
+    )
+    matching.add_argument("--jd-analysis-output", type=Path, required=True)
+    matching.add_argument("--output", type=Path, required=True, help="new JD Match Report JSON")
+    matching.add_argument("--report-output", type=Path, required=True, help="new readable Markdown report")
+    matching.add_argument("--supersede", type=Path, help="prior JD Match Report revision")
+    matching.add_argument("--superseded-jd-analysis", type=Path, help="JD Analysis referenced by --supersede")
     return parser
 
 
@@ -3447,6 +3473,95 @@ def _run_render_base_resume(arguments, *, output_fn: OutputFunction) -> int:
     return 0
 
 
+def _run_match_jd(arguments, *, matcher, output_fn: OutputFunction,
+                  now_fn=lambda: datetime.now(timezone.utc).isoformat()) -> int:
+    outputs = (arguments.jd_analysis_output, arguments.output, arguments.report_output)
+    if len({item.resolve() for item in outputs}) != len(outputs):
+        raise Phase2ValidationError("JD matching outputs must use distinct paths")
+    protected = {
+        arguments.profile, arguments.mapping, arguments.recommendation,
+        arguments.decision, arguments.gap_analysis, arguments.evidence_bank,
+        arguments.evidence_enrichment, arguments.resume_material,
+        arguments.resume_wording_review, arguments.resume_profile_supplement,
+        arguments.base_resume, arguments.jd,
+        *(() if arguments.superseded_jd_analysis is None else (arguments.superseded_jd_analysis,)),
+        *(() if arguments.review_artifact is None else (arguments.review_artifact,)),
+        *(() if arguments.allocation_review_artifact is None else (arguments.allocation_review_artifact,)),
+        *(() if arguments.supersede is None else (arguments.supersede,)),
+    }
+    if any(item.resolve() in {value.resolve() for value in protected} for item in outputs):
+        raise Phase2ValidationError("JD matching output must not replace an input artifact")
+    for item in outputs:
+        if item.exists():
+            raise FileExistsError(f"JD matching output already exists: {item}")
+    material, wording, supplement, base_context = _load_base_resume_chain(arguments)
+    previous_base = None if arguments.superseded_base_resume is None else load_base_resume(
+        arguments.superseded_base_resume, **base_context,
+    )
+    base = load_base_resume(
+        arguments.base_resume, superseded_base_resume=previous_base, **base_context,
+    )
+    context = ValidatedResumeContext(
+        profile=base_context["profile"], rubric=base_context["rubric"],
+        catalog=base_context["catalog"], mapping=base_context["mapping"],
+        recommendation=base_context["recommendation"], decision=base_context["decision"],
+        gap_analysis=base_context["gap_analysis"], evidence_bank=base_context["evidence_bank"],
+        evidence_enrichment=base_context["evidence_enrichment"], resume_material=material,
+        resume_wording_review=wording, resume_profile_supplement=supplement,
+        base_resume=base, evidence_reviews=base_context.get("evidence_reviews"),
+        allocation_reviews=base_context.get("allocation_reviews"),
+        superseded_decision=base_context.get("superseded_decision"),
+        superseded_enrichment=base_context.get("superseded_enrichment"),
+        superseded_resume_material=base_context.get("superseded_resume_material"),
+        superseded_wording_review=base_context.get("superseded_wording_review"),
+        superseded_supplement=base_context.get("superseded_supplement"),
+        superseded_base_resume=previous_base,
+    )
+    raw = arguments.jd.read_bytes()
+    if not raw or len(raw) > MAX_NARRATIVE_FILE_BYTES:
+        raise Phase2ValidationError("JD text must be non-empty and no larger than 2 MiB")
+    try:
+        jd_content = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise Phase2ValidationError("JD input must be UTF-8 text") from error
+    previous_match = None
+    if (arguments.supersede is None) != (arguments.superseded_jd_analysis is None):
+        raise Phase2ValidationError("--supersede and --superseded-jd-analysis must be used together")
+    if arguments.supersede is not None:
+        previous_analysis = load_jd_analysis(arguments.superseded_jd_analysis)
+        previous_match = load_jd_match_report(
+            arguments.supersede, jd_analysis=previous_analysis, context=context,
+        )
+    active_matcher = matcher or OpenAIJDMatchingProvider()
+    analysis, report = build_jd_match_with_retry(
+        jd_content=jd_content, source_name=arguments.jd.name,
+        provider=active_matcher, context=context,
+        analysis_date=arguments.analysis_date, created_at=now_fn(),
+        superseded_match_report=previous_match,
+    )
+    readable = render_jd_match_report(analysis, report, context=context)
+    save_phase2_json_transaction((
+        (arguments.jd_analysis_output, analysis.to_dict()),
+        (arguments.output, report.to_dict()),
+    ))
+    temporary = None
+    try:
+        arguments.report_output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=arguments.report_output.parent, delete=False) as handle:
+            handle.write(readable)
+            handle.flush(); os.fsync(handle.fileno()); temporary = Path(handle.name)
+        os.replace(temporary, arguments.report_output)
+    except BaseException:
+        if temporary is not None: temporary.unlink(missing_ok=True)
+        arguments.jd_analysis_output.unlink(missing_ok=True)
+        arguments.output.unlink(missing_ok=True)
+        raise
+    output_fn(f"JD Analysis saved to: {arguments.jd_analysis_output}")
+    output_fn(f"JD Match Report saved to: {arguments.output}")
+    output_fn(f"Readable report saved to: {arguments.report_output}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -3454,6 +3569,7 @@ def main(
     output_fn: OutputFunction = print,
     extractor: NarrativeExtractor | None = None,
     mapper: ProfileDimensionMapper | None = None,
+    jd_matcher=None,
 ) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
@@ -3585,6 +3701,18 @@ def main(
         try:
             return _run_render_base_resume(arguments, output_fn=output_fn)
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "match-jd":
+        try:
+            return _run_match_jd(
+                arguments, matcher=jd_matcher, output_fn=output_fn
+            )
+        except (
+            OSError, ProfileValidationError, Phase2ValidationError,
+            LLMConfigurationError, LLMRequestError,
+        ) as error:
             output_fn(f"Error: {error}")
             return 1
 
