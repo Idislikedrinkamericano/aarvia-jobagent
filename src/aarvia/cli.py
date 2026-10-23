@@ -124,6 +124,20 @@ from .jd_matching import (
     load_jd_match_report,
     render_jd_match_report,
 )
+from .tailoring_proposal import (
+    TailoringReviewDecision,
+    build_tailoring_proposal,
+    create_tailoring_proposal_review,
+    load_tailoring_proposal,
+    render_tailoring_proposal_report,
+    save_tailoring_proposal_review,
+    load_tailoring_proposal_review,
+)
+from .tailored_resume import (
+    build_tailored_resume,
+    render_tailored_resume_markdown,
+    render_tailoring_change_log,
+)
 from .evidence_binding_review import (
     BindingReviewDecision,
     BindingReviewerType,
@@ -198,6 +212,10 @@ class ResumeProfileSupplementSessionPaused(Exception):
     def __init__(self, section: SupplementSessionSection) -> None:
         self.section = section
         super().__init__(section.value)
+
+
+class TailoringProposalReviewCancelled(Exception):
+    """Raised when proposal review is cancelled before any file is written."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -502,6 +520,39 @@ def build_parser() -> argparse.ArgumentParser:
     matching.add_argument("--report-output", type=Path, required=True, help="new readable Markdown report")
     matching.add_argument("--supersede", type=Path, help="prior JD Match Report revision")
     matching.add_argument("--superseded-jd-analysis", type=Path, help="JD Analysis referenced by --supersede")
+    tailoring = subparsers.add_parser(
+        "propose-tailoring",
+        help="create review-only ordering and bullet-selection suggestions",
+    )
+    add_base_chain(tailoring)
+    tailoring.add_argument("--base-resume", type=Path, required=True)
+    tailoring.add_argument("--jd-analysis", type=Path, required=True)
+    tailoring.add_argument("--jd-match", type=Path, required=True)
+    tailoring.add_argument("--output", type=Path, required=True, help="new Tailoring Proposal JSON path")
+    tailoring.add_argument("--report-output", type=Path, required=True, help="new readable proposal Markdown path")
+    tailoring_review = subparsers.add_parser(
+        "review-tailoring-proposal",
+        help="accept, reject, or defer each Tailoring Proposal suggestion",
+    )
+    add_base_chain(tailoring_review)
+    tailoring_review.add_argument("--base-resume", type=Path, required=True)
+    tailoring_review.add_argument("--jd-analysis", type=Path, required=True)
+    tailoring_review.add_argument("--jd-match", type=Path, required=True)
+    tailoring_review.add_argument("--proposal", type=Path, required=True)
+    tailoring_review.add_argument("--output", type=Path, required=True, help="new Tailoring Proposal Review JSON path")
+    tailoring_apply = subparsers.add_parser(
+        "apply-tailoring",
+        help="apply accepted ordering-only suggestions without rewriting content",
+    )
+    add_base_chain(tailoring_apply)
+    tailoring_apply.add_argument("--base-resume", type=Path, required=True)
+    tailoring_apply.add_argument("--jd-analysis", type=Path, required=True)
+    tailoring_apply.add_argument("--jd-match", type=Path, required=True)
+    tailoring_apply.add_argument("--proposal", type=Path, required=True)
+    tailoring_apply.add_argument("--proposal-review", type=Path, required=True)
+    tailoring_apply.add_argument("--output", type=Path, required=True, help="new Tailored Resume JSON path")
+    tailoring_apply.add_argument("--markdown-output", type=Path, required=True, help="new tailored Markdown path")
+    tailoring_apply.add_argument("--change-log-output", type=Path, required=True, help="new ordering change log path")
     return parser
 
 
@@ -3186,6 +3237,46 @@ def _load_base_resume_chain(arguments):
     )
 
 
+def _load_validated_resume_context(arguments) -> ValidatedResumeContext:
+    """Load one fully validated Phase 2 and Base Resume context for Phase 3."""
+    material, wording, supplement, base_context = _load_base_resume_chain(arguments)
+    previous_base = (
+        None
+        if arguments.superseded_base_resume is None
+        else load_base_resume(arguments.superseded_base_resume, **base_context)
+    )
+    base = load_base_resume(
+        arguments.base_resume,
+        superseded_base_resume=previous_base,
+        **base_context,
+    )
+    context = ValidatedResumeContext(
+        profile=base_context["profile"],
+        rubric=base_context["rubric"],
+        catalog=base_context["catalog"],
+        mapping=base_context["mapping"],
+        recommendation=base_context["recommendation"],
+        decision=base_context["decision"],
+        gap_analysis=base_context["gap_analysis"],
+        evidence_bank=base_context["evidence_bank"],
+        evidence_enrichment=base_context["evidence_enrichment"],
+        resume_material=material,
+        resume_wording_review=wording,
+        resume_profile_supplement=supplement,
+        base_resume=base,
+        evidence_reviews=base_context.get("evidence_reviews"),
+        allocation_reviews=base_context.get("allocation_reviews"),
+        superseded_decision=base_context.get("superseded_decision"),
+        superseded_enrichment=base_context.get("superseded_enrichment"),
+        superseded_resume_material=base_context.get("superseded_resume_material"),
+        superseded_wording_review=base_context.get("superseded_wording_review"),
+        superseded_supplement=base_context.get("superseded_supplement"),
+        superseded_base_resume=previous_base,
+    )
+    context.validate()
+    return context
+
+
 def _base_resume_orders(artifact: BaseResumeArtifact):
     entries = {item.entry_id: item for item in artifact.entries}
     return (
@@ -3494,29 +3585,7 @@ def _run_match_jd(arguments, *, matcher, output_fn: OutputFunction,
     for item in outputs:
         if item.exists():
             raise FileExistsError(f"JD matching output already exists: {item}")
-    material, wording, supplement, base_context = _load_base_resume_chain(arguments)
-    previous_base = None if arguments.superseded_base_resume is None else load_base_resume(
-        arguments.superseded_base_resume, **base_context,
-    )
-    base = load_base_resume(
-        arguments.base_resume, superseded_base_resume=previous_base, **base_context,
-    )
-    context = ValidatedResumeContext(
-        profile=base_context["profile"], rubric=base_context["rubric"],
-        catalog=base_context["catalog"], mapping=base_context["mapping"],
-        recommendation=base_context["recommendation"], decision=base_context["decision"],
-        gap_analysis=base_context["gap_analysis"], evidence_bank=base_context["evidence_bank"],
-        evidence_enrichment=base_context["evidence_enrichment"], resume_material=material,
-        resume_wording_review=wording, resume_profile_supplement=supplement,
-        base_resume=base, evidence_reviews=base_context.get("evidence_reviews"),
-        allocation_reviews=base_context.get("allocation_reviews"),
-        superseded_decision=base_context.get("superseded_decision"),
-        superseded_enrichment=base_context.get("superseded_enrichment"),
-        superseded_resume_material=base_context.get("superseded_resume_material"),
-        superseded_wording_review=base_context.get("superseded_wording_review"),
-        superseded_supplement=base_context.get("superseded_supplement"),
-        superseded_base_resume=previous_base,
-    )
+    context = _load_validated_resume_context(arguments)
     raw = arguments.jd.read_bytes()
     if not raw or len(raw) > MAX_NARRATIVE_FILE_BYTES:
         raise Phase2ValidationError("JD text must be non-empty and no larger than 2 MiB")
@@ -3559,6 +3628,243 @@ def _run_match_jd(arguments, *, matcher, output_fn: OutputFunction,
     output_fn(f"JD Analysis saved to: {arguments.jd_analysis_output}")
     output_fn(f"JD Match Report saved to: {arguments.output}")
     output_fn(f"Readable report saved to: {arguments.report_output}")
+    return 0
+
+
+def _load_tailoring_inputs(arguments):
+    context = _load_validated_resume_context(arguments)
+    analysis = load_jd_analysis(arguments.jd_analysis)
+    match_report = load_jd_match_report(
+        arguments.jd_match,
+        jd_analysis=analysis,
+        context=context,
+    )
+    return context, analysis, match_report
+
+
+def _tailoring_protected_paths(arguments) -> set[Path]:
+    names = (
+        "profile", "mapping", "recommendation", "decision", "gap_analysis",
+        "evidence_bank", "evidence_enrichment", "resume_material",
+        "resume_wording_review", "resume_profile_supplement", "base_resume",
+        "jd_analysis", "jd_match", "review_artifact",
+        "allocation_review_artifact", "superseded_decision",
+        "superseded_enrichment", "superseded_resume_material",
+        "superseded_wording_review", "superseded_supplement",
+        "superseded_base_resume", "proposal", "proposal_review",
+    )
+    return {
+        value.resolve()
+        for name in names
+        if (value := getattr(arguments, name, None)) is not None
+    }
+
+
+def _save_new_text(path: Path, content: str) -> None:
+    temporary = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", newline="\n", dir=path.parent, delete=False,
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        os.replace(temporary, path)
+    except BaseException:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
+
+
+def _run_propose_tailoring(
+    arguments,
+    *,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    outputs = (arguments.output, arguments.report_output)
+    if len({item.resolve() for item in outputs}) != len(outputs):
+        raise Phase2ValidationError("Tailoring Proposal outputs must use distinct paths")
+    protected = _tailoring_protected_paths(arguments)
+    if any(item.resolve() in protected for item in outputs):
+        raise Phase2ValidationError("Tailoring Proposal output must not replace an input artifact")
+    for item in outputs:
+        if item.exists():
+            raise FileExistsError(f"Tailoring Proposal output already exists: {item}")
+    context, analysis, match_report = _load_tailoring_inputs(arguments)
+    proposal = build_tailoring_proposal(
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+        created_at=now_fn(),
+    )
+    report = render_tailoring_proposal_report(
+        proposal,
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+    )
+    save_phase2_json_transaction(((arguments.output, proposal.to_dict()),))
+    try:
+        _save_new_text(arguments.report_output, report)
+    except BaseException:
+        arguments.output.unlink(missing_ok=True)
+        raise
+    output_fn(f"Tailoring Proposal saved to: {arguments.output}")
+    output_fn(f"Readable proposal saved to: {arguments.report_output}")
+    output_fn(f"Suggestions awaiting review: {proposal.summary.suggestion_count}")
+    output_fn("No resume content was changed.")
+    return 0
+
+
+def _run_review_tailoring_proposal(
+    arguments,
+    *,
+    input_fn: InputFunction,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    if arguments.output.resolve() in _tailoring_protected_paths(arguments):
+        raise Phase2ValidationError("Tailoring Proposal Review output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(f"Tailoring Proposal Review already exists: {arguments.output}")
+    context, analysis, match_report = _load_tailoring_inputs(arguments)
+    proposal = load_tailoring_proposal(
+        arguments.proposal,
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+    )
+    if not proposal.suggestions:
+        output_fn("This proposal contains no suggestions. No Review file was written.")
+        return 0
+    decisions: dict[str, TailoringReviewDecision] = {}
+    for index, suggestion in enumerate(proposal.suggestions, 1):
+        output_fn(f"Suggestion {index}/{len(proposal.suggestions)}")
+        output_fn(f"Action: {suggestion.action.value}")
+        output_fn(f"Section: {suggestion.section_type.value}")
+        output_fn(f"Current content: {suggestion.original_content}")
+        output_fn(f"Reason: {suggestion.rationale}")
+        while True:
+            answer = input_fn("[a]ccept/[r]eject/[d]efer/[q]uit: ").strip().lower()
+            if answer == "q":
+                raise TailoringProposalReviewCancelled
+            decision = {
+                "a": TailoringReviewDecision.ACCEPTED,
+                "r": TailoringReviewDecision.REJECTED,
+                "d": TailoringReviewDecision.DEFERRED,
+            }.get(answer)
+            if decision is None:
+                output_fn("Please enter a, r, d, or q.")
+                continue
+            decisions[suggestion.suggestion_id] = decision
+            break
+    while True:
+        answer = input_fn("Save all Tailoring Proposal decisions? [s]ave/[q]uit: ").strip().lower()
+        if answer == "q":
+            raise TailoringProposalReviewCancelled
+        if answer == "s":
+            break
+        output_fn("Please enter s or q.")
+    review = create_tailoring_proposal_review(
+        proposal=proposal,
+        decisions=decisions,
+        reviewed_at=now_fn(),
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+    )
+    save_tailoring_proposal_review(
+        review,
+        arguments.output,
+        proposal=proposal,
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+    )
+    counts = {item: 0 for item in TailoringReviewDecision}
+    for item in review.reviews:
+        counts[item.decision] += 1
+    output_fn(
+        "Tailoring Proposal Review saved: "
+        f"{counts[TailoringReviewDecision.ACCEPTED]} accepted, "
+        f"{counts[TailoringReviewDecision.REJECTED]} rejected, "
+        f"{counts[TailoringReviewDecision.DEFERRED]} deferred."
+    )
+    output_fn(f"Review path: {arguments.output}")
+    output_fn("No resume content was changed.")
+    return 0
+
+
+def _load_tailoring_application_inputs(arguments):
+    context, analysis, match_report = _load_tailoring_inputs(arguments)
+    proposal = load_tailoring_proposal(
+        arguments.proposal,
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+    )
+    proposal_review = load_tailoring_proposal_review(
+        arguments.proposal_review,
+        proposal=proposal,
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+    )
+    return context, analysis, match_report, proposal, proposal_review
+
+
+def _run_apply_tailoring(
+    arguments,
+    *,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    outputs = (arguments.output, arguments.markdown_output, arguments.change_log_output)
+    if len({item.resolve() for item in outputs}) != len(outputs):
+        raise Phase2ValidationError("Tailored Resume outputs must use distinct paths")
+    protected = _tailoring_protected_paths(arguments)
+    if any(item.resolve() in protected for item in outputs):
+        raise Phase2ValidationError("Tailored Resume output must not replace an input artifact")
+    for item in outputs:
+        if item.exists():
+            raise FileExistsError(f"Tailored Resume output already exists: {item}")
+    context, analysis, match_report, proposal, proposal_review = (
+        _load_tailoring_application_inputs(arguments)
+    )
+    validation = dict(
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+        proposal=proposal,
+        proposal_review=proposal_review,
+    )
+    tailored = build_tailored_resume(**validation, created_at=now_fn())
+    markdown = render_tailored_resume_markdown(tailored, **validation)
+    change_log = render_tailoring_change_log(tailored, **validation)
+    written: list[Path] = []
+    try:
+        save_phase2_json_transaction(((arguments.output, tailored.to_dict()),))
+        written.append(arguments.output)
+        _save_new_text(arguments.markdown_output, markdown)
+        written.append(arguments.markdown_output)
+        _save_new_text(arguments.change_log_output, change_log)
+        written.append(arguments.change_log_output)
+    except BaseException:
+        for item in reversed(written):
+            item.unlink(missing_ok=True)
+        raise
+    output_fn(f"Tailored Resume saved to: {arguments.output}")
+    output_fn(f"Tailored Markdown saved to: {arguments.markdown_output}")
+    output_fn(f"Ordering change log saved to: {arguments.change_log_output}")
+    output_fn(
+        "Applied ordering-only tailoring: "
+        f"{tailored.summary.moved_count} moved, "
+        f"{tailored.summary.retained_count} retained."
+    )
+    output_fn("No wording, facts, proficiency, or section membership changed.")
     return 0
 
 
@@ -3713,6 +4019,32 @@ def main(
             OSError, ProfileValidationError, Phase2ValidationError,
             LLMConfigurationError, LLMRequestError,
         ) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "propose-tailoring":
+        try:
+            return _run_propose_tailoring(arguments, output_fn=output_fn)
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "review-tailoring-proposal":
+        try:
+            return _run_review_tailoring_proposal(
+                arguments, input_fn=input_fn, output_fn=output_fn,
+            )
+        except (TailoringProposalReviewCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Tailoring Proposal review cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "apply-tailoring":
+        try:
+            return _run_apply_tailoring(arguments, output_fn=output_fn)
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")
             return 1
 

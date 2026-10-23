@@ -33,3 +33,11 @@ The next private fictional comparison passed the repaired output boundary but ex
 ## Conversation 8: Human-Assisted Resume Application Cycle
 
 A private real-JD workflow was taken from a traceable match report through a manually reviewed tailoring proposal, explicit user confirmation, a minimally adjusted resume, and line-by-line fact review. This demonstrated a usable human-assisted path while also confirming that real-model match reports can still misread conditions, misattribute an otherwise valid fact, or make an unsupported inference. The B/C instruction variants remain isolated experiments and were not promoted into the production prompt. No automated Tailoring artifact, automated semantic fact checker, or unified PDF export workflow was added. The next product step is the narrow reviewed flow from adjustment proposal to user confirmation and resume output.
+
+## Conversation 9: Traceable Tailoring Proposal
+
+Version `0.21.0` formalizes the first narrow Phase 3B step. A strict proposal artifact derives review-only ordering and existing-bullet selection suggestions from the validated Base Resume and JD Match, while a separate owner-review artifact records accepted, rejected, and deferred decisions. The flow reuses confirmed facts and reviewed wording, never treats match reasoning as a career fact, and does not edit the resume. Applying accepted decisions, free rewriting, semantic fact checking, and rendering tailored output remain outside this release.
+
+## Conversation 10: Ordering-Only Tailored Resume
+
+Version `0.22.0` applies accepted proposal decisions as deterministic ordering changes. A derived Tailored Resume artifact stores full provenance, final layout, and an auditable change list without becoming a new fact authority. The CLI emits new JSON, Markdown, and change-log files atomically while preserving the Base Resume. Rejected, deferred, and unreviewed suggestions remain inert; wording changes, deletions, new facts, semantic fact checking, and PDF export remain separate stages.

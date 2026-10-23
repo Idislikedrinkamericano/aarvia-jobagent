@@ -6,7 +6,7 @@ Aarvia is a local-first career navigation tool. It helps you turn confirmed
 career facts into role recommendations, a reusable base resume, and a
 traceable job-description match report.
 
-**Current version: 0.20.6**
+**Current version: 0.22.0**
 
 ## What You Can Do
 
@@ -21,6 +21,10 @@ traceable job-description match report.
 4. **Match a local JD** against the same confirmed facts. The report separates
    supported requirements, partial support, missing evidence, explicit
    conflicts, and application tasks.
+5. **Review a minimal tailoring proposal** for project/experience ordering and
+   existing bullet selection. Suggestions and owner decisions are saved
+   separately. Accepted ordering suggestions can then produce a new tailored
+   JSON, Markdown resume, and change log without overwriting the Base Resume.
 
 Aarvia does not treat a recommendation as a hiring probability. Missing
 evidence also does not mean that you lack a skill.
@@ -80,6 +84,24 @@ aarvia match-jd --help
 career files. It writes a structured JD analysis, a structured match
 result, and a readable report without changing your base resume.
 
+### 4. Review tailoring suggestions
+
+```bash
+aarvia propose-tailoring --help
+aarvia review-tailoring-proposal --help
+```
+
+The first command derives traceable suggestions from the validated Base Resume
+and JD Match. The second records `accepted`, `rejected`, or `deferred` decisions
+in a separate artifact. Apply only accepted ordering decisions with:
+
+```bash
+aarvia apply-tailoring --help
+```
+
+This creates three new files and never changes the Base Resume. It cannot
+rewrite bullets, add facts, delete content, or move content between sections.
+
 ## Command Map
 
 | Goal | Command | Provider used? |
@@ -97,6 +119,9 @@ result, and a readable report without changing your base resume.
 | Assemble a role-neutral master resume | `aarvia build-base-resume` | No |
 | Render the master resume as Markdown | `aarvia render-base-resume` | No |
 | Match a local JD | `aarvia match-jd` | Yes |
+| Propose minimal resume ordering/selection | `aarvia propose-tailoring` | No |
+| Review tailoring suggestions | `aarvia review-tailoring-proposal` | No |
+| Apply accepted ordering suggestions | `aarvia apply-tailoring` | No |
 
 Run any command with `--help` for its required input paths. The long chain
 is deliberate: each stage validates its inputs so stale or unreviewed facts do
@@ -112,6 +137,7 @@ Career Profile
   -> reviewed resume material
   -> role-neutral base resume
   -> JD match report
+  -> tailoring proposal and owner review
 ```
 
 The files are separate on purpose. Model suggestions are not facts, a gap
@@ -123,9 +149,9 @@ is not resume evidence, and resume wording cannot increase evidence strength.
   wrong source, or make an unsupported inference. **Review every JD report.**
 - The instruction variants under `scripts/` are offline, non-production
   experiments. They have not replaced the production prompt.
-- Aarvia does not yet provide live job discovery, automated tailoring,
-  automated semantic fact checking, a unified PDF export workflow, or
-  application automation.
+- Aarvia applies accepted ordering suggestions only. It does not rewrite
+  bullets, perform automated semantic fact checking, provide a unified PDF
+  export workflow, or automate applications.
 - One private real-JD workflow has completed a human-assisted proposal,
   confirmation, resume-output, and fact-review cycle. That is usage validation,
   not an automated Tailoring feature.
@@ -166,10 +192,12 @@ OpenAI endpoints.
 - Explainable role recommendation and evidence review: complete
 - Gap Analysis, Evidence Bank, and base-resume foundations: complete
 - Traceable local JD matching: implemented; human semantic review required
-- Automated tailoring and the application workflow: not implemented
+- Traceable tailoring proposal and owner review: implemented
+- Applying accepted ordering suggestions: implemented
+- Free rewriting, semantic fact checking, and applications: not implemented
 
-The next product step is a reviewable flow from adjustment proposal to user
-confirmation and resume output.
+The next product step is reviewed wording changes with the same fact and
+provenance boundaries.
 
 ## Development
 

@@ -727,3 +727,17 @@ Development records are appended to this file as the project evolves.
 - **Boundary:** The private cycle does not constitute automated Tailoring, automated semantic fact checking, or a unified PDF export workflow. No private JD, career fact, resume content, Provider response, or contact information is copied into public documentation.
 - **Next Step:** The smallest follow-on product scope is a reviewable flow from adjustment proposal to explicit user confirmation and resume output.
 - **Validation:** The complete offline suite passed all 1176 tests. Both comparison-script offline checks passed with SDK retries disabled and no Provider calls. Source import, source CLI, and `match-jd --help` reported version `0.20.6`; `git diff --check` passed.
+
+## 2026-10-21 - Phase 3B Traceable Tailoring Proposal
+
+- **Phase:** Phase 3B - review-only minimal tailoring
+- **What Changed:** Version `0.21.0` adds strict Tailoring Proposal schema 1 and a separate Tailoring Proposal Review schema 1. `propose-tailoring` suggests only ordering and selection of existing reviewed entries and bullets; `review-tailoring-proposal` records profile-owner acceptance, rejection, or deferral.
+- **Safety Boundary:** Suggestions are rebuilt from the fully validated Phase 2 chain, Base Resume, JD Analysis, JD Match, confirmed facts, and reviewed wording. Provider reasoning is not treated as a career fact, Match status cannot delete content, and neither command modifies a resume.
+- **Not Implemented:** Applying accepted suggestions, free wording generation, automated semantic fact checking, PDF export, and application automation remain separate work.
+
+## 2026-10-22 - Phase 3B Ordering-Only Tailoring Application
+
+- **Phase:** Phase 3B - accepted proposal application
+- **What Changed:** Version `0.22.0` adds Tailored Resume schema 1 and `apply-tailoring`. The command applies only accepted entry or bullet ordering suggestions, records deterministic changes, and writes a new JSON artifact, Markdown resume, and change log without replacing the Base Resume.
+- **Integrity Boundary:** Rejected, deferred, and unreviewed suggestions do not contribute. Retain means keep, never delete. All entries, bullets, fields, references, facts, wording, and section membership are rebuilt from the same fully validated chain; only order may differ.
+- **Not Implemented:** Bullet rewriting, new facts, deletion, cross-section movement, automated semantic fact checking, and PDF export remain outside this release.

@@ -5,7 +5,7 @@
 Aarvia 是一个本地优先的职业导航工具。它把用户确认过的职业事实整理成可解释的
 方向推荐、可复用的基础简历，以及能够追溯来源的 JD 匹配报告。
 
-**当前版本：0.20.6**
+**当前版本：0.22.0**
 
 ## 现在能做什么
 
@@ -16,6 +16,9 @@ Aarvia 是一个本地优先的职业导航工具。它把用户确认过的职�
    未确认的内容不会悄悄变成简历 bullet。
 4. **匹配本地 JD**：使用同一套已确认事实，区分充分支持、部分支持、缺少证据、
    明确不符和申请待办。
+5. **审核最小调整建议**：针对项目/经历排序和现有 bullet 选择生成建议；建议与
+   用户决定分开保存；随后可把 accepted 排序建议应用到新的 Tailored Resume，
+   原 Base Resume 不会被覆盖。
 
 Aarvia 的推荐不是面试或录取概率。“缺少证据”也不等于“用户不会”。
 
@@ -72,6 +75,24 @@ aarvia match-jd --help
 `match-jd` 接收本地 UTF-8 JD、明确的分析日期和已经保存的职业文件。它会生成
 结构化 JD 分析、结构化匹配结果和可读报告，不会修改基础简历。
 
+### 4. 生成并审核调整建议
+
+```bash
+aarvia propose-tailoring --help
+aarvia review-tailoring-proposal --help
+```
+
+第一条命令从已验证的 Base Resume 与 JD Match 生成可追溯建议；第二条命令把
+`accepted`、`rejected` 或 `deferred` 决定保存为独立 Review。只应用 accepted
+排序建议：
+
+```bash
+aarvia apply-tailoring --help
+```
+
+该命令新建 Tailored Resume JSON、Markdown 和变更记录，不覆盖 Base Resume。
+它不会改写 bullet、增加事实、删除内容或跨 section 移动内容。
+
 ## 命令地图
 
 | 目标 | 命令 | 是否调用 Provider |
@@ -89,6 +110,9 @@ aarvia match-jd --help
 | 组装角色中立的 master resume | `aarvia build-base-resume` | 否 |
 | 将 master resume 渲染为 Markdown | `aarvia render-base-resume` | 否 |
 | 匹配本地 JD | `aarvia match-jd` | 是 |
+| 生成最小排序/选择建议 | `aarvia propose-tailoring` | 否 |
+| 审核调整建议 | `aarvia review-tailoring-proposal` | 否 |
+| 应用 accepted 排序建议 | `aarvia apply-tailoring` | 否 |
 
 对任意命令运行 `--help` 可查看所需输入路径。流程看起来较长是有意设计：
 每一步都会重新验证输入，避免过期或未审核的事实静默进入后续结果。
@@ -103,6 +127,7 @@ Career Profile
   -> 已审核的简历材料
   -> 角色中立的基础简历
   -> JD 匹配报告
+  -> Tailoring Proposal 与用户 Review
 ```
 
 这些文件分开保存是为了守住边界：模型建议不是事实，gap 不是简历证据，
@@ -112,7 +137,8 @@ Career Profile
 
 - 真实模型仍可能误解 JD 条件、归错事实或作无依据推断。**每份 JD 报告都需要人工审核。**
 - `scripts/` 下的 instructions 变体是离线、非生产实验，没有替换生产 prompt。
-- 实时岗位搜索、自动 Tailoring、自动语义事实检查、统一 PDF 导出和自动申请尚未实现。
+- 目前只应用 accepted 排序建议；尚未实现自由 bullet 改写、自动语义事实检查、
+  统一 PDF 导出和自动申请。
 - 一个私有真实 JD 已完成“人工建议 → 用户确认 → 简历输出 → 事实检查”闭环；
   这是使用验证，不代表自动 Tailoring 已实现。
 - Production Role Catalog 目前有 8 个 Role Family，但尚未发布 requirement 和 source。
@@ -147,9 +173,11 @@ API Key、endpoint 和模型需要属于同一地域。Aarvia 对百炼使用 Ch
 - 可解释职业推荐与证据审核：完成
 - Gap Analysis、Evidence Bank 与基础简历底座：完成
 - 可追溯本地 JD Matching：已实现，语义结论仍须人工审核
-- 自动 Tailoring 与申请流程：尚未实现
+- 可追溯 Tailoring Proposal 与用户审核：已实现
+- 应用 accepted 排序建议：已实现
+- 自由改写、语义事实检查与申请流程：尚未实现
 
-下一步是把“调整建议 → 用户确认 → 简历输出”做成可审核的正式流程。
+下一步是在同样的事实与 provenance 边界内支持经审核的 wording 调整。
 
 ## 开发验证
 
