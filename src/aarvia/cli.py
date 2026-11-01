@@ -135,9 +135,30 @@ from .tailoring_proposal import (
 )
 from .tailored_resume import (
     build_tailored_resume,
+    load_tailored_resume,
     render_tailored_resume_markdown,
     render_tailoring_change_log,
 )
+from .tailored_wording import (
+    OpenAITailoredWordingProvider,
+    build_wording_tailored_resume,
+    create_tailored_wording_review,
+    generate_tailored_wording_proposal,
+    load_tailored_wording_proposal,
+    load_tailored_wording_review,
+    load_wording_tailored_resume,
+    render_tailored_wording_proposal_report,
+    render_wording_change_log,
+    render_wording_tailored_resume_markdown,
+)
+from .resume_fact_check import (
+    ResumeSemanticReviewStatus,
+    build_final_resume_fact_check,
+    load_final_resume_fact_check,
+    prepare_final_resume_bullet_checks,
+    render_final_resume_fact_check_report,
+)
+from .resume_pdf import export_final_resume_pdf
 from .evidence_binding_review import (
     BindingReviewDecision,
     BindingReviewerType,
@@ -216,6 +237,14 @@ class ResumeProfileSupplementSessionPaused(Exception):
 
 class TailoringProposalReviewCancelled(Exception):
     """Raised when proposal review is cancelled before any file is written."""
+
+
+class TailoredWordingReviewCancelled(Exception):
+    """Raised when JD-targeted wording review is cancelled before writing."""
+
+
+class FinalResumeFactCheckCancelled(Exception):
+    """Raised when final Resume fact checking is cancelled before writing."""
 
 
 def read_narrative_file(path: Path) -> str:
@@ -553,6 +582,63 @@ def build_parser() -> argparse.ArgumentParser:
     tailoring_apply.add_argument("--output", type=Path, required=True, help="new Tailored Resume JSON path")
     tailoring_apply.add_argument("--markdown-output", type=Path, required=True, help="new tailored Markdown path")
     tailoring_apply.add_argument("--change-log-output", type=Path, required=True, help="new ordering change log path")
+
+    def add_tailored_wording_chain(parser_):
+        add_base_chain(parser_)
+        parser_.add_argument("--base-resume", type=Path, required=True)
+        parser_.add_argument("--jd-analysis", type=Path, required=True)
+        parser_.add_argument("--jd-match", type=Path, required=True)
+        parser_.add_argument("--proposal", type=Path, required=True, help="reviewed ordering Proposal JSON")
+        parser_.add_argument("--proposal-review", type=Path, required=True, help="ordering Proposal Review JSON")
+        parser_.add_argument("--tailored-resume", type=Path, required=True, help="ordering-only Tailored Resume JSON")
+
+    wording_proposal = subparsers.add_parser(
+        "propose-tailored-wording",
+        help="ask the configured Provider for optional JD-targeted rewrites of existing bullets",
+    )
+    add_tailored_wording_chain(wording_proposal)
+    wording_proposal.add_argument("--jd", type=Path, required=True, help="same local UTF-8 JD text used for matching")
+    wording_proposal.add_argument("--output", type=Path, required=True, help="new Wording Proposal JSON")
+    wording_proposal.add_argument("--report-output", type=Path, required=True, help="new review-readable Markdown")
+
+    wording_review = subparsers.add_parser(
+        "review-tailored-wording",
+        help="accept, reject, or defer each JD-targeted bullet rewrite candidate",
+    )
+    add_tailored_wording_chain(wording_review)
+    wording_review.add_argument("--wording-proposal", type=Path, required=True)
+    wording_review.add_argument("--output", type=Path, required=True, help="new Wording Review JSON")
+
+    wording_apply = subparsers.add_parser(
+        "apply-tailored-wording",
+        help="apply only accepted bullet rewrites to a new tailored resume",
+    )
+    add_tailored_wording_chain(wording_apply)
+    wording_apply.add_argument("--wording-proposal", type=Path, required=True)
+    wording_apply.add_argument("--wording-review", type=Path, required=True)
+    wording_apply.add_argument("--output", type=Path, required=True, help="new wording-tailored Resume JSON")
+    wording_apply.add_argument("--markdown-output", type=Path, required=True, help="new tailored Markdown")
+    wording_apply.add_argument("--change-log-output", type=Path, required=True, help="new wording change log")
+    fact_check = subparsers.add_parser(
+        "fact-check-resume",
+        help="validate every final bullet reference and record profile-owner semantic review",
+    )
+    add_tailored_wording_chain(fact_check)
+    fact_check.add_argument("--wording-proposal", type=Path, help="optional JD-targeted Wording Proposal")
+    fact_check.add_argument("--wording-review", type=Path, help="optional JD-targeted Wording Review")
+    fact_check.add_argument("--wording-tailored-resume", type=Path, help="optional wording-overlay Resume")
+    fact_check.add_argument("--output", type=Path, required=True, help="new Final Resume Fact Check JSON")
+    fact_check.add_argument("--report-output", type=Path, required=True, help="new readable fact-check report")
+    pdf_export = subparsers.add_parser(
+        "export-final-resume-pdf",
+        help="export a fully validated and bullet-reviewed final resume as PDF",
+    )
+    add_tailored_wording_chain(pdf_export)
+    pdf_export.add_argument("--wording-proposal", type=Path, help="optional JD-targeted Wording Proposal")
+    pdf_export.add_argument("--wording-review", type=Path, help="optional JD-targeted Wording Review")
+    pdf_export.add_argument("--wording-tailored-resume", type=Path, help="optional wording-overlay Resume")
+    pdf_export.add_argument("--fact-check", type=Path, required=True, help="passed Final Resume Fact Check JSON")
+    pdf_export.add_argument("--output", type=Path, required=True, help="new PDF path")
     return parser
 
 
@@ -3652,6 +3738,8 @@ def _tailoring_protected_paths(arguments) -> set[Path]:
         "superseded_enrichment", "superseded_resume_material",
         "superseded_wording_review", "superseded_supplement",
         "superseded_base_resume", "proposal", "proposal_review",
+        "tailored_resume", "wording_proposal", "wording_review", "jd",
+        "wording_tailored_resume", "fact_check",
     )
     return {
         value.resolve()
@@ -3868,6 +3956,364 @@ def _run_apply_tailoring(
     return 0
 
 
+def _load_tailored_wording_inputs(arguments):
+    context, analysis, match_report, proposal, proposal_review = (
+        _load_tailoring_application_inputs(arguments)
+    )
+    ordered_validation = dict(
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+        proposal=proposal,
+        proposal_review=proposal_review,
+    )
+    tailored = load_tailored_resume(arguments.tailored_resume, **ordered_validation)
+    return context, analysis, match_report, proposal, proposal_review, tailored
+
+
+def _wording_context(arguments):
+    context, analysis, match_report, proposal, proposal_review, tailored = (
+        _load_tailored_wording_inputs(arguments)
+    )
+    validation = dict(
+        context=context,
+        jd_analysis=analysis,
+        match_report=match_report,
+        tailoring_proposal=proposal,
+        tailoring_review=proposal_review,
+        tailored_resume=tailored,
+    )
+    return validation
+
+
+def _run_propose_tailored_wording(
+    arguments,
+    *,
+    provider,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    outputs = (arguments.output, arguments.report_output)
+    if len({item.resolve() for item in outputs}) != len(outputs):
+        raise Phase2ValidationError("Tailored Wording Proposal outputs must use distinct paths")
+    if any(item.resolve() in _tailoring_protected_paths(arguments) for item in outputs):
+        raise Phase2ValidationError("Tailored Wording Proposal output must not replace an input artifact")
+    for item in outputs:
+        if item.exists():
+            raise FileExistsError(f"Tailored Wording Proposal output already exists: {item}")
+    validation = _wording_context(arguments)
+    raw = arguments.jd.read_bytes()
+    if not raw or len(raw) > MAX_NARRATIVE_FILE_BYTES:
+        raise Phase2ValidationError("JD text must be non-empty and no larger than 2 MiB")
+    try:
+        jd_content = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise Phase2ValidationError("JD input must be UTF-8 text") from error
+    if jd_content != validation["jd_analysis"].content:
+        raise Phase2ValidationError("JD text does not match the validated JD Analysis")
+    active_provider = provider or OpenAITailoredWordingProvider()
+    artifact = generate_tailored_wording_proposal(
+        provider=active_provider,
+        jd_content=jd_content,
+        created_at=now_fn(),
+        **validation,
+    )
+    report = render_tailored_wording_proposal_report(artifact, **validation)
+    written: list[Path] = []
+    try:
+        save_phase2_json_transaction(((arguments.output, artifact.to_dict()),))
+        written.append(arguments.output)
+        _save_new_text(arguments.report_output, report)
+        written.append(arguments.report_output)
+    except BaseException:
+        for item in reversed(written):
+            item.unlink(missing_ok=True)
+        raise
+    output_fn(f"Tailored Wording Proposal saved to: {arguments.output}")
+    output_fn(f"Readable review report saved to: {arguments.report_output}")
+    output_fn(
+        "Provider candidates: "
+        f"{artifact.received_candidate_count} received, "
+        f"{artifact.no_op_candidate_count} unchanged, "
+        f"{len(artifact.candidates)} awaiting human review."
+    )
+    output_fn("No resume wording was changed.")
+    return 0
+
+
+def _run_review_tailored_wording(
+    arguments,
+    *,
+    input_fn: InputFunction,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    if arguments.output.resolve() in _tailoring_protected_paths(arguments):
+        raise Phase2ValidationError("Tailored Wording Review output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(f"Tailored Wording Review already exists: {arguments.output}")
+    validation = _wording_context(arguments)
+    proposal = load_tailored_wording_proposal(arguments.wording_proposal, **validation)
+    facts = validation["context"].fact_index().fact_by_id
+    requirements = {
+        item.requirement_id: item for item in validation["jd_analysis"].requirements
+    }
+    decisions = {}
+    for index, candidate in enumerate(proposal.candidates, 1):
+        output_fn(f"Candidate {index}/{len(proposal.candidates)}")
+        output_fn(f"Original: {candidate.original_text}")
+        output_fn(f"Candidate: {candidate.candidate_text}")
+        output_fn("Target requirements:")
+        for identifier in candidate.requirement_ids:
+            output_fn(f"  {identifier}: {requirements[identifier].exact_quote}")
+        output_fn("Verified evidence:")
+        for identifier in candidate.fact_ids:
+            output_fn(f"  {identifier}: {facts[identifier].text}")
+        output_fn("Valid references do not guarantee semantic fidelity; review fact scope carefully.")
+        while True:
+            answer = input_fn("[a]ccept/[r]eject/[d]efer/[q]uit: ").strip().lower()
+            decision = {
+                "a": WordingReviewDecision.CONFIRMED,
+                "r": WordingReviewDecision.REJECTED,
+                "d": WordingReviewDecision.DEFERRED,
+            }.get(answer)
+            if answer == "q":
+                raise TailoredWordingReviewCancelled
+            if decision is None:
+                output_fn("Please enter a, r, d, or q.")
+                continue
+            decisions[candidate.wording_candidate_id] = decision
+            break
+    while True:
+        answer = input_fn("Save all wording decisions? [s]ave/[q]uit: ").strip().lower()
+        if answer == "q":
+            raise TailoredWordingReviewCancelled
+        if answer == "s":
+            break
+        output_fn("Please enter s or q.")
+    review = create_tailored_wording_review(
+        proposal=proposal,
+        decisions=decisions,
+        reviewed_at=now_fn(),
+        **validation,
+    )
+    save_phase2_json_transaction(((arguments.output, review.to_dict()),))
+    counts = {item: 0 for item in WordingReviewDecision}
+    for item in review.reviews:
+        counts[item.decision] += 1
+    output_fn(
+        "Tailored Wording Review saved: "
+        f"{counts[WordingReviewDecision.CONFIRMED]} accepted, "
+        f"{counts[WordingReviewDecision.REJECTED]} rejected, "
+        f"{counts[WordingReviewDecision.DEFERRED]} deferred."
+    )
+    output_fn(f"Review path: {arguments.output}")
+    output_fn("No resume wording was changed.")
+    return 0
+
+
+def _run_apply_tailored_wording(
+    arguments,
+    *,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    outputs = (arguments.output, arguments.markdown_output, arguments.change_log_output)
+    if len({item.resolve() for item in outputs}) != len(outputs):
+        raise Phase2ValidationError("Wording-tailored Resume outputs must use distinct paths")
+    if any(item.resolve() in _tailoring_protected_paths(arguments) for item in outputs):
+        raise Phase2ValidationError("Wording-tailored Resume output must not replace an input artifact")
+    for item in outputs:
+        if item.exists():
+            raise FileExistsError(f"Wording-tailored Resume output already exists: {item}")
+    validation = _wording_context(arguments)
+    wording_proposal = load_tailored_wording_proposal(
+        arguments.wording_proposal, **validation,
+    )
+    wording_review = load_tailored_wording_review(
+        arguments.wording_review, proposal=wording_proposal, **validation,
+    )
+    final_validation = dict(
+        validation, proposal=wording_proposal, review=wording_review,
+    )
+    artifact = build_wording_tailored_resume(
+        proposal=wording_proposal,
+        review=wording_review,
+        created_at=now_fn(),
+        **validation,
+    )
+    markdown = render_wording_tailored_resume_markdown(artifact, **final_validation)
+    change_log = render_wording_change_log(artifact, **final_validation)
+    written: list[Path] = []
+    try:
+        save_phase2_json_transaction(((arguments.output, artifact.to_dict()),))
+        written.append(arguments.output)
+        _save_new_text(arguments.markdown_output, markdown)
+        written.append(arguments.markdown_output)
+        _save_new_text(arguments.change_log_output, change_log)
+        written.append(arguments.change_log_output)
+    except BaseException:
+        for item in reversed(written):
+            item.unlink(missing_ok=True)
+        raise
+    output_fn(f"Wording-tailored Resume saved to: {arguments.output}")
+    output_fn(f"Tailored Markdown saved to: {arguments.markdown_output}")
+    output_fn(f"Wording change log saved to: {arguments.change_log_output}")
+    output_fn(f"Applied accepted bullet rewrites: {len(artifact.changes)}")
+    output_fn("Entries, bullet membership, Contact, Education, Skills, and ordering were unchanged.")
+    return 0
+
+
+def _load_final_resume_fact_check_context(arguments):
+    validation = _wording_context(arguments)
+    paths = (
+        arguments.wording_proposal,
+        arguments.wording_review,
+        arguments.wording_tailored_resume,
+    )
+    if any(item is None for item in paths) and any(item is not None for item in paths):
+        raise Phase2ValidationError(
+            "--wording-proposal, --wording-review, and --wording-tailored-resume must be used together"
+        )
+    proposal = review = final = None
+    if arguments.wording_proposal is not None:
+        proposal = load_tailored_wording_proposal(arguments.wording_proposal, **validation)
+        review = load_tailored_wording_review(
+            arguments.wording_review, proposal=proposal, **validation,
+        )
+        final = load_wording_tailored_resume(
+            arguments.wording_tailored_resume,
+            proposal=proposal, review=review, **validation,
+        )
+    return dict(
+        validation,
+        wording_proposal=proposal,
+        wording_review=review,
+        wording_tailored_resume=final,
+    )
+
+
+def _run_fact_check_resume(
+    arguments,
+    *,
+    input_fn: InputFunction,
+    output_fn: OutputFunction,
+    now_fn=lambda: datetime.now(timezone.utc).isoformat(),
+) -> int:
+    outputs = (arguments.output, arguments.report_output)
+    if len({item.resolve() for item in outputs}) != len(outputs):
+        raise Phase2ValidationError("Final Resume Fact Check outputs must use distinct paths")
+    if any(item.resolve() in _tailoring_protected_paths(arguments) for item in outputs):
+        raise Phase2ValidationError("Final Resume Fact Check output must not replace an input artifact")
+    for item in outputs:
+        if item.exists():
+            raise FileExistsError(f"Final Resume Fact Check output already exists: {item}")
+    validation = _load_final_resume_fact_check_context(arguments)
+    checks, _, _, kind = prepare_final_resume_bullet_checks(**validation)
+    facts = validation["context"].fact_index().fact_by_id
+    decisions = {}
+    reasons = {}
+    for index, check in enumerate(checks, 1):
+        output_fn(f"Bullet {index}/{len(checks)}")
+        output_fn(f"Final wording: {check.final_text}")
+        output_fn(f"Original wording: {check.original_text}")
+        output_fn(f"Wording changed: {'yes' if check.wording_changed else 'no'}")
+        output_fn("Verified facts and source context:")
+        for fact_id in check.fact_ids:
+            fact = facts[fact_id]
+            source = fact.source_context
+            label = "source context unavailable"
+            if source is not None:
+                label = " / ".join(item for item in (
+                    source.organization_or_project_name,
+                    source.title_or_role,
+                    source.record_type,
+                ) if item)
+            output_fn(f"  {fact_id} ({label}): {fact.text}")
+        output_fn(
+            "Review ownership, team contribution, metrics, technology use, and prototype/production scope. "
+            "Valid references do not establish semantic truth."
+        )
+        while True:
+            answer = input_fn("[p]ass/[i]ssue/[d]efer/[q]uit: ").strip().lower()
+            if answer == "q":
+                raise FinalResumeFactCheckCancelled
+            status = {
+                "p": ResumeSemanticReviewStatus.PASSED,
+                "i": ResumeSemanticReviewStatus.ISSUE_FOUND,
+                "d": ResumeSemanticReviewStatus.NEEDS_CONFIRMATION,
+            }.get(answer)
+            if status is None:
+                output_fn("Please enter p, i, d, or q.")
+                continue
+            decisions[check.bullet_check_id] = status
+            if status != ResumeSemanticReviewStatus.PASSED:
+                while True:
+                    reason = input_fn("Reason (required, or q to cancel): ").strip()
+                    if reason.lower() == "q":
+                        raise FinalResumeFactCheckCancelled
+                    if reason:
+                        reasons[check.bullet_check_id] = reason
+                        break
+                    output_fn("A reason is required for an issue or uncertainty.")
+            break
+    while True:
+        answer = input_fn("Save this final Resume fact check? [s]ave/[q]uit: ").strip().lower()
+        if answer == "q":
+            raise FinalResumeFactCheckCancelled
+        if answer == "s":
+            break
+        output_fn("Please enter s or q.")
+    artifact = build_final_resume_fact_check(
+        decisions=decisions, reasons=reasons, created_at=now_fn(), **validation,
+    )
+    report = render_final_resume_fact_check_report(artifact, **validation)
+    written: list[Path] = []
+    try:
+        save_phase2_json_transaction(((arguments.output, artifact.to_dict()),))
+        written.append(arguments.output)
+        _save_new_text(arguments.report_output, report)
+        written.append(arguments.report_output)
+    except BaseException:
+        for item in reversed(written):
+            item.unlink(missing_ok=True)
+        raise
+    output_fn(f"Final Resume Fact Check saved to: {arguments.output}")
+    output_fn(f"Readable fact-check report saved to: {arguments.report_output}")
+    output_fn(
+        f"{kind.value}: {artifact.summary.passed_count} passed, "
+        f"{artifact.summary.issue_count} issue(s), "
+        f"{artifact.summary.needs_confirmation_count} awaiting confirmation."
+    )
+    output_fn("No resume content was changed.")
+    return 0
+
+
+def _run_export_final_resume_pdf(
+    arguments,
+    *,
+    output_fn: OutputFunction,
+) -> int:
+    if arguments.output.resolve() in _tailoring_protected_paths(arguments):
+        raise Phase2ValidationError("Final Resume PDF output must not replace an input artifact")
+    if arguments.output.exists():
+        raise FileExistsError(f"Final Resume PDF already exists: {arguments.output}")
+    validation = _load_final_resume_fact_check_context(arguments)
+    fact_check = load_final_resume_fact_check(arguments.fact_check, **validation)
+    result = export_final_resume_pdf(
+        fact_check=fact_check,
+        output_path=arguments.output,
+        **validation,
+    )
+    output_fn(f"Final Resume PDF saved to: {result.path}")
+    output_fn(f"Pages: {result.page_count}; bytes: {result.byte_length}")
+    output_fn(
+        "The bound profile-owner review covers final bullets only; it does not certify "
+        "Contact, Education, Skills, or the resume as a whole."
+    )
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -3876,6 +4322,7 @@ def main(
     extractor: NarrativeExtractor | None = None,
     mapper: ProfileDimensionMapper | None = None,
     jd_matcher=None,
+    wording_provider=None,
 ) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
@@ -4044,6 +4491,56 @@ def main(
     if arguments.command == "apply-tailoring":
         try:
             return _run_apply_tailoring(arguments, output_fn=output_fn)
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "propose-tailored-wording":
+        try:
+            return _run_propose_tailored_wording(
+                arguments, provider=wording_provider, output_fn=output_fn,
+            )
+        except (
+            OSError, ProfileValidationError, Phase2ValidationError,
+            LLMConfigurationError, LLMRequestError,
+        ) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "review-tailored-wording":
+        try:
+            return _run_review_tailored_wording(
+                arguments, input_fn=input_fn, output_fn=output_fn,
+            )
+        except (TailoredWordingReviewCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Tailored Wording review cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "apply-tailored-wording":
+        try:
+            return _run_apply_tailored_wording(arguments, output_fn=output_fn)
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "fact-check-resume":
+        try:
+            return _run_fact_check_resume(
+                arguments, input_fn=input_fn, output_fn=output_fn,
+            )
+        except (FinalResumeFactCheckCancelled, KeyboardInterrupt, EOFError):
+            output_fn("Final Resume fact check cancelled. No files were changed.")
+            return 130
+        except (OSError, ProfileValidationError, Phase2ValidationError) as error:
+            output_fn(f"Error: {error}")
+            return 1
+
+    if arguments.command == "export-final-resume-pdf":
+        try:
+            return _run_export_final_resume_pdf(arguments, output_fn=output_fn)
         except (OSError, ProfileValidationError, Phase2ValidationError) as error:
             output_fn(f"Error: {error}")
             return 1

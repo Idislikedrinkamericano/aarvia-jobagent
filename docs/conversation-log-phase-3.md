@@ -41,3 +41,19 @@ Version `0.21.0` formalizes the first narrow Phase 3B step. A strict proposal ar
 ## Conversation 10: Ordering-Only Tailored Resume
 
 Version `0.22.0` applies accepted proposal decisions as deterministic ordering changes. A derived Tailored Resume artifact stores full provenance, final layout, and an auditable change list without becoming a new fact authority. The CLI emits new JSON, Markdown, and change-log files atomically while preserving the Base Resume. Rejected, deferred, and unreviewed suggestions remain inert; wording changes, deletions, new facts, semantic fact checking, and PDF export remain separate stages.
+
+## Conversation 11: Human-Reviewed JD-Targeted Wording
+
+Version `0.23.0` adds a narrow wording overlay after ordering-only tailoring. A Provider can propose optional rewrites of existing eligible bullets using verified fact references and JD requirement IDs, but cannot submit facts, IDs, review decisions, scores, or final resume state. A separate profile-owner review reuses the existing wording decision records, and only accepted candidates appear in a new JSON, Markdown resume, and wording change log. The master resume and its reviewed wording remain unchanged. Structural validation proves references and provenance, not semantic fidelity; human review remains responsible for detecting expanded ownership, invented technology, prototype-to-production inflation, or loss of team-contribution qualifiers.
+
+Version `0.23.1` handles an unchanged Provider candidate as an explicit no-op only after the complete response passes strict field, type, reference, duplication, and injection validation. The Proposal records received, unchanged, and reviewable counts; empty or all-no-op responses are valid and do not force a rewrite. No Provider call was repeated for this patch.
+
+## Conversation 12: Final Resume Fact Check
+
+Version `0.24.0` adds a single final fact-check artifact instead of another proposal/review pair. The final ordering or wording-overlay resume is rebuilt from the complete validated chain; every bullet retains its original and final wording, source and fact references, and accepted wording provenance. Python verifies structure, references, membership, staleness, and the exact final content hash, while the profile owner separately records passed, issue-found, or needs-confirmation. The readable report omits Contact and cannot rewrite or repair the resume. No Provider participates in this stage.
+
+## Conversation 13: Validated Final Resume PDF Export
+
+Version `0.25.0` adds a display-only PDF export for the exact validated final resume. Export requires a matching Final Resume Fact Check whose bullet decisions are all passed, rebuilds content from typed artifacts rather than Markdown, preserves ordering and wording, and writes atomically with natural Letter-page pagination. The renderer uses only local built-in fonts and safe HTTPS links. The review remains bullet-scoped and does not certify Contact, Education, Skills, or the resume as a whole.
+
+The private Phase 3 acceptance then completed the minimum human-reviewed loop through real PDF export. The real wording run generated candidates, the owner rejected all of them, and the final resume correctly preserved the reviewed source wording. This validates the all-rejected path, not application of an accepted real-model rewrite. The formal fact check covered four bullets only, so the result is not evidence of automated semantic fact judgment, full-resume certification, application automation, or generally accepted model quality.

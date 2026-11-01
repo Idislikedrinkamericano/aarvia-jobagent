@@ -741,3 +741,35 @@ Development records are appended to this file as the project evolves.
 - **What Changed:** Version `0.22.0` adds Tailored Resume schema 1 and `apply-tailoring`. The command applies only accepted entry or bullet ordering suggestions, records deterministic changes, and writes a new JSON artifact, Markdown resume, and change log without replacing the Base Resume.
 - **Integrity Boundary:** Rejected, deferred, and unreviewed suggestions do not contribute. Retain means keep, never delete. All entries, bullets, fields, references, facts, wording, and section membership are rebuilt from the same fully validated chain; only order may differ.
 - **Not Implemented:** Bullet rewriting, new facts, deletion, cross-section movement, automated semantic fact checking, and PDF export remain outside this release.
+
+## 2026-10-26 - Phase 3B Reviewed JD-Targeted Wording
+
+- **Phase:** Phase 3B - minimal wording overlay
+- **What Changed:** Version `0.23.0` adds a strict JD-targeted Wording Proposal, a review artifact reusing the existing profile-owner wording review records, and a derived Wording Tailored Resume. The Provider may propose rewrites only for existing eligible bullets; Contact is excluded, IDs and fact references are generated or validated by Python, and only explicitly accepted candidates are rendered.
+- **Safety Boundary:** The feature does not change master wording, entry or bullet membership, ordering, Contact, Education, or Skills. Valid references and owner acceptance do not constitute automated semantic fact checking; ownership, team contribution, metrics, technology use, proficiency, deployment scope, and temporal qualifiers still require human review.
+- **Not Implemented:** Free rewriting, new facts, automated semantic fidelity decisions, PDF export, application automation, and broader tailoring remain out of scope.
+
+## 2026-10-27 - Unchanged Wording Candidate Handling
+
+- **Phase:** Phase 3B wording correctness patch
+- **What Changed:** Version `0.23.1` validates the entire Provider response before treating candidate text that is byte-for-byte identical to its source bullet as a no-op. No-op candidates are omitted from review, while received, unchanged, and effective candidate counts remain in the typed Proposal and readable report. Empty and all-no-op responses are valid.
+- **Safety Boundary:** Unknown or duplicate bullet references, unsupported requirements, injected fields, invalid text, and every other contract error still reject the complete response. There is no fuzzy comparison, whitespace normalization, response repair, or partial filtering.
+
+## 2026-10-27 - Final Resume Fact Check
+
+- **Phase:** Phase 3B - deterministic final validation and owner semantic review
+- **What Changed:** Version `0.24.0` adds Final Resume Fact Check schema 1 and `fact-check-resume`. It rebuilds either the ordering-only Tailored Resume or an optional accepted wording overlay, verifies exact provenance, bullet membership, source and fact references, final content hash, and wording-review lineage, then records one profile-owner decision per bullet.
+- **Safety Boundary:** Deterministic validation and human semantic status remain distinct. Valid IDs, accepted wording, and model notes never auto-pass semantics. Reports exclude Contact and direct users back to Evidence Enrichment or Wording Review instead of editing facts or resume text.
+- **Not Implemented:** Provider fact checking, automatic semantic judgment, automatic repair, PDF generation, or application automation.
+
+## 2026-10-28 - Validated Final Resume PDF Export
+
+- **Phase:** Phase 3B - display-only final resume export
+- **What Changed:** Version `0.25.0` adds `export-final-resume-pdf`. It rebuilds either the ordering-only or wording-overlay final resume from the complete validated chain, requires the exact bound Final Resume Fact Check with every bullet marked `passed`, and atomically creates a selectable, link-aware Letter PDF without parsing Markdown or changing wording.
+- **Safety Boundary:** The local ReportLab renderer uses built-in fonts, HTTPS-only external links, natural pagination, and a 10-point body font. It does not call a Provider, compress or rewrite text, or claim that bullet review certifies Contact, Education, Skills, or the full resume. PDF is a derived output, not a new fact authority or artifact schema.
+
+## 2026-10-31 - Phase 3 Real PDF Acceptance
+
+- **Phase:** Phase 3 final integration acceptance
+- **What Was Validated:** The complete private typed chain rebuilt the reviewed wording-overlay resume, confirmed all four bullet-scoped fact-check decisions were `passed`, and exported a selectable, link-aware PDF without changing the validated content. The PDF passed extraction, annotation, pagination, and rendered-page inspection.
+- **Acceptance Boundary:** The real wording run exercised candidate generation and the all-rejected path, preserving the original reviewed bullets. Applying an accepted real-model rewrite remains unverified in a real workflow. The formal semantic review covers four bullets only; it does not certify Contact, Education, Skills, the full resume, general model quality, or automated application behavior.

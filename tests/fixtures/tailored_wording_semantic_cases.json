@@ -1,0 +1,30 @@
+[
+  {
+    "case_id": "ownership_expansion",
+    "original": "Contributed validation checks within a four-person team.",
+    "unsafe_candidate": "Led validation for the four-person team.",
+    "review_decision": "reject",
+    "reason": "The candidate expands team contribution into ownership."
+  },
+  {
+    "case_id": "invented_technology",
+    "original": "Built a prototype workflow in Python.",
+    "unsafe_candidate": "Built a Kubernetes workflow in Python.",
+    "review_decision": "reject",
+    "reason": "The candidate adds a technology absent from the evidence."
+  },
+  {
+    "case_id": "prototype_to_production",
+    "original": "Built a prototype agent workflow.",
+    "unsafe_candidate": "Deployed a production agent platform.",
+    "review_decision": "reject",
+    "reason": "The candidate upgrades prototype scope to production deployment."
+  },
+  {
+    "case_id": "team_boundary_lost",
+    "original": "Contributed model evaluation in a student team.",
+    "unsafe_candidate": "Owned end-to-end model evaluation.",
+    "review_decision": "reject",
+    "reason": "The candidate removes the confirmed team-contribution boundary."
+  }
+]

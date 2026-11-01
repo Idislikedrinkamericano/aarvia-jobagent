@@ -825,10 +825,20 @@ def _date(value: str, *, expected: bool = False) -> str:
     return f"Expected {rendered}" if expected else rendered
 
 
-def render_base_resume_markdown(value: BaseResumeArtifact, **context: Any) -> str:
-    value.validate(**context)
+def _render_validated_base_resume_markdown(
+    value: BaseResumeArtifact,
+    bullet_text_overrides: Mapping[str, str] | None = None,
+) -> str:
     entries = {item.entry_id: item for item in value.entries}
     bullets = {item.bullet_id: item for item in value.bullets}
+    overrides = {} if bullet_text_overrides is None else dict(bullet_text_overrides)
+    if not set(overrides) <= set(bullets):
+        raise Phase2ValidationError("resume rendering override references an unknown bullet")
+    for bullet_id, text in overrides.items():
+        if not isinstance(text, str) or not text.strip() or "\x00" in text:
+            raise Phase2ValidationError(
+                f"resume rendering override for {bullet_id} must be non-empty text"
+            )
     contacts = [item for item in value.entries if item.item_type == BaseResumeItemType.CONTACT]
     contact_values = {dict(item.fields)["field_type"]: dict(item.fields)["value"] for item in contacts}
     lines: list[str] = []
@@ -900,9 +910,14 @@ def render_base_resume_markdown(value: BaseResumeArtifact, **context: Any) -> st
             if context_text:
                 lines.append(f"Context: {_escape(context_text)}")
             for bullet_id in item.bullet_ids:
-                lines.append(f"- {_escape(bullets[bullet_id].text)}")
+                lines.append(f"- {_escape(overrides.get(bullet_id, bullets[bullet_id].text))}")
             lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def render_base_resume_markdown(value: BaseResumeArtifact, **context: Any) -> str:
+    value.validate(**context)
+    return _render_validated_base_resume_markdown(value)
 
 
 def save_base_resume_markdown(value: BaseResumeArtifact, path: str | Path, **context: Any) -> tuple[Path, str]:
